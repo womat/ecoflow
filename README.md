@@ -144,6 +144,7 @@ scripts/ecoflow-api.sh mqtt <SN>                  # Topic abonnieren (Ctrl-C bee
 scripts/ecoflow-api.sh request <SN> bpSoc         # Werte per MQTT anfordern
 export ECOFLOW_PORTAL_TOKEN="$(scripts/ecoflow-api.sh login)"   # Token per Login holen
 scripts/ecoflow-api.sh portal <SN>                # Endkunden-Portal statt Developer-API
+scripts/ecoflow-api.sh status <SN>                # dieselben Daten als Kurzübersicht
 scripts/ecoflow-api.sh selftest                   # Signatur gegen EcoFlows Testvektor
 ```
 
@@ -165,6 +166,21 @@ Developer-API mit 1006 sperrt, und liefert SOC, Live-Leistungen, Energiezähler 
 Rohblöcke der Firmware (69 EMS-Felder, DCDC-Status, Energy-Stream). Authentifiziert wird nicht mit den API-Keys, sondern mit dem
 **Session-Token des Portals** in `ECOFLOW_PORTAL_TOKEN`. Der Token läuft ab; bei HTTP 401
 neu holen. Nicht ins Repo und möglichst nicht in die Shell-History.
+
+`status` rendert dieselbe Antwort als Übersicht:
+
+```
+device   : Mathe (online)
+SoC      : 51 %
+PV       : 0 W
+grid     : 0 W
+house    : 204 W
+battery  : 204 W (discharging)
+```
+
+Das Portal meldet Haus- und Batterieleistung **negativ**, während seine eigene Oberfläche
+sie positiv anzeigt. `status` gibt deshalb den Betrag aus und schreibt die Richtung dazu,
+statt ein Vorzeichen durchzureichen, das man erst deuten muss.
 
 Zwei Wege zum Token:
 
