@@ -40,9 +40,9 @@ func newFlagSet(o *options, stderr io.Writer) *flag.FlagSet {
 		fmt.Fprintf(stderr, `modbusread — read registers from a Modbus device, TCP or serial (read-only).
 
 Usage:
-  modbusread [flags] <host[:port]> <address> <type>
+  modbusread [flags] <target> <address> <type>
 
-  host      a network address (the port defaults to 502) or a serial device
+  target    a network address (the port defaults to 502) or a serial device
             such as /dev/ttyUSB0 or COM3; an explicit tcp:// or rtu:// URL
             also works
   address   register address, decimal (42082) or hexadecimal (0xA462)
