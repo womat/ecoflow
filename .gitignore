@@ -30,3 +30,7 @@ go.work.sum
 # Editor/IDE
 .idea/
 # .vscode/
+
+# EcoFlow's official Java demo client, downloaded for reference only.
+# Third-party code with no license file - read it, don't vendor it.
+ecoflow-open-demo/

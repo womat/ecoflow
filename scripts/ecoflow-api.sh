@@ -31,6 +31,12 @@ commands:
   quota <SN>           read all values of one device
                        GET /iot-open/sign/device/quota/all?sn=<SN>
   get <path> [k=v ...] any other GET endpoint, parameters as key=value
+  values <SN> <quota> [quota ...]
+                       read named values of one device
+                       POST /iot-open/sign/device/quota
+                       e.g. bpSoc, bpPwr, mpptPwr, sysLoadPwr, sysGridPwr,
+                       pcsAPhase, pcsBPhase, pcsCPhase, mpptHeartBeat
+                       Needs jq.
   cert                 fetch the MQTT credentials for this account
                        GET /iot-open/sign/certification
   mqtt <SN> [suffix]   subscribe to the device's MQTT topic and print what
@@ -60,10 +66,15 @@ examples:
   ecoflow-api.sh devices
   ecoflow-api.sh quota HC31XXXXXXXXXXXX
   ecoflow-api.sh -v get /iot-open/sign/device/list
+  ecoflow-api.sh values HC31XXXXXXXXXXXX bpSoc bpPwr
   ecoflow-api.sh mqtt HC31XXXXXXXXXXXX
   ecoflow-api.sh mqtt HC31XXXXXXXXXXXX '#'
 
 note:
+  The "values" command uses POST because the API's read endpoint for named
+  quotas is a POST. It is still a read: this script never touches the PUT
+  endpoint that would set values on the device.
+
   Subscribing is read-only; this script never publishes to a topic. The MQTT
   password is passed to mosquitto_sub on the command line, so it is briefly
   visible to other users of this machine via the process list.
@@ -119,6 +130,18 @@ api_get() {
 	str="$(sign_string "$access_key" "$nonce" "$timestamp" "$@")"
 	sign="$(hmac_sha256 "$secret_key" "$str")"
 
+	# The reference client signs the raw query string and URL-encodes it only
+	# afterwards, so signature and URL would disagree for values that need
+	# escaping. Rather than get that subtly wrong, refuse such values: every
+	# parameter these read endpoints take (serial numbers, quota names) is
+	# plain ASCII anyway.
+	local p
+	for p in "$@"; do
+		case "${p#*=}" in
+		*[!A-Za-z0-9._~-]*) die "parameter value needs URL encoding, which this script does not do: $p" ;;
+		esac
+	done
+
 	if [ "$#" -gt 0 ]; then
 		query="?$(printf '%s\n' "$@" | LC_ALL=C sort | paste -sd'&' -)"
 	fi
@@ -137,6 +160,58 @@ api_get() {
 		-H "nonce: $nonce" \
 		-H "timestamp: $timestamp" \
 		-H "sign: $sign" || die 'request failed' 3
+}
+
+# flatten_json JSON -> one "key=value" per line, nested keys dotted and array
+# elements indexed, e.g. params.quotas[0]=bpSoc. This is the shape the API
+# expects for signing a request body.
+flatten_json() {
+	printf '%s' "$1" | jq -r '
+		paths(scalars) as $p |
+		($p | map(if type == "number" then "[" + tostring + "]" else "." + . end)
+		    | join("") | ltrimstr(".")) + "=" + (getpath($p) | tostring)
+	'
+}
+
+# api_post PATH JSON -> raw response body on stdout
+#
+# Only ever called with read endpoints; see the note in usage().
+api_post() {
+	local path="$1" body="$2"
+
+	local access_key="${ECOFLOW_ACCESS_KEY:-}" secret_key="${ECOFLOW_SECRET_KEY:-}"
+	[ -n "$access_key" ] || die 'ECOFLOW_ACCESS_KEY is not set'
+	[ -n "$secret_key" ] || die 'ECOFLOW_SECRET_KEY is not set'
+
+	local timestamp nonce str sign
+	timestamp="$(( $(date +%s) * 1000 ))"
+	nonce="$(( 100000 + RANDOM % 900000 ))"
+
+	local -a flat=()
+	while IFS= read -r line; do
+		[ -n "$line" ] && flat+=("$line")
+	done < <(flatten_json "$body" | LC_ALL=C sort)
+
+	str="$(sign_string "$access_key" "$nonce" "$timestamp" "${flat[@]}")"
+	sign="$(hmac_sha256 "$secret_key" "$str")"
+
+	if [ "$VERBOSE" -eq 1 ]; then
+		{
+			printf 'POST %s%s\n' "$HOST" "$path"
+			printf 'body: %s\n' "$body"
+			printf 'signStr: %s\n' "$str"
+			printf 'headers: accessKey=%s nonce=%s timestamp=%s sign=%s\n' \
+				"$access_key" "$nonce" "$timestamp" "$sign"
+		} >&2
+	fi
+
+	curl -sS -X POST "${HOST}${path}" \
+		-H 'Content-Type: application/json;charset=UTF-8' \
+		-H "accessKey: $access_key" \
+		-H "nonce: $nonce" \
+		-H "timestamp: $timestamp" \
+		-H "sign: $sign" \
+		--data-binary "$body" || die 'request failed' 3
 }
 
 # response_code BODY -> the top-level result code, which is the first one in
@@ -183,17 +258,40 @@ report_code() {
 }
 
 # request PATH [k=v ...] - fetch, print and judge one endpoint
+#
+# api_get runs in a command substitution, so its die() only ends that subshell;
+# the status has to be propagated explicitly here.
 request() {
 	local body
-	body="$(api_get "$@")"
+	body="$(api_get "$@")" || exit $?
+	show_and_judge "$body"
+}
 
+# show_and_judge BODY - pretty-print a response and turn its code into a status
+show_and_judge() {
 	if command -v jq >/dev/null 2>&1; then
-		printf '%s' "$body" | jq . || printf '%s\n' "$body"
+		printf '%s' "$1" | jq . || printf '%s\n' "$1"
 	else
-		printf '%s\n' "$body"
+		printf '%s\n' "$1"
 	fi
 
-	report_code "$(response_code "$body")"
+	report_code "$(response_code "$1")"
+}
+
+# read_values SN QUOTA... - POST /iot-open/sign/device/quota
+read_values() {
+	command -v jq >/dev/null 2>&1 || die 'values needs jq'
+
+	local sn="$1"
+	shift
+
+	local body
+	body="$(jq -cn --arg sn "$sn" '$ARGS.positional as $q | {sn: $sn, params: {quotas: $q}}' \
+		--args "$@")"
+
+	local response
+	response="$(api_post /iot-open/sign/device/quota "$body")" || exit $?
+	show_and_judge "$response"
 }
 
 # mqtt_subscribe SN [SUFFIX] - subscribe to the device topic, read-only
@@ -205,7 +303,7 @@ mqtt_subscribe() {
 		die 'mqtt needs mosquitto_sub (brew install mosquitto, apt install mosquitto-clients)'
 
 	local body code
-	body="$(api_get /iot-open/sign/certification)"
+	body="$(api_get /iot-open/sign/certification)" || exit $?
 	code="$(response_code "$body")"
 	if [ "$code" != '0' ]; then
 		printf '%s' "$body" | jq . >&2 || printf '%s\n' "$body" >&2
@@ -250,40 +348,56 @@ mqtt_subscribe() {
 		"${tls[@]}" "${debug[@]}" -t "$topic" -v
 }
 
-# Regression check for the assembly order in sign_string. The expected value is
-# self-generated, NOT an official test vector from EcoFlow: it proves the string
-# is still built the same way, not that EcoFlow's server accepts it.
+# Check the signature implementation against the official test vector from
+# EcoFlow's documentation (developer-eu.ecoflow.com, "HTTP access steps"). This
+# is not self-generated: matching it means the assembly order, the flattening of
+# nested bodies and the HMAC all agree with the published spec.
 selftest() {
-	local want_plain='6592b5bf9f12e3b50580269d3f59a9a3b9554c87c7ebc80ffbe6a17103a693ce'
-	local want_param='1c45c205e6b9c90407ec7d0be1015f85750c04b505e9399389f633e1ab8f3f84'
-	local secret='SECRET' failed=0
+	local failed=0 got want
 
-	local got_str got_sign
-	got_str="$(sign_string 'AK' '123456' '1700000000000')"
-	[ "$got_str" = 'accessKey=AK&nonce=123456&timestamp=1700000000000' ] || {
-		printf 'selftest: plain signStr is %s\n' "$got_str" >&2
-		failed=1
-	}
-	got_sign="$(hmac_sha256 "$secret" "$got_str")"
-	[ "$got_sign" = "$want_plain" ] || {
-		printf 'selftest: plain sign is %s, want %s\n' "$got_sign" "$want_plain" >&2
+	# Vector 1: signed request body from the documentation.
+	local ak='Fp4SvIprYSDPXtYJidEtUAd1o'
+	local sk='WIbFEKre0s6sLnh4ei7SPUeYnptHG6V'
+	local body='{"sn":"123456789","params":{"cmdSet":11,"id":24,"eps":0}}'
+
+	if command -v jq >/dev/null 2>&1; then
+		got="$(flatten_json "$body" | LC_ALL=C sort | paste -sd'&' -)"
+		want='params.cmdSet=11&params.eps=0&params.id=24&sn=123456789'
+		[ "$got" = "$want" ] || {
+			printf 'selftest: flattened body is %s, want %s\n' "$got" "$want" >&2
+			failed=1
+		}
+
+		# Vector 2: the documented flattening example, which also covers arrays
+		# of scalars and arrays of objects.
+		got="$(flatten_json '{"name":"demo1","ids":[1,2,3],"deviceInfo":{"id":1},"deviceList":[{"id":1},{"id":2}]}' |
+			LC_ALL=C sort | paste -sd'&' -)"
+		want='deviceInfo.id=1&deviceList[0].id=1&deviceList[1].id=2&ids[0]=1&ids[1]=2&ids[2]=3&name=demo1'
+		[ "$got" = "$want" ] || {
+			printf 'selftest: flattened example is %s, want %s\n' "$got" "$want" >&2
+			failed=1
+		}
+	else
+		printf 'selftest: jq missing, skipping the body flattening checks\n' >&2
+	fi
+
+	got="$(sign_string "$ak" '345164' '1671171709428' \
+		'params.cmdSet=11' 'params.eps=0' 'params.id=24' 'sn=123456789')"
+	want='params.cmdSet=11&params.eps=0&params.id=24&sn=123456789&accessKey=Fp4SvIprYSDPXtYJidEtUAd1o&nonce=345164&timestamp=1671171709428'
+	[ "$got" = "$want" ] || {
+		printf 'selftest: signStr is %s\n' "$got" >&2
 		failed=1
 	}
 
-	# Business parameters come first and are sorted, hence sn before zz.
-	got_str="$(sign_string 'AK' '123456' '1700000000000' 'zz=2' 'sn=ABC')"
-	[ "$got_str" = 'sn=ABC&zz=2&accessKey=AK&nonce=123456&timestamp=1700000000000' ] || {
-		printf 'selftest: parameterised signStr is %s\n' "$got_str" >&2
-		failed=1
-	}
-	got_sign="$(hmac_sha256 "$secret" "$got_str")"
-	[ "$got_sign" = "$want_param" ] || {
-		printf 'selftest: parameterised sign is %s, want %s\n' "$got_sign" "$want_param" >&2
+	got="$(hmac_sha256 "$sk" "$want")"
+	want='07c13b65e037faf3b153d51613638fa80003c4c38d2407379a7f52851af1473e'
+	[ "$got" = "$want" ] || {
+		printf 'selftest: sign is %s, want %s\n' "$got" "$want" >&2
 		failed=1
 	}
 
 	[ "$failed" -eq 0 ] || die 'selftest FAILED'
-	printf 'selftest OK\n'
+	printf 'selftest OK (matches the official test vector)\n'
 }
 
 main() {
@@ -339,6 +453,10 @@ main() {
 			esac
 		done
 		request "$path" "$@"
+		;;
+	values)
+		[ "$#" -ge 2 ] || die 'usage: ecoflow-api.sh values <SN> <quota> [quota ...]'
+		read_values "$@"
 		;;
 	cert)
 		[ "$#" -eq 0 ] || die 'cert takes no arguments'
