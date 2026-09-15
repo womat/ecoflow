@@ -14,6 +14,60 @@ Modbus TCP) für den EcoFlow PowerOcean DC Fit.
 |---|---|
 | [`api-status.md`](./api-status.md) | Überblick: Cloud-REST-API vs. lokales Modbus TCP, bekannte Probleme (z.B. Fehler 1006), Freischaltung |
 | [`modbus-registers.md`](./modbus-registers.md) | Register-Map (SOC, Batterie, PV, Netz, Energiezähler, Steuerregister) inkl. Decoding-Beispielen |
+| [`cmd/modbusread`](./cmd/modbusread) | Kleines Go-CLI zum Nachmessen der Register am Gerät (s.u.) |
+
+## `modbusread`
+
+Ein universeller, **rein lesender** Modbus-TCP-Reader – Adresse, Register und Typ rein,
+Wert raus. Kein EcoFlow-Wissen im Tool, keine eingebaute Register-Map; damit auch für
+andere Modbus-TCP-Geräte brauchbar. Gedacht, um die community-ermittelten Register aus
+`modbus-registers.md` am eigenen Gerät zu überprüfen.
+
+```
+go build ./cmd/modbusread
+
+modbusread <host[:port]> <address> <type> [flags]
+```
+
+Adresse dezimal (`42082`) oder hex (`0xA462`), Typ `raw`, `uint16`, `int16`, `uint32`,
+`int32`, `float32`, `float64` oder `string`.
+
+```console
+$ modbusread 192.168.1.50 42082 uint16
+addr     raw                  value
+42082    0x0064               100
+
+# PV-Gesamtleistung: Float mit vertauschten Words (EcoFlow-Konvention)
+$ modbusread 192.168.1.50 40574 float32 --word-order low
+
+# Bereich dumpen, um unbekannte Register zu finden
+$ modbusread 192.168.1.50 40520 raw --count 120 --out hex
+
+# Herausfinden, welches Register auf eine Änderung in der App reagiert
+$ modbusread 192.168.1.50 40520 raw --count 120 --interval 1s --on-change
+```
+
+Wichtig: **Adressen werden nicht umgerechnet** – sie gehen so auf den Draht, wie sie
+getippt werden (0-based). Die Tabellen in `modbus-registers.md` sind als 1-based
+bezeichnet; ob das stimmt, ist offen (siehe „Offene Punkte“).
+
+Weitere Flags: `--unit`, `--fc holding|input`, `--byte-order`, `--timeout`, `--json`,
+`--samples`. `modbusread --help` zeigt alles.
+
+### Installation
+
+Mit vorhandener Go-Toolchain direkt aus dem Repo:
+
+```
+go install github.com/womat/ecoflow/cmd/modbusread@latest
+```
+
+Für Maschinen ohne Go (z.B. den Raspberry Pi neben der Anlage) liegen fertige Binaries
+für linux/amd64, linux/arm64, linux/arm, darwin und windows unter
+[Releases](https://github.com/womat/ecoflow/releases) – erzeugt aus einem Tag `v*`.
+
+`modbusread --version` meldet Commit und Go-Version aus den Build-Infos, die Go beim
+`go build` selbst einstempelt; Release-Binaries tragen die Tag-Nummer.
 
 ## Kurzüberblick
 
@@ -29,6 +83,10 @@ Modbus TCP) für den EcoFlow PowerOcean DC Fit.
 
 - Bestätigung, ob das Register-Mapping (ermittelt am PowerOcean Plus) 1:1 für
   den DC Fit gilt, oder ob es eigene Adress-Overrides gibt
+- Ob die Register in `modbus-registers.md` 1-based oder 0-based zu lesen sind: die
+  Tabelle sagt 1-based, das Python-Snippet daneben verwendet die Zahlen literal
+  (pymodbus adressiert 0-based). Mit `modbusread` am Gerät klärbar: SOC einmal auf
+  42081 und einmal auf 42082 lesen
 - Genauer Freischalt-Pfad in der EcoFlow Pro App
 
 ## Quellen
