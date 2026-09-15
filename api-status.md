@@ -227,6 +227,20 @@ Die Modbus-Freischaltung kann nur ein Installateur mit Pro-App-Zugang vornehmen 
 2a). Ein solcher Termin wiederholt sich nicht schnell – deshalb hier abhakbar, was dabei
 zu klären ist.
 
+**Vorab-Test, ob überhaupt noch etwas fehlt**
+
+Ein `modbusread <ip> 42082 uint16` vor dem Termin beantwortet das in einer Sekunde, und
+die Fehlermeldung unterscheidet die Fälle:
+
+| Antwort | Bedeutung |
+|---|---|
+| `connection refused` | Gerät erreichbar, auf Port 502 lauscht nichts → Modbus ist deaktiviert |
+| Timeout | Netz-/VLAN-/Firewall-Problem, nicht der Modbus-Schalter |
+| Registerwert | schon freigeschaltet |
+
+Am Testgerät (DC Fit, Firmware **1.0.6.20**, September 2026): Ping beantwortet,
+Port 502 `connection refused` – also deaktiviert, wie dokumentiert.
+
 **Das eigentliche Anliegen**
 
 - [ ] **Modbus TCP am Wechselrichter aktivieren.**
