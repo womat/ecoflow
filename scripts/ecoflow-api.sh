@@ -24,6 +24,7 @@ set -euo pipefail
 HOST="${ECOFLOW_HOST:-https://api-e.ecoflow.com}"
 VERBOSE=0
 
+# usage - the --help text; keep it in step with the case block in main()
 usage() {
 	cat <<'USAGE'
 usage: ecoflow-api.sh [-v] <command> [args]
@@ -133,6 +134,10 @@ note:
 USAGE
 }
 
+# die MESSAGE [STATUS] - report and exit; STATUS defaults to 1
+#
+# Called inside a command substitution it only ends that subshell, so callers
+# there have to propagate the status themselves.
 die() {
 	printf 'ecoflow-api.sh: %s\n' "$1" >&2
 	exit "${2:-1}"
@@ -676,6 +681,7 @@ selftest() {
 	printf 'selftest OK (matches the official test vector)\n'
 }
 
+# main - parse the global options, then dispatch on the command
 main() {
 	while [ "$#" -gt 0 ]; do
 		case "$1" in
