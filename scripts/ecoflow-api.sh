@@ -64,6 +64,8 @@ commands:
                        SoC, energy counters and the full quota blocks - what the
                        Developer API refuses for blocked models
                        GET /provider-service/user/device/detail?sn=<SN>
+  status <SN>          the same data as one readable overview instead of the
+                       raw JSON. Needs jq.
   portal-get <path>    any other GET against the portal API
   selftest             check the signature assembly, no keys and no network
   help                 show this message
@@ -107,6 +109,7 @@ examples:
   ecoflow-api.sh mqtt HC31XXXXXXXXXXXX get_reply
   ecoflow-api.sh request HC31XXXXXXXXXXXX bpSoc bpPwr
   ECOFLOW_PORTAL_TOKEN=... ecoflow-api.sh portal HC31XXXXXXXXXXXX
+  ECOFLOW_PORTAL_TOKEN=... ecoflow-api.sh status HC31XXXXXXXXXXXX
 
 note on "login":
   This is the consumer app's login endpoint, not a documented API. It takes the
@@ -432,6 +435,46 @@ portal_get() {
 	printf '%s' "$body"
 }
 
+# portal_status SN - render the portal detail as a short overview
+#
+# The portal reports load and battery power negative while its own dashboard
+# shows them positive, so the magnitude is printed and the direction spelled out
+# rather than passing a sign through that the reader would have to interpret.
+portal_status() {
+	command -v jq >/dev/null 2>&1 || die 'status needs jq'
+
+	local body
+	body="$(portal_get /provider-service/user/device/detail "?sn=$1")" || exit $?
+
+	local code
+	code="$(response_code "$body")"
+	if [ "$code" != '0' ]; then
+		show_and_judge "$body"
+		return
+	fi
+
+	printf '%s' "$body" | jq -e '.data' >/dev/null 2>&1 ||
+		die 'the response carried no data - wrong ECOFLOW_PRODUCT_TYPE for this device?' 2
+
+	printf '%s' "$body" | jq -r '
+		.data as $d
+		| (($d.quota // {}) | to_entries
+		   | map(select(.key | endswith("ENERGY_STREAM_REPORT")))
+		   | first | .value) as $stream
+		| def w(x): (x // 0) | round | tostring;
+		  [
+		    "device   : \($d.systemName // "?") (\(if $d.online == 1 then "online" else "offline" end))",
+		    "SoC      : \($d.bpSoc // "?") %",
+		    "PV       : \(w($d.mpptPwr)) W",
+		    "grid     : \(w($d.sysGridPwr)) W\(if ($d.sysGridPwr // 0) > 0 then " (import)" elif ($d.sysGridPwr // 0) < 0 then " (export)" else "" end)",
+		    "house    : \(w(($d.sysLoadPwr // 0) | fabs)) W",
+		    "battery  : \(w(($d.bpPwr // 0) | fabs)) W\(if ($d.bpPwr // 0) < 0 then " (discharging)" elif ($d.bpPwr // 0) > 0 then " (charging)" else " (idle)" end)",
+		    "",
+		    "yield    : today \($d.todayElectricityGeneration // "?") | month \($d.monthElectricityGeneration // "?") | year \($d.yearElectricityGeneration // "?") | total \($d.totalElectricityGeneration // "?") kWh",
+		    "measured : \(if $stream.timestamp then ($stream.timestamp | todate) else "unknown" end)"
+		  ] | .[]'
+}
+
 # show_and_judge BODY - pretty-print a response and turn its code into a status
 show_and_judge() {
 	if command -v jq >/dev/null 2>&1; then
@@ -714,6 +757,13 @@ main() {
 		esac
 		body="$(portal_get /provider-service/user/device/detail "?sn=$1")" || exit $?
 		show_and_judge "$body"
+		;;
+	status)
+		[ "$#" -eq 1 ] || die 'usage: ecoflow-api.sh status <SN>'
+		case "$1" in
+		*[!A-Za-z0-9_-]*) die "serial number looks wrong: $1" ;;
+		esac
+		portal_status "$1"
 		;;
 	portal-get)
 		[ "$#" -eq 1 ] || die 'usage: ecoflow-api.sh portal-get <path>'
