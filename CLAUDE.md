@@ -10,7 +10,9 @@ Zwei Dinge, die zusammengehören:
    **EcoFlow PowerOcean DC Fit** – Cloud-API vs. lokales Modbus TCP, Register-Map.
 2. **`modbusread`** – ein Go-CLI, mit dem die Angaben aus diesen Notizen am Gerät
    überprüft werden. Bewusst **universell**: es enthält kein EcoFlow-Wissen, keine
-   eingebaute Register-Map und keine gerätespezifischen Meldungen.
+   eingebaute Register-Map und keine gerätespezifischen Meldungen. Spricht Modbus TCP
+   und Modbus RTU (seriell); der Transport ergibt sich aus dem Ziel-Argument
+   (`cmd/modbusread/target.go`), nicht aus einem Flag.
 
 ## Kommandos
 
@@ -72,6 +74,9 @@ mitziehen**, inkl. der „Offene Fragen“/„Offene Punkte“-Checklisten in RE
 - **Word-/Byte-Order rechnet das Tool selbst**, der Client läuft fest auf
   `BIG_ENDIAN, HIGH_WORD_FIRST` und liest nur `ReadRegisters`. So sind die Rohwords
   immer für die Ausgabe da und die Dekodierung bleibt pur testbar.
+- **Flags, die nicht wirken können, werden abgelehnt statt ignoriert** – die
+  Serial-Parameter an einem TCP-Ziel sind ein Fehler. Eine stillschweigend wirkungslose
+  Baudrate schickt Menschen auf Fehlersuche an der Hardware.
 - **Rohwords stehen immer in der Ausgabe**, auch wenn ein Wert dekodiert wurde – beim
   Reverse-Engineering ist der Rohwert wichtiger als die Deutung.
 - **Adress-Parsing nutzt bewusst nicht `strconv.ParseUint(s, 0, …)`** (Basis 0 läse

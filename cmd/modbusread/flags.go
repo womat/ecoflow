@@ -27,17 +27,24 @@ func newFlagSet(o *options, stderr io.Writer) *flag.FlagSet {
 	fs.BoolVar(&o.onChange, "on-change", false, "with --interval: print only when a value changed")
 	fs.BoolVar(&o.version, "version", false, "print the version and exit")
 
+	fs.UintVar(&o.baud, "baud", 19200, "serial line speed (RTU only)")
+	fs.UintVar(&o.dataBits, "databits", 8, "bits per character, 7 or 8 (RTU only)")
+	fs.StringVar(&o.parity, "parity", "none", "parity: none, even or odd (RTU only)")
+	fs.UintVar(&o.stopBits, "stopbits", 0, "stop bits, 1 or 2; 0 follows the Modbus rule of 2 without parity, 1 with (RTU only)")
+
 	fs.Usage = func() {
 		names := make([]string, len(decode.Types))
 		for i, t := range decode.Types {
 			names[i] = string(t)
 		}
-		fmt.Fprintf(stderr, `modbusread — read registers from a Modbus TCP device (read-only).
+		fmt.Fprintf(stderr, `modbusread — read registers from a Modbus device, TCP or serial (read-only).
 
 Usage:
   modbusread [flags] <host[:port]> <address> <type>
 
-  host      target device; the port defaults to 502
+  host      a network address (the port defaults to 502) or a serial device
+            such as /dev/ttyUSB0 or COM3; an explicit tcp:// or rtu:// URL
+            also works
   address   register address, decimal (42082) or hexadecimal (0xA462)
   type      %s
 
@@ -53,6 +60,7 @@ Examples:
   modbusread 192.168.1.50 40574 float32 --word-order low
   modbusread 192.168.1.50 40520 raw --count 120 --out hex
   modbusread 192.168.1.50 40520 raw --count 120 --interval 1s --on-change
+  modbusread /dev/ttyUSB0 40069 uint16 --baud 9600 --parity even --unit 3
 `)
 	}
 	return fs

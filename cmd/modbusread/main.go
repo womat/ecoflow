@@ -1,4 +1,5 @@
-// Command modbusread reads registers from a Modbus TCP device.
+// Command modbusread reads registers from a Modbus device, over TCP or over a
+// serial line (RTU).
 //
 // It is a probe, not a monitor: address, register and type in, value out. It
 // knows nothing about any particular device and never writes — there is no
@@ -11,7 +12,6 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"net"
 	"os"
 	"os/signal"
 	"strings"
@@ -40,6 +40,12 @@ type options struct {
 	samples   int
 	onChange  bool
 	version   bool
+
+	// serial link settings, only meaningful for an RTU target
+	baud     uint
+	dataBits uint
+	parity   string
+	stopBits uint
 }
 
 func main() {
@@ -47,7 +53,7 @@ func main() {
 }
 
 func run(argv []string, stdout, stderr io.Writer) int {
-	opts, pos, err := parseArgs(argv, stderr)
+	opts, pos, fs, err := parseArgs(argv, stderr)
 	if err != nil {
 		fmt.Fprintln(stderr, "error:", err)
 		return 1
@@ -64,7 +70,7 @@ func run(argv []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 
-	cfg, err := buildConfig(opts, pos)
+	cfg, err := buildConfig(opts, pos, setFlags(fs))
 	if err != nil {
 		fmt.Fprintln(stderr, "error:", err)
 		return 1
@@ -76,9 +82,19 @@ func run(argv []string, stdout, stderr io.Writer) int {
 	return poll(ctx, cfg, stdout, stderr)
 }
 
+// serialConfig holds the RTU link settings. It is zero for a TCP target, in
+// which case the library ignores it.
+type serialConfig struct {
+	speed    uint
+	dataBits uint
+	parity   uint
+	stopBits uint
+}
+
 // config is the fully validated form of the command line.
 type config struct {
 	url       string
+	serial    serialConfig
 	unit      uint8
 	addr      uint16
 	total     int // registers to read in one pass
@@ -94,7 +110,7 @@ type config struct {
 	onChange  bool
 }
 
-func parseArgs(argv []string, stderr io.Writer) (*options, []string, error) {
+func parseArgs(argv []string, stderr io.Writer) (*options, []string, *flag.FlagSet, error) {
 	opts := &options{}
 	fs := newFlagSet(opts, stderr)
 
@@ -106,9 +122,9 @@ func parseArgs(argv []string, stderr io.Writer) (*options, []string, error) {
 	for {
 		if err := fs.Parse(rest); err != nil {
 			if errors.Is(err, flag.ErrHelp) {
-				return nil, nil, nil
+				return nil, nil, nil, nil
 			}
-			return nil, nil, errFlag
+			return nil, nil, nil, errFlag
 		}
 		if fs.NArg() == 0 {
 			break
@@ -116,12 +132,19 @@ func parseArgs(argv []string, stderr io.Writer) (*options, []string, error) {
 		pos = append(pos, fs.Arg(0))
 		rest = fs.Args()[1:]
 	}
-	return opts, pos, nil
+	return opts, pos, fs, nil
 }
 
 var errFlag = errors.New("invalid arguments; see --help")
 
-func buildConfig(o *options, pos []string) (*config, error) {
+// setFlags reports which flags the user actually passed.
+func setFlags(fs *flag.FlagSet) map[string]bool {
+	set := map[string]bool{}
+	fs.Visit(func(f *flag.Flag) { set[f.Name] = true })
+	return set
+}
+
+func buildConfig(o *options, pos []string, set map[string]bool) (*config, error) {
 	addr, err := decode.ParseAddr(pos[1])
 	if err != nil {
 		return nil, err
@@ -172,13 +195,19 @@ func buildConfig(o *options, pos []string) (*config, error) {
 		return nil, fmt.Errorf("address %d plus %d register(s) exceeds 65535", addr, total)
 	}
 
-	host, err := normalizeHost(pos[0])
+	tgt, err := parseTarget(pos[0])
+	if err != nil {
+		return nil, err
+	}
+
+	serial, err := buildSerial(o, set, tgt)
 	if err != nil {
 		return nil, err
 	}
 
 	return &config{
-		url:       "tcp://" + host,
+		url:       tgt.url,
+		serial:    serial,
 		unit:      uint8(o.unit),
 		addr:      addr,
 		total:     total,
@@ -195,13 +224,52 @@ func buildConfig(o *options, pos []string) (*config, error) {
 	}, nil
 }
 
-// normalizeHost appends the default Modbus port if none was given.
-func normalizeHost(s string) (string, error) {
-	if s == "" {
-		return "", fmt.Errorf("empty host")
+// buildSerial validates the serial link settings.
+//
+// Passing them for a TCP target is refused rather than ignored: a baud rate
+// that silently has no effect is exactly the kind of thing that sends someone
+// hunting for a wiring fault that does not exist.
+func buildSerial(o *options, set map[string]bool, tgt target) (serialConfig, error) {
+	serialFlags := []string{"baud", "databits", "parity", "stopbits"}
+
+	if !tgt.serial {
+		for _, name := range serialFlags {
+			if set[name] {
+				return serialConfig{}, fmt.Errorf("--%s only applies to a serial (RTU) target, not to %s", name, tgt.url)
+			}
+		}
+		return serialConfig{}, nil
 	}
-	if _, _, err := net.SplitHostPort(s); err == nil {
-		return s, nil
+
+	var parity uint
+	switch strings.ToLower(o.parity) {
+	case "none":
+		parity = modbus.PARITY_NONE
+	case "even":
+		parity = modbus.PARITY_EVEN
+	case "odd":
+		parity = modbus.PARITY_ODD
+	default:
+		return serialConfig{}, fmt.Errorf("unknown --parity %q (known: none, even, odd)", o.parity)
 	}
-	return net.JoinHostPort(s, "502"), nil
+
+	switch o.dataBits {
+	case 7, 8:
+	default:
+		return serialConfig{}, fmt.Errorf("--databits must be 7 or 8")
+	}
+
+	// Left at zero the library applies the Modbus spec rule: two stop bits
+	// without parity, one with.
+	switch o.stopBits {
+	case 0, 1, 2:
+	default:
+		return serialConfig{}, fmt.Errorf("--stopbits must be 1 or 2")
+	}
+
+	if o.baud == 0 {
+		return serialConfig{}, fmt.Errorf("--baud must be greater than zero")
+	}
+
+	return serialConfig{speed: o.baud, dataBits: o.dataBits, parity: parity, stopBits: o.stopBits}, nil
 }
