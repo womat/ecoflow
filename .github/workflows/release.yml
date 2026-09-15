@@ -1,0 +1,56 @@
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+
+# Go cross-compiles, so one Linux runner builds every target.
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+          check-latest: true
+
+      # The tag is only released once the same checks CI runs have passed, so
+      # no untested binary can be published.
+      - run: go vet ./...
+      - run: go test ./...
+
+      - name: Build
+        env:
+          VERSION: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          for target in \
+            linux/amd64 linux/arm64 linux/arm \
+            darwin/arm64 darwin/amd64 \
+            windows/amd64
+          do
+            os=${target%/*}
+            arch=${target#*/}
+            name="modbusread-${VERSION}-${os}-${arch}"
+            bin="modbusread"
+            if [ "$os" = "windows" ]; then bin="modbusread.exe"; fi
+
+            # GOARM=6 keeps the 32-bit build usable on every Raspberry Pi,
+            # including the ARMv6 models; it is ignored for other targets.
+            CGO_ENABLED=0 GOOS="$os" GOARCH="$arch" GOARM=6 \
+              go build -trimpath -ldflags "-s -w -X main.version=${VERSION}" \
+              -o "dist/${bin}" ./cmd/modbusread
+
+            tar -czf "dist/${name}.tar.gz" -C dist "${bin}"
+            rm "dist/${bin}"
+          done
+          cd dist && sha256sum *.tar.gz > checksums.txt
+
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "${{ github.ref_name }}" dist/* --generate-notes
