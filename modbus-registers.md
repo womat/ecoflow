@@ -6,6 +6,10 @@
 > Firmware laut Quellcode zwischen `InverterModel`-Varianten unterscheidet
 > (`address_overrides`).
 
+**Testgerät dieser Notizen:** PowerOcean **DC Fit**, Firmware **1.0.6.20**. Solange die
+Register hier nicht gegengemessen sind, gilt der Vorbehalt oben – die Firmware-Version ist
+vermerkt, weil `address_overrides` modell- und firmwareabhängig sind.
+
 ## Quellen
 
 - https://github.com/MaxGrmm/ecoflow-poweroceanplus-modbus (README, Register-Tabellen, Decoding-Beispiele)
