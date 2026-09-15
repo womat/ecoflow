@@ -142,6 +142,8 @@ scripts/ecoflow-api.sh values <SN> bpSoc bpPwr     # gezielte Werte (POST-Endpun
 scripts/ecoflow-api.sh cert                       # MQTT-Zugangsdaten des Kontos
 scripts/ecoflow-api.sh mqtt <SN>                  # Topic abonnieren (Ctrl-C beendet)
 scripts/ecoflow-api.sh request <SN> bpSoc         # Werte per MQTT anfordern
+export ECOFLOW_PORTAL_TOKEN="$(scripts/ecoflow-api.sh login)"   # Token per Login holen
+scripts/ecoflow-api.sh portal <SN>                # Endkunden-Portal statt Developer-API
 scripts/ecoflow-api.sh selftest                   # Signatur gegen EcoFlows Testvektor
 ```
 
@@ -156,6 +158,25 @@ Werte setzt, kennt das Skript bewusst nicht.
 Aufzeichnung ist nur dann ein Beleg, wenn man weiß, wann sie still war. Braucht
 zusätzlich `jq` und `mosquitto_sub` (`brew install mosquitto` bzw.
 `apt install mosquitto-clients`).
+
+`portal` geht einen anderen Weg: Es fragt `provider-service/user/device/detail` ab – den
+Endpunkt, den das Endkunden-Portal selbst benutzt. Der antwortet auch für Geräte, die die
+Developer-API mit 1006 sperrt. Authentifiziert wird nicht mit den API-Keys, sondern mit dem
+**Session-Token des Portals** in `ECOFLOW_PORTAL_TOKEN`. Der Token läuft ab; bei HTTP 401
+neu holen. Nicht ins Repo und möglichst nicht in die Shell-History.
+
+Zwei Wege zum Token:
+
+- **Aus dem Browser:** im eingeloggten Portal unter *Local Storage → `S1_JWT`*.
+- **Per `login`:** fragt E-Mail und Passwort ab (Passwort ohne Echo, wahlweise aus
+  `ECOFLOW_PASSWORD`) und gibt ausschließlich den Token auf stdout aus – alles andere geht
+  nach stderr, damit sich der Token direkt einfangen lässt:
+  `export ECOFLOW_PORTAL_TOKEN="$(scripts/ecoflow-api.sh login)"`.
+
+Zur Abwägung: `login` benutzt den Login-Endpunkt der Endkunden-App, der das Passwort
+**base64-kodiert, nicht gehasht** überträgt – Base64 ist Kodierung, keine Verschlüsselung,
+geschützt ist allein der TLS-Kanal. Der Browser-Token ist das kleinere Geheimnis und läuft
+von selbst ab; das Passwort ist der bequemere Weg. Beides sind inoffizielle Schnittstellen.
 
 `request` ist das **einzige** Kommando, das publiziert: Es abonniert `.../get_reply`,
 schickt die Anfrage an `.../get` und wartet `ECOFLOW_WAIT` Sekunden (Default 15). Das

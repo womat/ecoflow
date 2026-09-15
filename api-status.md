@@ -180,11 +180,53 @@ Die Anfrage hat den Broker nie verlassen.
 zum Auslesen von Messwerten nicht nutzbar – weder über REST (1006) noch über MQTT
 (zwei abonnierbare, aber stumme Topics; Anfragen per ACL verboten).
 
-Ein inoffizieller Rest bleibt: Das **Endkunden-Portal** `user-portal.ecoflow.com` zeigt im
-Netzwerk-Tab des Browsers einen Request `detail?<seriennummer>`, der deutlich mehr liefert
-als Modbus (Zellspannungen, SOH, phasenweise Wirk-/Blind-/Scheinleistung, Netzschutz-
-parameter). Ohne Zusage von EcoFlow und jederzeit änderbar – aber mit dem eigenen Login
-erreichbar. Quelle: `MaxGrmm/EF-PowerOcean-TcpModbus`, `EcoFlow_PowerOcean_Modbus.md`. Es bleiben der lokale Modbus-Weg (Abschnitt 2) und – mit
+### Der Weg, der trotzdem funktioniert: das Endkunden-Portal
+
+`user-portal.ecoflow.com` zeigt für dasselbe Gerät ein vollständiges Dashboard – SOC,
+Solar-, Haus-, Netz- und Batterieleistung, Tages-/Monats-/Jahreserträge. Am eigenen Gerät
+beobachtet (September 2026): Das Portal ruft dafür auf
+
+```
+GET https://api-e.ecoflow.com/provider-service/user/device/detail?sn=<SN>   → HTTP 200
+```
+
+**Derselbe Host wie die Developer-API, aber ein anderer Dienst** (`provider-service` statt
+`iot-open`) und eine andere Authentifizierung: das Session-Token des Portals
+(`S1_JWT` im Local Storage) statt der HMAC-signierten API-Keys. Die 1006-Sperre gilt dort
+offensichtlich nicht – gesperrt ist die *Developer-API*, nicht der Datenzugang des
+Besitzers.
+
+Abrufbar mit `scripts/ecoflow-api.sh portal <SN>`, Token über `ECOFLOW_PORTAL_TOKEN`.
+
+Das Token gibt es auf zwei Wegen: aus dem eingeloggten Browser (*Local Storage → `S1_JWT`*)
+oder über den Login-Endpunkt der Endkunden-App:
+
+```
+POST https://api-e.ecoflow.com/auth/login
+{"email": "…", "password": "<base64>", "scene": "IOT_APP", "userType": "ECOFLOW"}
+→ data.token, data.user.userId
+```
+
+Das Passwort wird dabei nur **base64-kodiert, nicht gehasht** übertragen – Kodierung, keine
+Verschlüsselung. Wer das nicht will, nimmt den Browser-Token: kleineres Geheimnis, läuft von
+selbst ab. Quelle für den Ablauf: `shuette42/ecoflow-energy-ha`, `enhanced_auth.py`.
+
+Dort steht auch, wofür dieses Token sonst noch taugt: Der Endpunkt
+`/iot-auth/enterprise-development/user/certification` – den das Portal beim Laden selbst
+aufruft – liefert **AES-verschlüsselte MQTT-Zugangsdaten**; Schlüssel ist `SHA256(token)`,
+der IV eine Konstante aus dem Portal-JS. Das ist der MQTT-Kanal der App, auf dem im
+Unterschied zum Open-API-Kanal tatsächlich Daten fließen. Von diesem Repo nicht
+implementiert, aber dokumentiert, falls ein Live-Stream gebraucht wird.
+
+**Einordnung:** Das ist eine interne Schnittstelle der Weboberfläche, von EcoFlow weder
+dokumentiert noch zugesagt, und das Token läuft ab. Als dauerhafte Datenquelle taugt das
+nicht – lokales Modbus bleibt der stabile Weg. Als Gegenprobe beim Verifizieren der
+Modbus-Register ist es dagegen ausgezeichnet: dieselben Größen, aus EcoFlows eigener
+Anzeige.
+
+Laut `MaxGrmm/EF-PowerOcean-TcpModbus` liefert derselbe Endpunkt noch deutlich mehr als
+das Dashboard zeigt – Zellspannungen, SOH, phasenweise Wirk-/Blind-/Scheinleistung, rund
+180 Netzschutzparameter. Es bleiben der lokale Modbus-Weg (Abschnitt 2) und – mit
 allen Nachteilen – die inoffizielle App-Cloud (Abschnitt 2b).
 
 ## 2. Lokales Modbus TCP

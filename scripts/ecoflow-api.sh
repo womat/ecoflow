@@ -12,6 +12,8 @@
 #   ECOFLOW_SECRET_KEY   matching secret key
 #   ECOFLOW_HOST         API host, default https://api-e.ecoflow.com (EU)
 #                        use https://api-a.ecoflow.com for US accounts
+#   ECOFLOW_PORTAL_TOKEN session token of the consumer web portal, for the
+#                        "portal" commands only - see usage()
 #
 # Requires: bash, curl, openssl. jq is used for pretty-printing when present and
 # is mandatory for the mqtt and request commands; mqtt needs mosquitto_sub, request
@@ -53,13 +55,32 @@ commands:
                        the ACL may deny .../get_reply while granting .../quota.
                        This is the one command that publishes - see the note
                        below. Needs jq, mosquitto_sub and mosquitto_pub.
+  login [email]        log in to the consumer portal and print the session token
+                       on stdout, so it can be captured directly:
+                         export ECOFLOW_PORTAL_TOKEN="$(ecoflow-api.sh login)"
+                       The password is read from the terminal without echo, or
+                       taken from ECOFLOW_PASSWORD. Needs jq. See the note below.
+  portal <SN>          read the consumer portal's device detail, which carries
+                       what the Developer API refuses for blocked models
+                       GET /provider-service/user/device/detail?sn=<SN>
+  portal-get <path>    any other GET against the portal API
   selftest             check the signature assembly, no keys and no network
   help                 show this message
 
 environment:
-  ECOFLOW_ACCESS_KEY   required (except for selftest)
-  ECOFLOW_SECRET_KEY   required (except for selftest)
+  ECOFLOW_ACCESS_KEY   required (except for selftest and the portal commands)
+  ECOFLOW_SECRET_KEY   required (except for selftest and the portal commands)
   ECOFLOW_HOST         default https://api-e.ecoflow.com
+  ECOFLOW_EMAIL        account e-mail for "login", if not passed as an argument
+  ECOFLOW_PASSWORD     account password for "login". Prefer the interactive
+                       prompt: an exported password outlives the shell that set
+                       it and ends up in process environments.
+  ECOFLOW_PORTAL_TOKEN required for the portal commands. It is the session token
+                       of https://user-portal.ecoflow.com, not an API key: open
+                       the portal while logged in, then read the S1_JWT entry
+                       under Local Storage in the browser's developer tools.
+                       It expires - refetch it when a call returns 401. Keep it
+                       out of shell history and out of this repository.
 
 options:
   -v, --verbose        print the string that gets signed and the request
@@ -80,6 +101,14 @@ examples:
   ecoflow-api.sh mqtt HC31XXXXXXXXXXXX
   ecoflow-api.sh mqtt HC31XXXXXXXXXXXX get_reply
   ecoflow-api.sh request HC31XXXXXXXXXXXX bpSoc bpPwr
+  ECOFLOW_PORTAL_TOKEN=... ecoflow-api.sh portal HC31XXXXXXXXXXXX
+
+note on "login":
+  This is the consumer app's login endpoint, not a documented API. It takes the
+  account password **base64-encoded, not hashed** - base64 is encoding, not
+  encryption, so the password is protected by TLS alone. A portal session token
+  read from the browser is the smaller secret and expires on its own; the login
+  is the more convenient one. Neither is an official interface.
 
 note:
   The "values" command uses POST because the API's read endpoint for named
@@ -280,6 +309,114 @@ request() {
 	local body
 	body="$(api_get "$@")" || exit $?
 	show_and_judge "$body"
+}
+
+# portal_login [EMAIL] - print the portal session token on stdout
+#
+# Everything except the token goes to stderr, so the caller can capture it with
+# a command substitution. The password is never echoed, never stored and never
+# passed on a command line.
+portal_login() {
+	command -v jq >/dev/null 2>&1 || die 'login needs jq'
+
+	local email="${1:-${ECOFLOW_EMAIL:-}}"
+	if [ -z "$email" ]; then
+		read -r -p 'EcoFlow account e-mail: ' email </dev/tty || die 'no e-mail given'
+	fi
+	[ -n "$email" ] || die 'no e-mail given'
+
+	local password="${ECOFLOW_PASSWORD:-}"
+	if [ -z "$password" ]; then
+		read -rs -p 'Password (not echoed): ' password </dev/tty || die 'no password given'
+		printf '\n' >&2
+	fi
+	[ -n "$password" ] || die 'no password given'
+
+	# The endpoint wants the password base64-encoded. That is encoding, not
+	# hashing - see the note in usage().
+	local encoded
+	encoded="$(printf '%s' "$password" | base64 | tr -d '\n')"
+	password=''
+
+	local payload
+	payload="$(jq -cn --arg email "$email" --arg password "$encoded" \
+		'{email: $email, password: $password, scene: "IOT_APP", userType: "ECOFLOW"}')"
+	encoded=''
+
+	# The payload carries the password, so it goes in over stdin: an argument
+	# would be visible to anyone who can read the process list.
+	local body
+	body="$(printf '%s' "$payload" | curl -sS -X POST "${HOST}/auth/login" \
+		-H 'Content-Type: application/json;charset=UTF-8' \
+		--data-binary @-)" || die 'login request failed' 3
+	payload=''
+
+	local code
+	code="$(response_code "$body")"
+	if [ "$code" != '0' ]; then
+		printf 'ecoflow-api.sh: login failed: %s\n' \
+			"$(printf '%s' "$body" | jq -r '.message // "unknown error"')" >&2
+		exit 2
+	fi
+
+	local token user_id
+	token="$(printf '%s' "$body" | jq -r '.data.token // empty')"
+	user_id="$(printf '%s' "$body" | jq -r '.data.user.userId // empty')"
+	[ -n "$token" ] || die 'no token in the login response'
+
+	printf 'logged in as user %s\n' "$user_id" >&2
+	printf '%s\n' "$token"
+}
+
+# portal_fetch URL AUTHORIZATION -> body, then the HTTP status on the last line
+portal_fetch() {
+	curl -sS -w '\n%{http_code}' "$1" -H "Authorization: $2"
+}
+
+# portal_get PATH [QUERY] -> raw response body on stdout
+#
+# The consumer web portal authenticates with a session token rather than the
+# signed API keys, and its endpoints answer for devices the Developer API blocks.
+# Whether the token is sent bare or with a "Bearer " prefix differs between
+# deployments, so try it as given and retry prefixed on 401/403.
+portal_get() {
+	local path="$1" query="${2:-}"
+	local token="${ECOFLOW_PORTAL_TOKEN:-}"
+	[ -n "$token" ] || die 'ECOFLOW_PORTAL_TOKEN is not set (see --help)'
+
+	local url="${HOST}${path}${query}"
+	local body status
+
+	body="$(portal_fetch "$url" "$token")" || die 'request failed' 3
+	status="${body##*$'\n'}"
+	body="${body%$'\n'*}"
+
+	if [ "$status" = '401' ] || [ "$status" = '403' ]; then
+		case "$token" in
+		Bearer\ *) ;;
+		*)
+			[ "$VERBOSE" -eq 1 ] && printf 'retrying with a Bearer prefix\n' >&2
+			body="$(portal_fetch "$url" "Bearer $token")" || die 'request failed' 3
+			status="${body##*$'\n'}"
+			body="${body%$'\n'*}"
+			;;
+		esac
+	fi
+
+	if [ "$VERBOSE" -eq 1 ]; then
+		printf 'GET %s -> HTTP %s\n' "$url" "$status" >&2
+	fi
+
+	case "$status" in
+	401 | 403)
+		printf 'ecoflow-api.sh: HTTP %s - the portal token is missing, wrong or expired\n' \
+			"$status" >&2
+		printf '%s\n' "$body"
+		exit 2
+		;;
+	esac
+
+	printf '%s' "$body"
 }
 
 # show_and_judge BODY - pretty-print a response and turn its code into a status
@@ -508,7 +645,7 @@ main() {
 		exit 1
 	}
 
-	local cmd="$1"
+	local cmd="$1" body
 	shift
 
 	case "$cmd" in
@@ -552,6 +689,27 @@ main() {
 	request)
 		[ "$#" -ge 2 ] || die 'usage: ecoflow-api.sh request <SN> <quota> [quota ...]'
 		mqtt_request "$@"
+		;;
+	login)
+		[ "$#" -le 1 ] || die 'usage: ecoflow-api.sh login [email]'
+		portal_login "$@"
+		;;
+	portal)
+		[ "$#" -eq 1 ] || die 'usage: ecoflow-api.sh portal <SN>'
+		case "$1" in
+		*[!A-Za-z0-9_-]*) die "serial number looks wrong: $1" ;;
+		esac
+		body="$(portal_get /provider-service/user/device/detail "?sn=$1")" || exit $?
+		show_and_judge "$body"
+		;;
+	portal-get)
+		[ "$#" -eq 1 ] || die 'usage: ecoflow-api.sh portal-get <path>'
+		case "$1" in
+		/*) ;;
+		*) die 'path must start with /' ;;
+		esac
+		body="$(portal_get "$1")" || exit $?
+		show_and_judge "$body"
 		;;
 	selftest)
 		selftest
