@@ -181,15 +181,15 @@ eigene EcoFlow-Konto gebunden sein, sonst bleibt die Liste leer.
 
 ## Offene Punkte
 
-- Bestätigung, ob das Register-Mapping (ermittelt am PowerOcean Plus) 1:1 für
-  den DC Fit gilt, oder ob es eigene Adress-Overrides gibt
-- Ob die Register in `modbus-registers.md` 1-based oder 0-based zu lesen sind: die
-  Tabelle sagt 1-based, das Python-Snippet daneben verwendet die Zahlen literal
-  (pymodbus adressiert 0-based). Mit `modbusread` am Gerät klärbar: SOC einmal auf
-  42081 und einmal auf 42082 lesen
-- Genauer Menüpfad zum Modbus-Schalter in der EcoFlow Pro App (der Zugangsweg zur
-  App selbst ist geklärt, siehe `api-status.md`; dort steht auch eine Checkliste für
-  den Installateurstermin)
+- Bestätigung des Register-Mappings am DC Fit. Die aktuelle Quelle behandelt ihn als
+  Normalfall und kennt nur *einen* modellabhängigen Sonderfall, und der gilt dem Plus
+- Welche der beiden Register-Deutungen stimmt: `modbus-registers.md` stellt die
+  widersprüchlichen Adressen beider Quellen gegenüber, jede Zeile ist ein Einzeltest
+  am Gerät (z.B. System-SOC auf 40527 vs. 42082)
+- Bestätigung am Gerät, dass die Freischaltung wirklich über *Control Mode →
+  „Modbus control"* in der Pro App läuft (Checkliste in `api-status.md`)
+- Welche Werte `product_category`/`product_number` (40002/40003) am DC Fit liefern –
+  die Referenz-Integration kennt sie nicht
 - Ob der MQTT-Weg der Open API für den DC Fit Daten liefert oder dieselbe
   1006-Sperre greift
 
