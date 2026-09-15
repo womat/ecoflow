@@ -1,0 +1,360 @@
+#!/usr/bin/env bash
+#
+# ecoflow-api.sh - read-only client for the EcoFlow Developer/Open API.
+#
+# Signs requests the way the EcoFlow IoT Open API expects and prints the raw
+# JSON response. Like modbusread, this tool is deliberately read-only: it only
+# ever issues GET requests, so it cannot change anything on the device.
+#
+# Credentials come from the environment, never from flags or from this repo:
+#
+#   ECOFLOW_ACCESS_KEY   access key from https://developer-eu.ecoflow.com
+#   ECOFLOW_SECRET_KEY   matching secret key
+#   ECOFLOW_HOST         API host, default https://api-e.ecoflow.com (EU)
+#                        use https://api-a.ecoflow.com for US accounts
+#
+# Requires: bash, curl, openssl. jq is used for pretty-printing when present and
+# is mandatory for the mqtt command; mosquitto_sub is needed for mqtt as well.
+
+set -euo pipefail
+
+HOST="${ECOFLOW_HOST:-https://api-e.ecoflow.com}"
+VERBOSE=0
+
+usage() {
+	cat <<'USAGE'
+usage: ecoflow-api.sh [-v] <command> [args]
+
+commands:
+  devices              list the devices bound to this account
+                       GET /iot-open/sign/device/list
+  quota <SN>           read all values of one device
+                       GET /iot-open/sign/device/quota/all?sn=<SN>
+  get <path> [k=v ...] any other GET endpoint, parameters as key=value
+  cert                 fetch the MQTT credentials for this account
+                       GET /iot-open/sign/certification
+  mqtt <SN> [suffix]   subscribe to the device's MQTT topic and print what
+                       arrives; suffix defaults to "quota", other useful values
+                       are "status" and "#" (everything). Runs until Ctrl-C.
+                       Needs jq and mosquitto_sub.
+  selftest             check the signature assembly, no keys and no network
+  help                 show this message
+
+environment:
+  ECOFLOW_ACCESS_KEY   required (except for selftest)
+  ECOFLOW_SECRET_KEY   required (except for selftest)
+  ECOFLOW_HOST         default https://api-e.ecoflow.com
+
+options:
+  -v, --verbose        print the string that gets signed and the request
+                       headers to stderr; the secret key is never printed
+
+exit status:
+  0  API answered with code 0
+  1  usage or configuration error
+  2  API answered with a non-zero code (1006 means the model is excluded)
+  3  the request itself failed (network, TLS, ...)
+
+examples:
+  export ECOFLOW_ACCESS_KEY=... ECOFLOW_SECRET_KEY=...
+  ecoflow-api.sh devices
+  ecoflow-api.sh quota HC31XXXXXXXXXXXX
+  ecoflow-api.sh -v get /iot-open/sign/device/list
+  ecoflow-api.sh mqtt HC31XXXXXXXXXXXX
+  ecoflow-api.sh mqtt HC31XXXXXXXXXXXX '#'
+
+note:
+  Subscribing is read-only; this script never publishes to a topic. The MQTT
+  password is passed to mosquitto_sub on the command line, so it is briefly
+  visible to other users of this machine via the process list.
+USAGE
+}
+
+die() {
+	printf 'ecoflow-api.sh: %s\n' "$1" >&2
+	exit "${2:-1}"
+}
+
+# sign_string ACCESS_KEY NONCE TIMESTAMP [k=v ...]
+#
+# The API expects the business parameters sorted by ASCII value and joined with
+# "&", followed by accessKey, nonce and timestamp in exactly that order. Nested
+# parameters would have to be flattened first; this script only passes flat
+# key=value pairs, which is all the read endpoints need.
+sign_string() {
+	local access_key="$1" nonce="$2" timestamp="$3"
+	shift 3
+
+	local params=''
+	if [ "$#" -gt 0 ]; then
+		params="$(printf '%s\n' "$@" | LC_ALL=C sort | paste -sd'&' -)&"
+	fi
+
+	printf '%saccessKey=%s&nonce=%s&timestamp=%s' \
+		"$params" "$access_key" "$nonce" "$timestamp"
+}
+
+# hmac_sha256 SECRET STRING -> lowercase hex
+#
+# Reading the last field works for both "(stdin)= abc..." from older openssl
+# and "SHA2-256(stdin)= abc..." from newer versions.
+hmac_sha256() {
+	printf '%s' "$2" | openssl dgst -sha256 -hmac "$1" | awk '{print $NF}'
+}
+
+# api_get PATH [k=v ...] -> raw response body on stdout
+api_get() {
+	local path="$1"
+	shift
+
+	local access_key="${ECOFLOW_ACCESS_KEY:-}" secret_key="${ECOFLOW_SECRET_KEY:-}"
+	[ -n "$access_key" ] || die 'ECOFLOW_ACCESS_KEY is not set'
+	[ -n "$secret_key" ] || die 'ECOFLOW_SECRET_KEY is not set'
+
+	# The API wants milliseconds; date +%s keeps this portable to BSD date.
+	local timestamp nonce str sign query=''
+	timestamp="$(( $(date +%s) * 1000 ))"
+	nonce="$(( 100000 + RANDOM % 900000 ))"
+
+	str="$(sign_string "$access_key" "$nonce" "$timestamp" "$@")"
+	sign="$(hmac_sha256 "$secret_key" "$str")"
+
+	if [ "$#" -gt 0 ]; then
+		query="?$(printf '%s\n' "$@" | LC_ALL=C sort | paste -sd'&' -)"
+	fi
+
+	if [ "$VERBOSE" -eq 1 ]; then
+		{
+			printf 'GET %s%s%s\n' "$HOST" "$path" "$query"
+			printf 'signStr: %s\n' "$str"
+			printf 'headers: accessKey=%s nonce=%s timestamp=%s sign=%s\n' \
+				"$access_key" "$nonce" "$timestamp" "$sign"
+		} >&2
+	fi
+
+	curl -sS "${HOST}${path}${query}" \
+		-H "accessKey: $access_key" \
+		-H "nonce: $nonce" \
+		-H "timestamp: $timestamp" \
+		-H "sign: $sign" || die 'request failed' 3
+}
+
+# response_code BODY -> the top-level result code, which is the first one in
+# the response. Empty if the response carries no code at all.
+response_code() {
+	printf '%s' "$1" |
+		grep -oE '"code"[[:space:]]*:[[:space:]]*"?[0-9]+' |
+		head -1 | grep -oE '[0-9]+$' || true
+}
+
+# report_code CODE -> explain the code on stderr, return the script exit status
+report_code() {
+	local code="$1"
+
+	case "$code" in
+	0) return 0 ;;
+	'')
+		printf 'ecoflow-api.sh: no result code in response\n' >&2
+		return 2
+		;;
+	1006)
+		cat >&2 <<-'HINT'
+			ecoflow-api.sh: code 1006 - this device model is not exposed through the
+			Developer API. This is a model blocklist on EcoFlow's side, not a
+			configuration problem; see api-status.md. Note that a blocked device can
+			still show up in "devices" - the block hits the data call. Use local
+			Modbus TCP instead.
+		HINT
+		return 2
+		;;
+	8512)
+		cat >&2 <<-'HINT'
+			ecoflow-api.sh: code 8512 - no permission for this serial number. It is
+			most likely not bound to this account; check the SN against the output of
+			"ecoflow-api.sh devices".
+		HINT
+		return 2
+		;;
+	*)
+		printf 'ecoflow-api.sh: API returned code %s\n' "$code" >&2
+		return 2
+		;;
+	esac
+}
+
+# request PATH [k=v ...] - fetch, print and judge one endpoint
+request() {
+	local body
+	body="$(api_get "$@")"
+
+	if command -v jq >/dev/null 2>&1; then
+		printf '%s' "$body" | jq . || printf '%s\n' "$body"
+	else
+		printf '%s\n' "$body"
+	fi
+
+	report_code "$(response_code "$body")"
+}
+
+# mqtt_subscribe SN [SUFFIX] - subscribe to the device topic, read-only
+mqtt_subscribe() {
+	local sn="$1" suffix="${2:-quota}"
+
+	command -v jq >/dev/null 2>&1 || die 'mqtt needs jq'
+	command -v mosquitto_sub >/dev/null 2>&1 ||
+		die 'mqtt needs mosquitto_sub (brew install mosquitto, apt install mosquitto-clients)'
+
+	local body code
+	body="$(api_get /iot-open/sign/certification)"
+	code="$(response_code "$body")"
+	if [ "$code" != '0' ]; then
+		printf '%s' "$body" | jq . >&2 || printf '%s\n' "$body" >&2
+		report_code "$code"
+		return
+	fi
+
+	local account password url port
+	account="$(printf '%s' "$body" | jq -r '.data.certificateAccount')"
+	password="$(printf '%s' "$body" | jq -r '.data.certificatePassword')"
+	url="$(printf '%s' "$body" | jq -r '.data.url')"
+	port="$(printf '%s' "$body" | jq -r '.data.port')"
+
+	[ -n "$account" ] && [ "$account" != 'null' ] || die 'no MQTT credentials in response'
+
+	local topic="/open/${account}/${sn}/${suffix}"
+
+	# TLS trust store: newer mosquitto knows the OS store, older builds need an
+	# explicit file or directory.
+	local -a tls=()
+	if mosquitto_sub --help 2>&1 | grep -q -- '--tls-use-os-certs'; then
+		tls=(--tls-use-os-certs)
+	elif [ -f /etc/ssl/cert.pem ]; then
+		tls=(--cafile /etc/ssl/cert.pem)
+	elif [ -d /etc/ssl/certs ]; then
+		tls=(--capath /etc/ssl/certs)
+	else
+		die 'no CA trust store found for TLS'
+	fi
+
+	# In verbose mode let mosquitto_sub report the protocol handshake, so a
+	# granted SUBACK can be told apart from a topic that is simply silent.
+	local -a debug=()
+	if [ "$VERBOSE" -eq 1 ]; then
+		debug=(-d)
+		printf 'mosquitto_sub -h %s -p %s -u %s -P <password> %s -d -t %s -v\n' \
+			"$url" "$port" "$account" "${tls[*]}" "$topic" >&2
+	fi
+
+	printf 'subscribing to %s (Ctrl-C to stop)\n' "$topic" >&2
+	mosquitto_sub -h "$url" -p "$port" -u "$account" -P "$password" \
+		"${tls[@]}" "${debug[@]}" -t "$topic" -v
+}
+
+# Regression check for the assembly order in sign_string. The expected value is
+# self-generated, NOT an official test vector from EcoFlow: it proves the string
+# is still built the same way, not that EcoFlow's server accepts it.
+selftest() {
+	local want_plain='6592b5bf9f12e3b50580269d3f59a9a3b9554c87c7ebc80ffbe6a17103a693ce'
+	local want_param='1c45c205e6b9c90407ec7d0be1015f85750c04b505e9399389f633e1ab8f3f84'
+	local secret='SECRET' failed=0
+
+	local got_str got_sign
+	got_str="$(sign_string 'AK' '123456' '1700000000000')"
+	[ "$got_str" = 'accessKey=AK&nonce=123456&timestamp=1700000000000' ] || {
+		printf 'selftest: plain signStr is %s\n' "$got_str" >&2
+		failed=1
+	}
+	got_sign="$(hmac_sha256 "$secret" "$got_str")"
+	[ "$got_sign" = "$want_plain" ] || {
+		printf 'selftest: plain sign is %s, want %s\n' "$got_sign" "$want_plain" >&2
+		failed=1
+	}
+
+	# Business parameters come first and are sorted, hence sn before zz.
+	got_str="$(sign_string 'AK' '123456' '1700000000000' 'zz=2' 'sn=ABC')"
+	[ "$got_str" = 'sn=ABC&zz=2&accessKey=AK&nonce=123456&timestamp=1700000000000' ] || {
+		printf 'selftest: parameterised signStr is %s\n' "$got_str" >&2
+		failed=1
+	}
+	got_sign="$(hmac_sha256 "$secret" "$got_str")"
+	[ "$got_sign" = "$want_param" ] || {
+		printf 'selftest: parameterised sign is %s, want %s\n' "$got_sign" "$want_param" >&2
+		failed=1
+	}
+
+	[ "$failed" -eq 0 ] || die 'selftest FAILED'
+	printf 'selftest OK\n'
+}
+
+main() {
+	while [ "$#" -gt 0 ]; do
+		case "$1" in
+		-v | --verbose)
+			VERBOSE=1
+			shift
+			;;
+		-h | --help | help)
+			usage
+			exit 0
+			;;
+		--)
+			shift
+			break
+			;;
+		-*) die "unknown option: $1" ;;
+		*) break ;;
+		esac
+	done
+
+	[ "$#" -gt 0 ] || {
+		usage >&2
+		exit 1
+	}
+
+	local cmd="$1"
+	shift
+
+	case "$cmd" in
+	devices)
+		[ "$#" -eq 0 ] || die 'devices takes no arguments'
+		request /iot-open/sign/device/list
+		;;
+	quota)
+		[ "$#" -eq 1 ] || die 'usage: ecoflow-api.sh quota <SN>'
+		request /iot-open/sign/device/quota/all "sn=$1"
+		;;
+	get)
+		[ "$#" -ge 1 ] || die 'usage: ecoflow-api.sh get <path> [k=v ...]'
+		local path="$1"
+		shift
+		case "$path" in
+		/*) ;;
+		*) die 'path must start with /' ;;
+		esac
+		local p
+		for p in "$@"; do
+			case "$p" in
+			*=*) ;;
+			*) die "parameter must be key=value: $p" ;;
+			esac
+		done
+		request "$path" "$@"
+		;;
+	cert)
+		[ "$#" -eq 0 ] || die 'cert takes no arguments'
+		request /iot-open/sign/certification
+		;;
+	mqtt)
+		[ "$#" -ge 1 ] && [ "$#" -le 2 ] || die 'usage: ecoflow-api.sh mqtt <SN> [suffix]'
+		mqtt_subscribe "$@"
+		;;
+	selftest)
+		selftest
+		;;
+	*)
+		die "unknown command: $cmd"
+		;;
+	esac
+}
+
+main "$@"
