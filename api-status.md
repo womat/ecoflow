@@ -178,7 +178,13 @@ Die Anfrage hat den Broker nie verlassen.
 
 **Fazit:** Für die PowerOcean-Familie inklusive **DC Fit** ist die offizielle Cloud-API
 zum Auslesen von Messwerten nicht nutzbar – weder über REST (1006) noch über MQTT
-(zwei abonnierbare, aber stumme Topics; Anfragen per ACL verboten). Es bleiben der lokale Modbus-Weg (Abschnitt 2) und – mit
+(zwei abonnierbare, aber stumme Topics; Anfragen per ACL verboten).
+
+Ein inoffizieller Rest bleibt: Das **Endkunden-Portal** `user-portal.ecoflow.com` zeigt im
+Netzwerk-Tab des Browsers einen Request `detail?<seriennummer>`, der deutlich mehr liefert
+als Modbus (Zellspannungen, SOH, phasenweise Wirk-/Blind-/Scheinleistung, Netzschutz-
+parameter). Ohne Zusage von EcoFlow und jederzeit änderbar – aber mit dem eigenen Login
+erreichbar. Quelle: `MaxGrmm/EF-PowerOcean-TcpModbus`, `EcoFlow_PowerOcean_Modbus.md`. Es bleiben der lokale Modbus-Weg (Abschnitt 2) und – mit
 allen Nachteilen – die inoffizielle App-Cloud (Abschnitt 2b).
 
 ## 2. Lokales Modbus TCP
@@ -258,10 +264,15 @@ Port 502 `connection refused` – also deaktiviert, wie dokumentiert.
 
 **Das eigentliche Anliegen**
 
-- [ ] **Modbus TCP am Wechselrichter aktivieren.**
-- [ ] Menüpfad bzw. Bezeichnung des Schalters notieren – das schließt die letzte offene
-      Frage unten.
+- [ ] **Modbus TCP am Wechselrichter aktivieren** – konkret: Wechselrichter in der Pro
+      App auswählen und den **Control Mode auf „Modbus control"** stellen. So beschreibt
+      es die Referenz-Integration; bitte bestätigen lassen, ob das Menü tatsächlich so
+      heißt.
+- [ ] Ändert dieser Modus etwas am internen Scheduling der Anlage?
 - [ ] Überlebt die Einstellung ein Firmware-Update?
+- [ ] **Register 40002 und 40003 auslesen** (`product_category`, `product_number`),
+      sobald Modbus läuft: Die Referenz-Integration kann den DC Fit daran *nicht*
+      erkennen, weil niemand die Werte kennt – ein Beitrag, der upstream fehlt.
 
 **Damit man danach auch drankommt**
 
@@ -303,10 +314,12 @@ REST-Interface – eine explizite Bestätigung dafür liegt aber nicht vor.
 - [ ] Gilt das Modbus-Register-Mapping (PowerOcean Plus) 1:1 für DC Fit, oder
       gibt es ein eigenes `InverterModel`-Mapping mit abweichenden Adressen?
       → `models.py` im Repo `MaxGrmm/EF-PowerOcean-TcpModbus` noch nicht geprüft.
-- [ ] Genauer Menüpfad zum Modbus-Schalter in der EcoFlow Pro App: in welchem der
-      drei Inbetriebnahme-Schritte bzw. Gerätemenüs liegt er, und ist er nachträglich
-      erreichbar? (Der Zugangsweg zur Pro App selbst ist geklärt, siehe 2a; die Fragen
-      für den Installateurstermin stehen in 2c.)
+- [x] Genauer Menüpfad zum Modbus-Schalter in der EcoFlow Pro App → laut
+      `MaxGrmm/EF-PowerOcean-TcpModbus`: Wechselrichter auswählen, Control Mode auf
+      **„Modbus control"** umstellen. Also ein Betriebsmodus-Wechsel, kein
+      versteckter Schalter. Am Gerät noch zu bestätigen (siehe 2c)
+- [ ] Wirkt sich der Modus „Modbus control" auf das interne Scheduling aus? Bei rein
+      lesendem Zugriff vermutlich folgenlos, belegt ist das nicht
 - [x] Liefert das Präfix `HC31` (DC Fit) Fehler 1006? → **Ja, bei `quota/all`**;
       `device/list` listet das Gerät dagegen normal (September 2026)
 - [x] Kommen auf dem MQTT-Topic `/open/<acct>/<SN>/quota` Nachrichten an? → **Nein**,
