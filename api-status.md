@@ -42,9 +42,9 @@ Zwei Wege existieren, beide mit Einschränkungen:
   `certificatePassword`, `url` = `mqtt-e.ecoflow.com`, `port` = 8883, MQTTS).
 - MQTT-Topics je Gerät: `/open/<certificateAccount>/<SN>/quota` und `.../status`
   (Gerät → App) sowie `.../get`, `.../set` mit ihren `_reply`-Gegenstücken
-  (App → Gerät). Die beiden letzten erfordern *Publish* und bleiben deshalb
-  außerhalb von `scripts/ecoflow-api.sh` – ungetestet, ob sie für gesperrte Geräte
-  überhaupt etwas liefern würden.
+  (App → Gerät). `.../set` bleibt bewusst außerhalb von `scripts/ecoflow-api.sh`;
+  `.../get` ist über das Kommando `request` erreichbar, dessen Topic-Suffix fest
+  verdrahtet ist.
 - Fertig signiert aufrufbar mit [`scripts/ecoflow-api.sh`](./scripts/ecoflow-api.sh).
 
 ### Fehler 1006 ist eine Modell-Sperrliste
@@ -156,7 +156,12 @@ prüft: länger laufen lassen und dabei die Anlage bewusst bewegen (z.B. Verbrau
 zuschalten) – nicht mit `#` testen, siehe Wildcard-Hinweis oben.
 
 Nachmessbar mit `scripts/ecoflow-api.sh -v mqtt <SN>`; der Verbose-Modus zeigt CONNACK,
-SUBACK und die Keepalive-Pakete.
+SUBACK und die Keepalive-Pakete, und jede eintreffende Nachricht wird mit Zeitstempel
+protokolliert.
+
+Noch nicht beantwortet: ob das Gerät auf eine *Anfrage* über `.../get` antwortet
+(Antwort käme auf `.../get_reply`). Dafür gibt es `scripts/ecoflow-api.sh request <SN>
+<quota…>`; Ergebnis hier eintragen, sobald gemessen.
 
 - Quellen: https://github.com/Feberdin/ecoflow-powerocean-ha (README),
   https://github.com/shuette42/ecoflow-energy-ha (Präfixlisten)
