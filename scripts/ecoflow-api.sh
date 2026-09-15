@@ -14,7 +14,8 @@
 #                        use https://api-a.ecoflow.com for US accounts
 #
 # Requires: bash, curl, openssl. jq is used for pretty-printing when present and
-# is mandatory for the mqtt command; mosquitto_sub is needed for mqtt as well.
+# is mandatory for the mqtt and request commands; mqtt needs mosquitto_sub, request
+# needs mosquitto_pub as well.
 
 set -euo pipefail
 
@@ -40,9 +41,18 @@ commands:
   cert                 fetch the MQTT credentials for this account
                        GET /iot-open/sign/certification
   mqtt <SN> [suffix]   subscribe to the device's MQTT topic and print what
-                       arrives; suffix defaults to "quota", other useful values
-                       are "status" and "#" (everything). Runs until Ctrl-C.
-                       Needs jq and mosquitto_sub.
+                       arrives, each line prefixed with a timestamp; suffix
+                       defaults to "quota", other useful values are "status",
+                       "get_reply" and "#" (everything, usually denied by the
+                       ACL). Runs until Ctrl-C. Needs jq and mosquitto_sub.
+  request <SN> <quota> [quota ...]
+                       ask the device for named values over MQTT: listen on
+                       .../get_reply and .../quota, publish the request to
+                       .../get, print whatever arrives within ECOFLOW_WAIT
+                       seconds (default 15). Listening on both matters because
+                       the ACL may deny .../get_reply while granting .../quota.
+                       This is the one command that publishes - see the note
+                       below. Needs jq, mosquitto_sub and mosquitto_pub.
   selftest             check the signature assembly, no keys and no network
   help                 show this message
 
@@ -68,16 +78,21 @@ examples:
   ecoflow-api.sh -v get /iot-open/sign/device/list
   ecoflow-api.sh values HC31XXXXXXXXXXXX bpSoc bpPwr
   ecoflow-api.sh mqtt HC31XXXXXXXXXXXX
-  ecoflow-api.sh mqtt HC31XXXXXXXXXXXX '#'
+  ecoflow-api.sh mqtt HC31XXXXXXXXXXXX get_reply
+  ecoflow-api.sh request HC31XXXXXXXXXXXX bpSoc bpPwr
 
 note:
   The "values" command uses POST because the API's read endpoint for named
   quotas is a POST. It is still a read: this script never touches the PUT
   endpoint that would set values on the device.
 
-  Subscribing is read-only; this script never publishes to a topic. The MQTT
-  password is passed to mosquitto_sub on the command line, so it is briefly
-  visible to other users of this machine via the process list.
+  "request" is the only command that publishes, and it can only publish to the
+  .../get topic: the suffix is hard-wired, there is no free topic argument, so
+  the .../set topic that would change the device stays unreachable from here.
+  Everything else only ever subscribes.
+
+  The MQTT password is passed to the mosquitto clients on the command line, so
+  it is briefly visible to other users of this machine via the process list.
 USAGE
 }
 
@@ -294,6 +309,40 @@ read_values() {
 	show_and_judge "$response"
 }
 
+# mqtt_credentials - fetch the MQTT credentials and set MQTT_ACCOUNT,
+# MQTT_PASSWORD, MQTT_URL, MQTT_PORT plus the MQTT_TLS array
+mqtt_credentials() {
+	local body code
+	body="$(api_get /iot-open/sign/certification)" || exit $?
+	code="$(response_code "$body")"
+	if [ "$code" != '0' ]; then
+		printf '%s' "$body" | jq . >&2 || printf '%s\n' "$body" >&2
+		report_code "$code"
+		exit $?
+	fi
+
+	MQTT_ACCOUNT="$(printf '%s' "$body" | jq -r '.data.certificateAccount')"
+	MQTT_PASSWORD="$(printf '%s' "$body" | jq -r '.data.certificatePassword')"
+	MQTT_URL="$(printf '%s' "$body" | jq -r '.data.url')"
+	MQTT_PORT="$(printf '%s' "$body" | jq -r '.data.port')"
+
+	[ -n "$MQTT_ACCOUNT" ] && [ "$MQTT_ACCOUNT" != 'null' ] ||
+		die 'no MQTT credentials in response'
+
+	# TLS trust store: newer mosquitto knows the OS store, older builds need an
+	# explicit file or directory.
+	MQTT_TLS=()
+	if mosquitto_sub --help 2>&1 | grep -q -- '--tls-use-os-certs'; then
+		MQTT_TLS=(--tls-use-os-certs)
+	elif [ -f /etc/ssl/cert.pem ]; then
+		MQTT_TLS=(--cafile /etc/ssl/cert.pem)
+	elif [ -d /etc/ssl/certs ]; then
+		MQTT_TLS=(--capath /etc/ssl/certs)
+	else
+		die 'no CA trust store found for TLS'
+	fi
+}
+
 # mqtt_subscribe SN [SUFFIX] - subscribe to the device topic, read-only
 mqtt_subscribe() {
 	local sn="$1" suffix="${2:-quota}"
@@ -302,50 +351,84 @@ mqtt_subscribe() {
 	command -v mosquitto_sub >/dev/null 2>&1 ||
 		die 'mqtt needs mosquitto_sub (brew install mosquitto, apt install mosquitto-clients)'
 
-	local body code
-	body="$(api_get /iot-open/sign/certification)" || exit $?
-	code="$(response_code "$body")"
-	if [ "$code" != '0' ]; then
-		printf '%s' "$body" | jq . >&2 || printf '%s\n' "$body" >&2
-		report_code "$code"
-		return
-	fi
-
-	local account password url port
-	account="$(printf '%s' "$body" | jq -r '.data.certificateAccount')"
-	password="$(printf '%s' "$body" | jq -r '.data.certificatePassword')"
-	url="$(printf '%s' "$body" | jq -r '.data.url')"
-	port="$(printf '%s' "$body" | jq -r '.data.port')"
-
-	[ -n "$account" ] && [ "$account" != 'null' ] || die 'no MQTT credentials in response'
-
-	local topic="/open/${account}/${sn}/${suffix}"
-
-	# TLS trust store: newer mosquitto knows the OS store, older builds need an
-	# explicit file or directory.
-	local -a tls=()
-	if mosquitto_sub --help 2>&1 | grep -q -- '--tls-use-os-certs'; then
-		tls=(--tls-use-os-certs)
-	elif [ -f /etc/ssl/cert.pem ]; then
-		tls=(--cafile /etc/ssl/cert.pem)
-	elif [ -d /etc/ssl/certs ]; then
-		tls=(--capath /etc/ssl/certs)
-	else
-		die 'no CA trust store found for TLS'
-	fi
+	mqtt_credentials
+	local topic="/open/${MQTT_ACCOUNT}/${sn}/${suffix}"
 
 	# In verbose mode let mosquitto_sub report the protocol handshake, so a
 	# granted SUBACK can be told apart from a topic that is simply silent.
 	local -a debug=()
 	if [ "$VERBOSE" -eq 1 ]; then
 		debug=(-d)
-		printf 'mosquitto_sub -h %s -p %s -u %s -P <password> %s -d -t %s -v\n' \
-			"$url" "$port" "$account" "${tls[*]}" "$topic" >&2
+		printf 'mosquitto_sub -h %s -p %s -u %s -P <password> %s -d -t %s\n' \
+			"$MQTT_URL" "$MQTT_PORT" "$MQTT_ACCOUNT" "${MQTT_TLS[*]}" "$topic" >&2
 	fi
 
+	# Timestamp every message: a quiet log is only evidence if you can tell when
+	# it was quiet.
 	printf 'subscribing to %s (Ctrl-C to stop)\n' "$topic" >&2
-	mosquitto_sub -h "$url" -p "$port" -u "$account" -P "$password" \
-		"${tls[@]}" "${debug[@]}" -t "$topic" -v
+	mosquitto_sub -h "$MQTT_URL" -p "$MQTT_PORT" -u "$MQTT_ACCOUNT" -P "$MQTT_PASSWORD" \
+		"${MQTT_TLS[@]}" "${debug[@]}" -t "$topic" -F '%I %t %p'
+}
+
+# mqtt_request SN QUOTA... - ask the device over MQTT and wait for the reply
+#
+# This publishes, which nothing else in this script does. The topic suffix is
+# hard-wired to "get": the "set" topic, which would change the device, cannot be
+# reached through this command by construction.
+mqtt_request() {
+	command -v jq >/dev/null 2>&1 || die 'request needs jq'
+	command -v mosquitto_sub >/dev/null 2>&1 || die 'request needs mosquitto_sub'
+	command -v mosquitto_pub >/dev/null 2>&1 || die 'request needs mosquitto_pub'
+
+	local sn="$1"
+	shift
+	local wait="${ECOFLOW_WAIT:-15}"
+
+	mqtt_credentials
+	local reply_topic="/open/${MQTT_ACCOUNT}/${sn}/get_reply"
+	local quota_topic="/open/${MQTT_ACCOUNT}/${sn}/quota"
+	local get_topic="/open/${MQTT_ACCOUNT}/${sn}/get"
+
+	local payload
+	payload="$(jq -cn --arg id "$(date +%s)" \
+		'$ARGS.positional as $q | {id: $id, version: "1.0", params: {quotas: $q}}' \
+		--args "$@")"
+
+	if [ "$VERBOSE" -eq 1 ]; then
+		{
+			printf 'subscribe: %s\n' "$reply_topic"
+			printf 'subscribe: %s\n' "$quota_topic"
+			printf 'publish:   %s\n' "$get_topic"
+			printf 'payload:   %s\n' "$payload"
+		} >&2
+	fi
+
+	# Listen on the reply topic and on quota: the ACL denies .../get_reply on at
+	# least one account (SUBACK 0x80) while granting .../quota, and a denied
+	# subscription does not stop mosquitto_sub as long as another one is granted.
+	printf 'listening on %s and %s for %ss\n' "$reply_topic" "$quota_topic" "$wait" >&2
+	mosquitto_sub -h "$MQTT_URL" -p "$MQTT_PORT" -u "$MQTT_ACCOUNT" -P "$MQTT_PASSWORD" \
+		"${MQTT_TLS[@]}" -t "$reply_topic" -t "$quota_topic" -F '%I %t %p' -W "$wait" &
+	local sub_pid=$!
+
+	# Give the subscription a moment to be established before asking.
+	sleep 2
+
+	# Publish over MQTT v5 at QoS 1 and show the handshake: only v5 carries a
+	# reason code in the PUBACK, which is what distinguishes "the broker refused
+	# to forward this" (0x87, not authorized) from "the device ignored it".
+	# Fall back to the protocol default if the broker does not speak v5.
+	printf 'publishing request to %s\n' "$get_topic" >&2
+	if ! mosquitto_pub -h "$MQTT_URL" -p "$MQTT_PORT" -u "$MQTT_ACCOUNT" -P "$MQTT_PASSWORD" \
+		"${MQTT_TLS[@]}" -t "$get_topic" -m "$payload" -V 5 -q 1 -d; then
+		printf 'MQTT v5 publish failed, retrying with the protocol default\n' >&2
+		mosquitto_pub -h "$MQTT_URL" -p "$MQTT_PORT" -u "$MQTT_ACCOUNT" -P "$MQTT_PASSWORD" \
+			"${MQTT_TLS[@]}" -t "$get_topic" -m "$payload" -q 1 -d ||
+			die 'publishing the request failed' 3
+	fi
+
+	wait "$sub_pid" || true
+	printf 'done waiting; no output above means the device did not answer\n' >&2
 }
 
 # Check the signature implementation against the official test vector from
@@ -465,6 +548,10 @@ main() {
 	mqtt)
 		[ "$#" -ge 1 ] && [ "$#" -le 2 ] || die 'usage: ecoflow-api.sh mqtt <SN> [suffix]'
 		mqtt_subscribe "$@"
+		;;
+	request)
+		[ "$#" -ge 2 ] || die 'usage: ecoflow-api.sh request <SN> <quota> [quota ...]'
+		mqtt_request "$@"
 		;;
 	selftest)
 		selftest

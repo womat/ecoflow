@@ -141,6 +141,7 @@ scripts/ecoflow-api.sh -v get /iot-open/sign/device/list   # beliebiger GET, mit
 scripts/ecoflow-api.sh values <SN> bpSoc bpPwr     # gezielte Werte (POST-Endpunkt)
 scripts/ecoflow-api.sh cert                       # MQTT-Zugangsdaten des Kontos
 scripts/ecoflow-api.sh mqtt <SN>                  # Topic abonnieren (Ctrl-C beendet)
+scripts/ecoflow-api.sh request <SN> bpSoc         # Werte per MQTT anfordern
 scripts/ecoflow-api.sh selftest                   # Signatur gegen EcoFlows Testvektor
 ```
 
@@ -151,9 +152,15 @@ Werte setzt, kennt das Skript bewusst nicht.
 
 `mqtt` holt sich die Zugangsdaten über `/iot-open/sign/certification` und abonniert
 `/open/<certificateAccount>/<SN>/quota` (zweites Argument wechselt das Suffix, z.B.
-`status` oder `#`). Braucht zusätzlich `jq` und `mosquitto_sub`
-(`brew install mosquitto` bzw. `apt install mosquitto-clients`). Auch hier wird nur
-abonniert, nie publiziert.
+`status`, `get_reply` oder `#`). Jede Nachricht bekommt einen Zeitstempel – eine stille
+Aufzeichnung ist nur dann ein Beleg, wenn man weiß, wann sie still war. Braucht
+zusätzlich `jq` und `mosquitto_sub` (`brew install mosquitto` bzw.
+`apt install mosquitto-clients`).
+
+`request` ist das **einzige** Kommando, das publiziert: Es abonniert `.../get_reply`,
+schickt die Anfrage an `.../get` und wartet `ECOFLOW_WAIT` Sekunden (Default 15). Das
+Suffix ist fest verdrahtet – es gibt kein freies Topic-Argument, das `.../set`-Topic ist
+von hier aus also nicht erreichbar. Braucht zusätzlich `mosquitto_pub`.
 
 Exit-Code `0` heißt `code 0` von der API, `2` jeder andere Code. **`2` mit Code 1006**
 ist die interessante Antwort: Dann ist das Modell von der Developer-API ausgeschlossen
