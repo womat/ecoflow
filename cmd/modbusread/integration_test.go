@@ -272,7 +272,7 @@ func TestBadArguments(t *testing.T) {
 // dataLines returns the output rows without the header.
 func dataLines(out string) []string {
 	var rows []string
-	for _, l := range strings.Split(strings.TrimRight(out, "\n"), "\n") {
+	for l := range strings.SplitSeq(strings.TrimRight(out, "\n"), "\n") {
 		if l == "" || strings.Contains(l, "addr") && strings.Contains(l, "raw") {
 			continue
 		}
