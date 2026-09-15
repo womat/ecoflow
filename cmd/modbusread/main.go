@@ -66,7 +66,7 @@ func run(argv []string, stdout, stderr io.Writer) int {
 		return 0
 	}
 	if len(pos) != 3 {
-		fmt.Fprintln(stderr, "error: expected <host[:port]> <address> <type>; see --help")
+		fmt.Fprintln(stderr, "error: expected <target> <address> <type>; see --help")
 		return 1
 	}
 
