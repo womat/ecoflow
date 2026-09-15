@@ -198,6 +198,44 @@ Besitzers.
 
 Abrufbar mit `scripts/ecoflow-api.sh portal <SN>`, Token über `ECOFLOW_PORTAL_TOKEN`.
 
+**Zwei Header, mehr braucht es nicht** (am Gerät ausprobiert, September 2026):
+`Authorization: Bearer <token>` und **`product-type: 85`** – die Produktkennung, die das
+Portal selbst als `productKey` in der URL führt. Fehlt sie, antwortet der Endpunkt mit
+`code 0` und **ohne** `data`; das sieht wie ein leeres Konto aus, ist aber nur der fehlende
+Header. Die Weboberfläche schickt zusätzlich Signaturheader (`x-appid`, `x-nonce`,
+`x-sign`, `x-timestamp`); ob man sie mitsendet, ändert an der Antwort nichts.
+
+### Was der Endpunkt liefert
+
+Die Kopfebene trägt **genau die Feldnamen der offiziellen PowerOcean-Doku** – also das,
+was die Developer-API für dieses Gerät mit 1006 verweigert:
+
+| Feld | Beispielwert | Bedeutung |
+|---|---|---|
+| `bpSoc` | 51 | Batterie-SOC in % |
+| `bpPwr` | -204.28 | Batterieleistung |
+| `sysLoadPwr` | -204.28 | Hauslast |
+| `sysGridPwr` | 0.0 | Netzleistung |
+| `mpptPwr` | 0.0 | PV-Leistung |
+| `online` | 1 | Gerätestatus |
+| `todayElectricityGeneration` … `totalElectricityGeneration` | | Tages-/Monats-/Jahres-/Gesamtertrag |
+
+Darunter liegt ein `quota`-Objekt mit den Rohblöcken der Firmware (Präfix `DC303_`, was
+für das DC-Fit-Modell stehen dürfte):
+
+| Block | Felder | Inhalt |
+|---|---|---|
+| `DC303_EMS_HEARTBEAT` | 69 | SOC-Grenzen, Zählerwerte je Phase (`meterAVoltage`, `meterACurrent`, …), Tagesenergien, Fehlercodes/-masken, `workingMode`, `sysWorkSta`, MPPT-Spannungsfenster |
+| `DC303_DCDC_STA_HEARTBEAT` | 54 | DCDC-Status |
+| `DC303_DCDC_CHANGE_HEARTBEAT` | 26 | DCDC-Änderungen |
+| `DC303_ENERGY_STREAM_REPORT` | 9 | `bpSoc`, `bpPwr`, `pvPwr`, `gridPwr`, `loadPwr`, `dcdcPwr`, `heatingPower`, `timestamp` |
+| `DC303_ERROR_CHANGE_HEARTBEAT` | 4 | Fehlerzustände |
+| `DC303_BMS_HEARTBEAT`, `DC303_BP_CHANGE_HEARTBEAT`, `DC303_ECOLOGY_DEV_BIND_LIST_REPORT` | 1–2 | Batterie- und Bindungsinfos |
+
+Das ist **mehr, als Modbus exponiert** (siehe `modbus-registers.md`, „Bekannte Lücken"),
+und `DC303_ENERGY_STREAM_REPORT` trägt einen eigenen Zeitstempel – es taugt also auch zum
+Mitschreiben, nicht nur für einen Momentanwert.
+
 Das Token gibt es auf zwei Wegen: aus dem eingeloggten Browser (*Local Storage → `S1_JWT`*)
 oder über den Login-Endpunkt der Endkunden-App:
 

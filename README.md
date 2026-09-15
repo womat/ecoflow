@@ -161,7 +161,8 @@ zusätzlich `jq` und `mosquitto_sub` (`brew install mosquitto` bzw.
 
 `portal` geht einen anderen Weg: Es fragt `provider-service/user/device/detail` ab – den
 Endpunkt, den das Endkunden-Portal selbst benutzt. Der antwortet auch für Geräte, die die
-Developer-API mit 1006 sperrt. Authentifiziert wird nicht mit den API-Keys, sondern mit dem
+Developer-API mit 1006 sperrt, und liefert SOC, Live-Leistungen, Energiezähler sowie die
+Rohblöcke der Firmware (69 EMS-Felder, DCDC-Status, Energy-Stream). Authentifiziert wird nicht mit den API-Keys, sondern mit dem
 **Session-Token des Portals** in `ECOFLOW_PORTAL_TOKEN`. Der Token läuft ab; bei HTTP 401
 neu holen. Nicht ins Repo und möglichst nicht in die Shell-History.
 

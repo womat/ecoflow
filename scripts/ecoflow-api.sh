@@ -60,8 +60,9 @@ commands:
                          export ECOFLOW_PORTAL_TOKEN="$(ecoflow-api.sh login)"
                        The password is read from the terminal without echo, or
                        taken from ECOFLOW_PASSWORD. Needs jq. See the note below.
-  portal <SN>          read the consumer portal's device detail, which carries
-                       what the Developer API refuses for blocked models
+  portal <SN>          read the consumer portal's device detail: live power and
+                       SoC, energy counters and the full quota blocks - what the
+                       Developer API refuses for blocked models
                        GET /provider-service/user/device/detail?sn=<SN>
   portal-get <path>    any other GET against the portal API
   selftest             check the signature assembly, no keys and no network
@@ -75,6 +76,10 @@ environment:
   ECOFLOW_PASSWORD     account password for "login". Prefer the interactive
                        prompt: an exported password outlives the shell that set
                        it and ends up in process environments.
+  ECOFLOW_PRODUCT_TYPE product family for the portal commands, default 85
+                       (PowerOcean). It is the productKey the portal itself puts
+                       in its URL; without a matching value the endpoint answers
+                       with no data at all.
   ECOFLOW_PORTAL_TOKEN required for the portal commands. It is the session token
                        of https://user-portal.ecoflow.com, not an API key: open
                        the portal while logged in, then read the S1_JWT entry
@@ -369,8 +374,16 @@ portal_login() {
 }
 
 # portal_fetch URL AUTHORIZATION -> body, then the HTTP status on the last line
+#
+# The portal sends a product-type header alongside the token, and the endpoint
+# answers with an empty body without it - code 0, no data, which looks like an
+# empty account rather than a missing header. The browser also sends signature
+# headers (x-appid, x-nonce, x-sign, x-timestamp); leaving them out changes
+# nothing about the answer, so they are not sent here.
 portal_fetch() {
-	curl -sS -w '\n%{http_code}' "$1" -H "Authorization: $2"
+	curl -sS -w '\n%{http_code}' "$1" \
+		-H "Authorization: $2" \
+		-H "product-type: ${ECOFLOW_PRODUCT_TYPE:-85}"
 }
 
 # portal_get PATH [QUERY] -> raw response body on stdout
