@@ -302,6 +302,20 @@ Port 502 `connection refused` – also deaktiviert, wie dokumentiert.
       Developer-API freigeschaltet werden kann. Für die PowerOcean-Familie wenig
       aussichtsreich, aber der einzige verbliebene Hebel auf der Cloud-Seite.
 
+## 2d. Was andere Integrationen können (und was nicht)
+
+- **OpenHAB-Binding `org.openhab.binding.ecoflow`:** rein cloudbasiert über die
+  Developer-API und unterstützt nur Delta 2, Delta 2 Max und PowerStream – **kein
+  PowerOcean**. Für den DC Fit also kein Weg, weder lokal noch cloudseitig.
+  Ein brauchbarer Hinweis steht trotzdem in dessen README: Ein Developer-Account lässt
+  sich *nicht* mehrfach parallel verwenden, das stört die Event-Updates. Wer
+  `scripts/ecoflow-api.sh` neben einer anderen Integration laufen lässt, sollte das
+  wissen.
+- **evcc** nutzt für den PowerOcean ausschließlich den **lokalen Modbus-Weg**
+  (Meter-Template `ecoflow-powerocean-modbus`) – ein weiteres Indiz, dass der Cloud-Weg
+  für diese Gerätefamilie nicht praktikabel ist. Die dort verwendeten Registeradressen
+  bestätigen die aktuelle Karte in `modbus-registers.md`.
+
 ## 3. "Offene API" in Shop-Beschreibungen
 
 Verkaufsseiten für das DC-Fit-Set werben mit einer "offenen API-Schnittstelle"
@@ -340,6 +354,8 @@ REST-Interface – eine explizite Bestätigung dafür liegt aber nicht vor.
 - https://www.photovoltaikforum.com/thread/247994-ecoflow-powerocean-modbus-protokoll/
 - https://www.photovoltaikforum.com/thread/218848-erfahrungen-mit-system-ecoflow-powerocean/?pageNo=17
 - https://github.com/shuette42/ecoflow-energy-ha
+- https://github.com/evcc-io/evcc – `templates/definition/meter/ecoflow-powerocean-modbus.yaml`
+- https://github.com/openhab/openhab-addons – `bundles/org.openhab.binding.ecoflow`
 - https://developer.ecoflow.com/us/document/introduction
 - https://developer-eu.ecoflow.com
 - https://developer-eu.ecoflow.com/us/document/PP2 (offizielle PowerOcean-Doku:

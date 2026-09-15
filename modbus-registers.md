@@ -21,8 +21,11 @@ Bestätigt ist damit trotzdem nichts – nur der Verdacht hat sich gedreht.
   gegengeprüfte Quelle** – im Konfliktfall die belastbarere.
 - https://github.com/MaxGrmm/ecoflow-poweroceanplus-modbus – ältere Register-Tabellen,
   ermittelt durch Scannen von 40001–44096 an einem PowerOcean **Plus**.
-- https://docs.evcc.io/en/meters/ecoflow-powerocean-modbus – Freischaltungshinweis,
-  Modbus-Parameter.
+- `evcc-io/evcc`, `templates/definition/meter/ecoflow-powerocean-modbus.yaml` –
+  Meter-Template der Ladesoftware evcc. **Unabhängige dritte Quelle**: entstanden
+  außerhalb der beiden EcoFlow-Repos und bestätigt deren aktuelle Adressen (siehe
+  „Bestätigung durch evcc"). Dazu https://docs.evcc.io/en/meters/ecoflow-powerocean-modbus
+  für Freischaltungshinweis und Modbus-Parameter.
 
 Beide GitHub-Repos stehen unter MIT-Lizenz ("free to use, modify, and distribute with
 attribution").
@@ -156,6 +159,31 @@ Die Float-Werte tragen physikalische Einheiten direkt; die Skalierungsfaktoren (
 | 42241 / 42243 | FLOAT32 | Batterie entladen gesamt / heute |
 | 42257 / 42259 | FLOAT32 | Solarertrag gesamt / heute |
 
+## Bestätigung durch evcc
+
+Das evcc-Template ist unabhängig von den beiden EcoFlow-Repos entstanden und verwendet
+exakt die Adressen der aktuellen Karte – inklusive `float32s`, evccs Bezeichnung für
+**word-swapped** Float, sowie Port 502 und Unit-ID 1:
+
+| Register | evcc | Deckt sich mit |
+|---|---|---|
+| 40521 | Grid power, W | `grid_power` |
+| 40523 | Solar power, W | `solar_power` |
+| 40525 | Battery power, W | `battery_power` |
+| 40527 | Battery state of charge, % (`uint16`) | `battery_soc` |
+| 42161 | Grid import total, kWh | `grid_import_total` |
+| 42241 | Battery discharged total, kWh | `bat_discharged_total` |
+| 42257 | Solar yield total, kWh | `solar_total` |
+
+Damit ist **40527 als System-SOC von zwei unabhängigen Quellen gestützt** – die ältere
+Deutung „evtl. Max-SOC-Limit" ist damit unwahrscheinlich geworden (gemessen ist sie
+deshalb trotzdem noch nicht).
+
+**Neuer Widerspruch beim Vorzeichen:** evcc kommentiert 40525 mit „positive when
+discharging, negative when charging" und dreht den Rohwert per `scale: -1` um. Die ältere
+Tabelle in diesen Notizen behauptete das Gegenteil (positiv = laden). Am Gerät zu
+entscheiden: bei bekanntem Ladevorgang einmal 40525 lesen.
+
 ## Widersprüche der Quellen (= der Messplan)
 
 Die ältere Tabelle und die aktuelle Integration deuten teils dieselben Adressen
@@ -188,6 +216,7 @@ Zwei Beobachtungen dazu, beide **unbestätigt**:
 modbusread <ip> 40527 uint16                       # 100 → eher Limit; 0..100 plausibel → SOC
 modbusread <ip> 40574 float32 --word-order low     # Spannung (~400 V) oder Leistung?
 modbusread <ip> 42081 uint16                       # Anzahl Batterien oder Online-Flag?
+modbusread <ip> 40525 float32 --word-order low     # Vorzeichen bei bekanntem Ladevorgang
 modbusread <ip> 40519 raw --count 100 --out hex    # Live-Block am Stück ansehen
 ```
 
