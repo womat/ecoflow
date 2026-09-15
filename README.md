@@ -62,12 +62,42 @@ Mit vorhandener Go-Toolchain direkt aus dem Repo:
 go install github.com/womat/ecoflow/cmd/modbusread@latest
 ```
 
-Für Maschinen ohne Go (z.B. den Raspberry Pi neben der Anlage) liegen fertige Binaries
-für linux/amd64, linux/arm64, linux/arm, darwin und windows unter
-[Releases](https://github.com/womat/ecoflow/releases) – erzeugt aus einem Tag `v*`.
+Für Maschinen **ohne Go** – etwa den Raspberry Pi neben der Anlage – liegen fertige
+Binaries unter [Releases](https://github.com/womat/ecoflow/releases). Sie sind statisch
+gelinkt (`CGO_ENABLED=0`), es ist also nichts zu installieren: entpacken und ausführen.
+
+```bash
+VERSION=v0.1.0
+ARCH=linux-arm64   # siehe Tabelle unten
+
+curl -LO "https://github.com/womat/ecoflow/releases/download/$VERSION/modbusread-$VERSION-$ARCH.tar.gz"
+tar -xzf "modbusread-$VERSION-$ARCH.tar.gz"
+./modbusread --version
+```
+
+| Maschine | `ARCH` |
+|---|---|
+| Raspberry Pi 3/4/5 mit 64-bit Raspberry Pi OS | `linux-arm64` |
+| Raspberry Pi mit 32-bit OS, inkl. Zero und Pi 1 | `linux-arm` |
+| gewöhnlicher Linux-PC/Server, NAS | `linux-amd64` |
+| Mac mit Apple Silicon | `darwin-arm64` |
+| Mac mit Intel | `darwin-amd64` |
+| Windows | `windows-amd64` |
+
+Das 32-bit-Archiv ist mit `GOARM=6` gebaut und läuft deshalb auch auf den älteren
+ARMv6-Modellen. Prüfen lässt sich der Download gegen die `checksums.txt` desselben
+Release:
+
+```bash
+curl -LO "https://github.com/womat/ecoflow/releases/download/$VERSION/checksums.txt"
+sha256sum -c checksums.txt --ignore-missing
+```
 
 `modbusread --version` meldet Commit und Go-Version aus den Build-Infos, die Go beim
 `go build` selbst einstempelt; Release-Binaries tragen die Tag-Nummer.
+
+Ein Release entsteht aus einem Tag `vX.Y.Z` auf `main`; der Workflow baut alle Ziele und
+hängt sie samt Checksummen an das GitHub-Release.
 
 ## Kurzüberblick
 
