@@ -16,7 +16,14 @@ import (
 // reopened and the next interval tried again. The exit code is non-zero only
 // if not a single sample succeeded.
 func poll(ctx context.Context, c *config, stdout, stderr io.Writer) int {
-	mc, err := modbus.NewClient(&modbus.ClientConfiguration{URL: c.url, Timeout: c.timeout})
+	mc, err := modbus.NewClient(&modbus.ClientConfiguration{
+		URL:      c.url,
+		Timeout:  c.timeout,
+		Speed:    c.serial.speed,
+		DataBits: c.serial.dataBits,
+		Parity:   c.serial.parity,
+		StopBits: c.serial.stopBits,
+	})
 	if err != nil {
 		fmt.Fprintln(stderr, "error:", err)
 		return 1
@@ -51,7 +58,7 @@ func poll(ctx context.Context, c *config, stdout, stderr io.Writer) int {
 	for n := 0; ; n++ {
 		if !connected {
 			if err := mc.Open(); err != nil {
-				fmt.Fprintln(stderr, "error: connect:", err)
+				fmt.Fprintf(stderr, "error: connect %s: %v\n", c.url, err)
 				if c.interval == 0 {
 					return 1
 				}

@@ -18,19 +18,27 @@ Modbus TCP) für den EcoFlow PowerOcean DC Fit.
 
 ## `modbusread`
 
-Ein universeller, **rein lesender** Modbus-TCP-Reader – Adresse, Register und Typ rein,
+Ein universeller, **rein lesender** Modbus-Reader – Adresse, Register und Typ rein,
 Wert raus. Kein EcoFlow-Wissen im Tool, keine eingebaute Register-Map; damit auch für
-andere Modbus-TCP-Geräte brauchbar. Gedacht, um die community-ermittelten Register aus
-`modbus-registers.md` am eigenen Gerät zu überprüfen.
+beliebige andere Modbus-Geräte brauchbar. Gedacht, um die community-ermittelten Register
+aus `modbus-registers.md` am eigenen Gerät zu überprüfen.
 
 ```
 go build ./cmd/modbusread
 
-modbusread <host[:port]> <address> <type> [flags]
+modbusread <ziel> <address> <type> [flags]
 ```
 
 Adresse dezimal (`42082`) oder hex (`0xA462`), Typ `raw`, `uint16`, `int16`, `uint32`,
 `int32`, `float32`, `float64` oder `string`.
+
+Das **Ziel** entscheidet über den Transport, ohne zusätzliches Flag:
+
+| Eingabe | Transport |
+|---|---|
+| `192.168.1.50`, `plc.local:1502` | Modbus TCP (Port-Default 502) |
+| `/dev/ttyUSB0`, `/dev/tty.usbserial-…`, `COM3` | Modbus RTU über die serielle Leitung |
+| `rtu://…`, `tcp://…`, `rtuovertcp://…`, `udp://…` | explizit, schlägt die Erkennung |
 
 ```console
 $ modbusread 192.168.1.50 42082 uint16
@@ -50,6 +58,19 @@ $ modbusread 192.168.1.50 40520 raw --count 120 --interval 1s --on-change
 Wichtig: **Adressen werden nicht umgerechnet** – sie gehen so auf den Draht, wie sie
 getippt werden (0-based). Die Tabellen in `modbus-registers.md` sind als 1-based
 bezeichnet; ob das stimmt, ist offen (siehe „Offene Punkte“).
+
+Bei einem seriellen Ziel kommen die Leitungsparameter dazu – `--baud` (19200),
+`--databits` (8), `--parity` (none) und `--stopbits`. Letzteres folgt bei `0` der
+Modbus-Regel: zwei Stoppbits ohne Parität, eines mit. Sie müssen exakt zum Gerät passen,
+sonst kommt Datenmüll oder gar nichts. Am Bus hängen typischerweise mehrere Geräte, dort
+ist `--unit` kein Formalismus mehr:
+
+```console
+$ modbusread /dev/ttyUSB0 40069 uint16 --baud 9600 --parity even --unit 3
+```
+
+An einem TCP-Ziel werden diese Flags **abgelehnt** statt ignoriert – eine Baudrate, die
+stillschweigend wirkungslos bleibt, schickt einen sonst auf Fehlersuche an der Verkabelung.
 
 Weitere Flags: `--unit`, `--fc holding|input`, `--byte-order`, `--timeout`, `--json`,
 `--samples`. `modbusread --help` zeigt alles.
