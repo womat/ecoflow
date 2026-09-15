@@ -31,6 +31,11 @@ nicht die normale Endkunden-App) aktiviert werden – standardmäßig deaktivier
 Genauer Menüpfad nicht öffentlich dokumentiert; vermutlich im Bereich
 „Inbetriebnahme → Optionale Einrichtung“ o.ä.
 
+Der Zugang zur Pro App selbst (Installateur-Rolle, Anlagen- vs. Besitzer-Bindung,
+Entbindung von einem fremden Konto) ist in [`api-status.md`](./api-status.md),
+Abschnitt „Zugang zur EcoFlow Pro App", beschrieben. Für die Freischaltung ist keine
+Übertragung der Anlage nötig – es genügt, dass ein Pro-Zugang den Schalter umlegt.
+
 ## Status & Batterie-SOC
 
 | Register | Typ | Beschreibung |
