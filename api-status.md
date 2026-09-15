@@ -139,6 +139,7 @@ beim Verbindungsaufbau:
 | SUBSCRIBE auf `/open/<acct>/<SN>/#` | **abgelehnt** („All subscription requests were denied") |
 | SUBSCRIBE auf `/open/<acct>/<SN>/quota` | **gewährt** (`SUBACK`, Granted QoS 0) |
 | SUBSCRIBE auf `/open/<acct>/<SN>/status` | **gewährt** |
+| SUBSCRIBE auf `/open/<acct>/<SN>/get_reply` | **abgelehnt** (`SUBACK` 128 = 0x80) |
 
 Wichtig für eigene Tests: **Wildcards werden von der ACL abgelehnt, exakte Topics nicht.**
 Ein Test mit `#` erzeugt also ein falsches Negativ – genau der Fehlschluss, der aus
@@ -159,9 +160,15 @@ Nachmessbar mit `scripts/ecoflow-api.sh -v mqtt <SN>`; der Verbose-Modus zeigt C
 SUBACK und die Keepalive-Pakete, und jede eintreffende Nachricht wird mit Zeitstempel
 protokolliert.
 
-Noch nicht beantwortet: ob das Gerät auf eine *Anfrage* über `.../get` antwortet
-(Antwort käme auf `.../get_reply`). Dafür gibt es `scripts/ecoflow-api.sh request <SN>
-<quota…>`; Ergebnis hier eintragen, sobald gemessen.
+Die ACL ist damit minimal: Von den sechs dokumentierten Topics sind nur `quota` und
+`status` abonnierbar. Bemerkenswert, denn `get_reply` ist wie `quota` ein Gerät→App-Topic
+und wird trotzdem abgelehnt – der Anfrage-/Antwort-Weg scheint für dieses Konto bzw.
+Gerät gar nicht vorgesehen zu sein.
+
+Noch nicht beantwortet: ob das Gerät auf eine *Anfrage* über `.../get` überhaupt reagiert
+und die Antwort womöglich auf `quota` legt, da `get_reply` gesperrt ist. Dafür gibt es
+`scripts/ecoflow-api.sh request <SN> <quota…>`, das auf beiden Topics lauscht; Ergebnis
+hier eintragen, sobald gemessen.
 
 - Quellen: https://github.com/Feberdin/ecoflow-powerocean-ha (README),
   https://github.com/shuette42/ecoflow-energy-ha (Präfixlisten)

@@ -46,9 +46,11 @@ commands:
                        "get_reply" and "#" (everything, usually denied by the
                        ACL). Runs until Ctrl-C. Needs jq and mosquitto_sub.
   request <SN> <quota> [quota ...]
-                       ask the device for named values over MQTT: subscribe to
-                       .../get_reply, publish the request to .../get, print
-                       whatever arrives within ECOFLOW_WAIT seconds (default 15).
+                       ask the device for named values over MQTT: listen on
+                       .../get_reply and .../quota, publish the request to
+                       .../get, print whatever arrives within ECOFLOW_WAIT
+                       seconds (default 15). Listening on both matters because
+                       the ACL may deny .../get_reply while granting .../quota.
                        This is the one command that publishes - see the note
                        below. Needs jq, mosquitto_sub and mosquitto_pub.
   selftest             check the signature assembly, no keys and no network
@@ -384,6 +386,7 @@ mqtt_request() {
 
 	mqtt_credentials
 	local reply_topic="/open/${MQTT_ACCOUNT}/${sn}/get_reply"
+	local quota_topic="/open/${MQTT_ACCOUNT}/${sn}/quota"
 	local get_topic="/open/${MQTT_ACCOUNT}/${sn}/get"
 
 	local payload
@@ -394,14 +397,18 @@ mqtt_request() {
 	if [ "$VERBOSE" -eq 1 ]; then
 		{
 			printf 'subscribe: %s\n' "$reply_topic"
+			printf 'subscribe: %s\n' "$quota_topic"
 			printf 'publish:   %s\n' "$get_topic"
 			printf 'payload:   %s\n' "$payload"
 		} >&2
 	fi
 
-	printf 'listening on %s for %ss\n' "$reply_topic" "$wait" >&2
+	# Listen on the reply topic and on quota: the ACL denies .../get_reply on at
+	# least one account (SUBACK 0x80) while granting .../quota, and a denied
+	# subscription does not stop mosquitto_sub as long as another one is granted.
+	printf 'listening on %s and %s for %ss\n' "$reply_topic" "$quota_topic" "$wait" >&2
 	mosquitto_sub -h "$MQTT_URL" -p "$MQTT_PORT" -u "$MQTT_ACCOUNT" -P "$MQTT_PASSWORD" \
-		"${MQTT_TLS[@]}" -t "$reply_topic" -F '%I %t %p' -W "$wait" &
+		"${MQTT_TLS[@]}" -t "$reply_topic" -t "$quota_topic" -F '%I %t %p' -W "$wait" &
 	local sub_pid=$!
 
 	# Give the subscription a moment to be established before asking.
