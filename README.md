@@ -181,7 +181,8 @@ eigene EcoFlow-Konto gebunden sein, sonst bleibt die Liste leer.
   (pymodbus adressiert 0-based). Mit `modbusread` am Gerät klärbar: SOC einmal auf
   42081 und einmal auf 42082 lesen
 - Genauer Menüpfad zum Modbus-Schalter in der EcoFlow Pro App (der Zugangsweg zur
-  App selbst ist geklärt, siehe `api-status.md`)
+  App selbst ist geklärt, siehe `api-status.md`; dort steht auch eine Checkliste für
+  den Installateurstermin)
 - Ob der MQTT-Weg der Open API für den DC Fit Daten liefert oder dieselbe
   1006-Sperre greift
 

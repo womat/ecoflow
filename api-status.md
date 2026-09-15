@@ -93,6 +93,14 @@ Nebenbefund: Eine SN, die *nicht* an das Konto gebunden ist, beantwortet `quota/
 `"code": "8512"` / `"no permission to do it"` – ein anderer Fehler als 1006 und ein
 brauchbarer Test, ob die Besitzer-Bindung überhaupt steht.
 
+**Es ist kein Registrierungs- oder Mapping-Problem.** Die naheliegende Vermutung, die
+Anlage sei dem Developer-Account nicht zugeordnet, ist widerlegt: `device/list` gibt mit
+denselben Keys die eigene SN samt `online` und `productName` zurück – die Bindung ist
+damit belegt. Die API unterscheidet die Fälle sauber (8512 „gehört dir nicht" vs. 1006
+„dieses Gerät gibt keine Daten heraus"), und der Meldungstext von 1006 spricht über das
+Gerät, nicht über die Berechtigung. Dass es auch kein Client-Problem ist, zeigen der
+reproduzierte Signatur-Testvektor und der Abgleich mit dem offiziellen Demo-Client.
+
 ### Offizielle Feldnamen (für den Abgleich mit den Modbus-Registern)
 
 Auch wenn die Endpunkte für den DC Fit gesperrt sind: EcoFlows PowerOcean-Doku
@@ -213,6 +221,47 @@ gesperrten Modelle. **Community-Weg ohne jede Zusage von EcoFlow**: kann jederze
 brechen, und die Kontozugangsdaten liegen im Klartext in der Konfiguration.
 (Quelle: https://github.com/shuette42/ecoflow-energy-ha)
 
+## 2c. Checkliste für den Installateurstermin
+
+Die Modbus-Freischaltung kann nur ein Installateur mit Pro-App-Zugang vornehmen (siehe
+2a). Ein solcher Termin wiederholt sich nicht schnell – deshalb hier abhakbar, was dabei
+zu klären ist.
+
+**Das eigentliche Anliegen**
+
+- [ ] **Modbus TCP am Wechselrichter aktivieren.**
+- [ ] Menüpfad bzw. Bezeichnung des Schalters notieren – das schließt die letzte offene
+      Frage unten.
+- [ ] Überlebt die Einstellung ein Firmware-Update?
+
+**Damit man danach auch drankommt**
+
+- [ ] IP-Adresse des Wechselrichters. Per DHCP vergeben? Dann im Router fest zuordnen,
+      sonst zeigt jeder Poll irgendwann ins Leere.
+- [ ] Port (Erwartung 502) und Unit-/Slave-ID (Erwartung 1) bestätigen lassen.
+- [ ] Ist der Zugriff auf ein bestimmtes Netz/VLAN beschränkt?
+
+**Für die Register-Frage (Plus vs. DC Fit)**
+
+- [ ] Firmware-Version und genaue Modellbezeichnung/`InverterModel` erfragen. Das Mapping
+      in `modbus-registers.md` wurde am PowerOcean **Plus** ermittelt, und die Firmware
+      kennt modellabhängige `address_overrides`.
+- [ ] Hat EcoFlow ihm gegenüber eine Registerliste dokumentiert? Unwahrscheinlich, aber
+      der billigste Weg an offizielle Angaben.
+
+**Wegen einer Anlagenerweiterung am selben Termin**
+
+- [ ] Was kommt genau dazu (Batteriemodul, PV-String, PowerPulse/Wallbox)? Neue
+      Komponenten können zusätzliche Register belegen.
+- [ ] Ändern sich dadurch SN, Anlagen-ID oder Bindung? Dann sind die Befunde in diesem
+      Dokument nachzuziehen.
+
+**Unabhängig vom Termin**
+
+- [ ] EcoFlow-Support (`solutionservice.eu@ecoflow.com`) fragen, ob die eigene SN für die
+      Developer-API freigeschaltet werden kann. Für die PowerOcean-Familie wenig
+      aussichtsreich, aber der einzige verbliebene Hebel auf der Cloud-Seite.
+
 ## 3. "Offene API" in Shop-Beschreibungen
 
 Verkaufsseiten für das DC-Fit-Set werben mit einer "offenen API-Schnittstelle"
@@ -227,7 +276,8 @@ REST-Interface – eine explizite Bestätigung dafür liegt aber nicht vor.
       → `models.py` im Repo `MaxGrmm/EF-PowerOcean-TcpModbus` noch nicht geprüft.
 - [ ] Genauer Menüpfad zum Modbus-Schalter in der EcoFlow Pro App: in welchem der
       drei Inbetriebnahme-Schritte bzw. Gerätemenüs liegt er, und ist er nachträglich
-      erreichbar? (Der Zugangsweg zur Pro App selbst ist geklärt, siehe 2a.)
+      erreichbar? (Der Zugangsweg zur Pro App selbst ist geklärt, siehe 2a; die Fragen
+      für den Installateurstermin stehen in 2c.)
 - [x] Liefert das Präfix `HC31` (DC Fit) Fehler 1006? → **Ja, bei `quota/all`**;
       `device/list` listet das Gerät dagegen normal (September 2026)
 - [x] Kommen auf dem MQTT-Topic `/open/<acct>/<SN>/quota` Nachrichten an? → **Nein**,
