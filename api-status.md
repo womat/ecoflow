@@ -57,6 +57,14 @@ greift aber erst beim Datenabruf, nicht beim Auflisten. Gemessen mit
 |---|---|
 | `GET /iot-open/sign/device/list` | `"code": "0"`, Gerät gelistet mit `"online": 1` und `"productName": "PowerOcean DC Fit"` |
 | `GET /iot-open/sign/device/quota/all?sn=…` | `"code": "1006"`, `"current device is not allowed to get device info"` |
+| `POST /iot-open/sign/device/quota` (gezielte Werte, der in der offiziellen PowerOcean-Doku beschriebene Weg) | ebenfalls **1006** |
+
+**Die Sperre hängt am Gerät, nicht am Endpunkt.** Auch der in EcoFlows eigener
+PowerOcean-Doku beschriebene Weg (`POST /iot-open/sign/device/quota` mit
+`{"sn": …, "params": {"quotas": ["bpSoc"]}}`) wird mit 1006 abgelehnt. Die Signatur ist
+dabei nachweislich korrekt – eine fehlerhafte Signatur würde einen Signaturfehler
+liefern, keine inhaltliche Ablehnung. Bezeichnend: Die Beispiele in dieser Doku verwenden
+SNs mit dem Präfix `HJ31`, also eines der als erreichbar geführten.
 
 **Gelistet heißt also nicht lesbar.** Wer nur `device/list` testet, hält den Cloud-Weg
 fälschlich für offen; die Sperre zeigt sich erst beim zweiten Aufruf. Das Präfix `HC31`
@@ -65,6 +73,32 @@ gehört damit auf die 1006-Sperrliste oben, auch wenn keine der Community-Quelle
 Nebenbefund: Eine SN, die *nicht* an das Konto gebunden ist, beantwortet `quota/all` mit
 `"code": "8512"` / `"no permission to do it"` – ein anderer Fehler als 1006 und ein
 brauchbarer Test, ob die Besitzer-Bindung überhaupt steht.
+
+### Offizielle Feldnamen (für den Abgleich mit den Modbus-Registern)
+
+Auch wenn die Endpunkte für den DC Fit gesperrt sind: EcoFlows PowerOcean-Doku
+(developer-eu.ecoflow.com, Dokument „PP2") benennt die Größen, die das Gerät kennt.
+Das ist die einzige *offizielle* Quelle für diese Semantik und damit die beste
+Gegenprobe für die community-ermittelten Modbus-Register in `modbus-registers.md`:
+
+| Feld | Typ | Bedeutung |
+|---|---|---|
+| `bpSoc` | float | Batterie-SOC |
+| `bpPwr` | float | Batterieleistung |
+| `mpptPwr` | float | MPPT-/PV-Leistung |
+| `sysLoadPwr` | float | Lastleistung |
+| `sysGridPwr` | float | Netzleistung |
+| `pcsAPhase`, `pcsBPhase`, `pcsCPhase` | json | je Phase: `vol`, `amp`, `actPwr`, `reactPwr`, `apparentPwr` |
+| `mpptHeartBeat` | json | Liste `mpptPv` mit je `vol`, `amp`, `pwr` |
+| `evPwr`, `chargingStatus`, `errorCode` | – | PowerPulse (Wallbox) |
+
+Vorzeichen-Konvention aus den Beispielen: negative `actPwr`/`sysGridPwr` bedeuten
+Einspeisung, negative `bpPwr` Entladung.
+
+Ebenfalls dokumentiert: `POST /iot-open/sign/device/quota/data` für historische Werte
+(Zeitraum höchstens eine Woche, z.B. `code: JT303_Dashboard_Overview_Summary_Week`), und
+die MQTT-Topics `/open/${certificateAccount}/${sn}/quota` sowie `.../status` – Letzteres
+mit `params.status` (0 = offline, 1 = online).
 
 ### MQTT-Weg der Open API (DC Fit, September 2026)
 
@@ -194,6 +228,8 @@ REST-Interface – eine explizite Bestätigung dafür liegt aber nicht vor.
 - https://github.com/shuette42/ecoflow-energy-ha
 - https://developer.ecoflow.com/us/document/introduction
 - https://developer-eu.ecoflow.com
+- https://developer-eu.ecoflow.com/us/document/PP2 (offizielle PowerOcean-Doku:
+  Endpunkte, Feldnamen, MQTT-Topics)
 - https://energy.ecoflow.com/eu/software/EcoFlow-Pro-App
 - https://pro-portal.ecoflow.com
 - https://energy.ecoflow.com/eu/support

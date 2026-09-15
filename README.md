@@ -138,10 +138,16 @@ export ECOFLOW_SECRET_KEY='…'
 scripts/ecoflow-api.sh devices                    # Geräte des Kontos
 scripts/ecoflow-api.sh quota <SN>                  # alle Werte eines Geräts
 scripts/ecoflow-api.sh -v get /iot-open/sign/device/list   # beliebiger GET, mit Debug
+scripts/ecoflow-api.sh values <SN> bpSoc bpPwr     # gezielte Werte (POST-Endpunkt)
 scripts/ecoflow-api.sh cert                       # MQTT-Zugangsdaten des Kontos
 scripts/ecoflow-api.sh mqtt <SN>                  # Topic abonnieren (Ctrl-C beendet)
 scripts/ecoflow-api.sh selftest                   # Signaturaufbau prüfen, ohne Keys
 ```
+
+`values` nutzt `POST /iot-open/sign/device/quota`, den in EcoFlows PowerOcean-Doku
+beschriebenen Weg für gezielte Größen (`bpSoc`, `bpPwr`, `mpptPwr`, `sysLoadPwr`,
+`sysGridPwr`, `pcsAPhase` …). POST ist hier der *Lese*-Endpunkt; das PUT-Gegenstück, das
+Werte setzt, kennt das Skript bewusst nicht.
 
 `mqtt` holt sich die Zugangsdaten über `/iot-open/sign/certification` und abonniert
 `/open/<certificateAccount>/<SN>/quota` (zweites Argument wechselt das Suffix, z.B.

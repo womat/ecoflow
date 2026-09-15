@@ -31,6 +31,12 @@ commands:
   quota <SN>           read all values of one device
                        GET /iot-open/sign/device/quota/all?sn=<SN>
   get <path> [k=v ...] any other GET endpoint, parameters as key=value
+  values <SN> <quota> [quota ...]
+                       read named values of one device
+                       POST /iot-open/sign/device/quota
+                       e.g. bpSoc, bpPwr, mpptPwr, sysLoadPwr, sysGridPwr,
+                       pcsAPhase, pcsBPhase, pcsCPhase, mpptHeartBeat
+                       Needs jq.
   cert                 fetch the MQTT credentials for this account
                        GET /iot-open/sign/certification
   mqtt <SN> [suffix]   subscribe to the device's MQTT topic and print what
@@ -60,10 +66,15 @@ examples:
   ecoflow-api.sh devices
   ecoflow-api.sh quota HC31XXXXXXXXXXXX
   ecoflow-api.sh -v get /iot-open/sign/device/list
+  ecoflow-api.sh values HC31XXXXXXXXXXXX bpSoc bpPwr
   ecoflow-api.sh mqtt HC31XXXXXXXXXXXX
   ecoflow-api.sh mqtt HC31XXXXXXXXXXXX '#'
 
 note:
+  The "values" command uses POST because the API's read endpoint for named
+  quotas is a POST. It is still a read: this script never touches the PUT
+  endpoint that would set values on the device.
+
   Subscribing is read-only; this script never publishes to a topic. The MQTT
   password is passed to mosquitto_sub on the command line, so it is briefly
   visible to other users of this machine via the process list.
@@ -139,6 +150,58 @@ api_get() {
 		-H "sign: $sign" || die 'request failed' 3
 }
 
+# flatten_json JSON -> one "key=value" per line, nested keys dotted and array
+# elements indexed, e.g. params.quotas[0]=bpSoc. This is the shape the API
+# expects for signing a request body.
+flatten_json() {
+	printf '%s' "$1" | jq -r '
+		paths(scalars) as $p |
+		($p | map(if type == "number" then "[" + tostring + "]" else "." + . end)
+		    | join("") | ltrimstr(".")) + "=" + (getpath($p) | tostring)
+	'
+}
+
+# api_post PATH JSON -> raw response body on stdout
+#
+# Only ever called with read endpoints; see the note in usage().
+api_post() {
+	local path="$1" body="$2"
+
+	local access_key="${ECOFLOW_ACCESS_KEY:-}" secret_key="${ECOFLOW_SECRET_KEY:-}"
+	[ -n "$access_key" ] || die 'ECOFLOW_ACCESS_KEY is not set'
+	[ -n "$secret_key" ] || die 'ECOFLOW_SECRET_KEY is not set'
+
+	local timestamp nonce str sign
+	timestamp="$(( $(date +%s) * 1000 ))"
+	nonce="$(( 100000 + RANDOM % 900000 ))"
+
+	local -a flat=()
+	while IFS= read -r line; do
+		[ -n "$line" ] && flat+=("$line")
+	done < <(flatten_json "$body" | LC_ALL=C sort)
+
+	str="$(sign_string "$access_key" "$nonce" "$timestamp" "${flat[@]}")"
+	sign="$(hmac_sha256 "$secret_key" "$str")"
+
+	if [ "$VERBOSE" -eq 1 ]; then
+		{
+			printf 'POST %s%s\n' "$HOST" "$path"
+			printf 'body: %s\n' "$body"
+			printf 'signStr: %s\n' "$str"
+			printf 'headers: accessKey=%s nonce=%s timestamp=%s sign=%s\n' \
+				"$access_key" "$nonce" "$timestamp" "$sign"
+		} >&2
+	fi
+
+	curl -sS -X POST "${HOST}${path}" \
+		-H 'Content-Type: application/json' \
+		-H "accessKey: $access_key" \
+		-H "nonce: $nonce" \
+		-H "timestamp: $timestamp" \
+		-H "sign: $sign" \
+		--data-binary "$body" || die 'request failed' 3
+}
+
 # response_code BODY -> the top-level result code, which is the first one in
 # the response. Empty if the response carries no code at all.
 response_code() {
@@ -183,17 +246,40 @@ report_code() {
 }
 
 # request PATH [k=v ...] - fetch, print and judge one endpoint
+#
+# api_get runs in a command substitution, so its die() only ends that subshell;
+# the status has to be propagated explicitly here.
 request() {
 	local body
-	body="$(api_get "$@")"
+	body="$(api_get "$@")" || exit $?
+	show_and_judge "$body"
+}
 
+# show_and_judge BODY - pretty-print a response and turn its code into a status
+show_and_judge() {
 	if command -v jq >/dev/null 2>&1; then
-		printf '%s' "$body" | jq . || printf '%s\n' "$body"
+		printf '%s' "$1" | jq . || printf '%s\n' "$1"
 	else
-		printf '%s\n' "$body"
+		printf '%s\n' "$1"
 	fi
 
-	report_code "$(response_code "$body")"
+	report_code "$(response_code "$1")"
+}
+
+# read_values SN QUOTA... - POST /iot-open/sign/device/quota
+read_values() {
+	command -v jq >/dev/null 2>&1 || die 'values needs jq'
+
+	local sn="$1"
+	shift
+
+	local body
+	body="$(jq -cn --arg sn "$sn" '$ARGS.positional as $q | {sn: $sn, params: {quotas: $q}}' \
+		--args "$@")"
+
+	local response
+	response="$(api_post /iot-open/sign/device/quota "$body")" || exit $?
+	show_and_judge "$response"
 }
 
 # mqtt_subscribe SN [SUFFIX] - subscribe to the device topic, read-only
@@ -205,7 +291,7 @@ mqtt_subscribe() {
 		die 'mqtt needs mosquitto_sub (brew install mosquitto, apt install mosquitto-clients)'
 
 	local body code
-	body="$(api_get /iot-open/sign/certification)"
+	body="$(api_get /iot-open/sign/certification)" || exit $?
 	code="$(response_code "$body")"
 	if [ "$code" != '0' ]; then
 		printf '%s' "$body" | jq . >&2 || printf '%s\n' "$body" >&2
@@ -282,6 +368,17 @@ selftest() {
 		failed=1
 	}
 
+	# Body flattening for POST requests, skipped without jq.
+	if command -v jq >/dev/null 2>&1; then
+		local body flat
+		body='{"sn":"SN1","params":{"quotas":["bpSoc","bpPwr"]}}'
+		flat="$(flatten_json "$body" | LC_ALL=C sort | paste -sd'&' -)"
+		[ "$flat" = 'params.quotas[0]=bpSoc&params.quotas[1]=bpPwr&sn=SN1' ] || {
+			printf 'selftest: flattened body is %s\n' "$flat" >&2
+			failed=1
+		}
+	fi
+
 	[ "$failed" -eq 0 ] || die 'selftest FAILED'
 	printf 'selftest OK\n'
 }
@@ -339,6 +436,10 @@ main() {
 			esac
 		done
 		request "$path" "$@"
+		;;
+	values)
+		[ "$#" -ge 2 ] || die 'usage: ecoflow-api.sh values <SN> <quota> [quota ...]'
+		read_values "$@"
 		;;
 	cert)
 		[ "$#" -eq 0 ] || die 'cert takes no arguments'
