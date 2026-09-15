@@ -145,6 +145,7 @@ scripts/ecoflow-api.sh request <SN> bpSoc         # Werte per MQTT anfordern
 export ECOFLOW_PORTAL_TOKEN="$(scripts/ecoflow-api.sh login)"   # Token per Login holen
 scripts/ecoflow-api.sh portal <SN>                # Endkunden-Portal statt Developer-API
 scripts/ecoflow-api.sh status <SN>                # dieselben Daten als Kurzübersicht
+scripts/ecoflow-api.sh portal-get <pfad>          # beliebiger GET gegen die Portal-API
 scripts/ecoflow-api.sh selftest                   # Signatur gegen EcoFlows Testvektor
 ```
 
