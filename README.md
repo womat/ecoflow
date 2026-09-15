@@ -141,7 +141,7 @@ scripts/ecoflow-api.sh -v get /iot-open/sign/device/list   # beliebiger GET, mit
 scripts/ecoflow-api.sh values <SN> bpSoc bpPwr     # gezielte Werte (POST-Endpunkt)
 scripts/ecoflow-api.sh cert                       # MQTT-Zugangsdaten des Kontos
 scripts/ecoflow-api.sh mqtt <SN>                  # Topic abonnieren (Ctrl-C beendet)
-scripts/ecoflow-api.sh selftest                   # Signaturaufbau prüfen, ohne Keys
+scripts/ecoflow-api.sh selftest                   # Signatur gegen EcoFlows Testvektor
 ```
 
 `values` nutzt `POST /iot-open/sign/device/quota`, den in EcoFlows PowerOcean-Doku

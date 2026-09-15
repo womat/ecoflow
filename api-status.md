@@ -23,11 +23,28 @@ Zwei Wege existieren, beide mit Einschränkungen:
   `<business-params, ASCII-sortiert>&accessKey=…&nonce=…&timestamp=…` mit dem
   secretKey, als Hex in den Header `sign`; dazu die Header `accessKey`, `nonce`
   (6-stellig zufällig) und `timestamp` (Millisekunden).
+- Verschachtelte Bodies werden für die Signatur *geflacht*: Objekte gepunktet,
+  Arrays indiziert – `deviceInfo.id=1&deviceList[0].id=1&ids[0]=1&name=demo1`.
+  Die Doku liefert dafür einen Testvektor, gegen den `scripts/ecoflow-api.sh selftest`
+  prüft (Quelle: developer-eu.ecoflow.com, „HTTP access steps").
+- Content-Type entscheidet, woher der Server die Parameter nimmt:
+  `application/json;charset=UTF-8` → Request-Body, sonst → Query-String.
+- Signiert werden die **rohen** Werte; URL-Encoding des Query-Strings passiert erst
+  danach (belegt im offiziellen Java-Demo-Client, `HttpUtil.getHttpUriRequest`).
+  Für Seriennummern und Quota-Namen ohne Sonderzeichen ist das folgenlos.
+- Der offizielle Demo-Client kennt insgesamt fünf Endpunkte: `certification`,
+  `device/list`, `POST device/quota`, `PUT device/quota` (schreibend, hier
+  bewusst nicht verwendet) und `GET device/quota/all`. Alle lesenden davon sind
+  oben durchgemessen – **es gibt keinen weiteren Cloud-Weg, der noch offen wäre.**
 - Relevante Leseendpunkte: `/iot-open/sign/device/list` (Geräte des Kontos),
   `/iot-open/sign/device/quota/all?sn=…` (alle Werte eines Geräts),
   `/iot-open/sign/certification` (MQTT-Zugangsdaten: `certificateAccount`,
   `certificatePassword`, `url` = `mqtt-e.ecoflow.com`, `port` = 8883, MQTTS).
-- MQTT-Topic je Gerät: `/open/<certificateAccount>/<SN>/quota`, daneben `.../status`.
+- MQTT-Topics je Gerät: `/open/<certificateAccount>/<SN>/quota` und `.../status`
+  (Gerät → App) sowie `.../get`, `.../set` mit ihren `_reply`-Gegenstücken
+  (App → Gerät). Die beiden letzten erfordern *Publish* und bleiben deshalb
+  außerhalb von `scripts/ecoflow-api.sh` – ungetestet, ob sie für gesperrte Geräte
+  überhaupt etwas liefern würden.
 - Fertig signiert aufrufbar mit [`scripts/ecoflow-api.sh`](./scripts/ecoflow-api.sh).
 
 ### Fehler 1006 ist eine Modell-Sperrliste
@@ -59,7 +76,9 @@ greift aber erst beim Datenabruf, nicht beim Auflisten. Gemessen mit
 | `GET /iot-open/sign/device/quota/all?sn=…` | `"code": "1006"`, `"current device is not allowed to get device info"` |
 | `POST /iot-open/sign/device/quota` (gezielte Werte, der in der offiziellen PowerOcean-Doku beschriebene Weg) | ebenfalls **1006** |
 
-**Die Sperre hängt am Gerät, nicht am Endpunkt.** Auch der in EcoFlows eigener
+**Die Sperre hängt am Gerät, nicht am Endpunkt.** Dass die Signatur korrekt gebildet
+wird, ist unabhängig davon belegt: `scripts/ecoflow-api.sh selftest` reproduziert den
+Testvektor aus EcoFlows eigener Doku. Auch der in EcoFlows eigener
 PowerOcean-Doku beschriebene Weg (`POST /iot-open/sign/device/quota` mit
 `{"sn": …, "params": {"quotas": ["bpSoc"]}}`) wird mit 1006 abgelehnt. Die Signatur ist
 dabei nachweislich korrekt – eine fehlerhafte Signatur würde einen Signaturfehler
@@ -230,6 +249,8 @@ REST-Interface – eine explizite Bestätigung dafür liegt aber nicht vor.
 - https://developer-eu.ecoflow.com
 - https://developer-eu.ecoflow.com/us/document/PP2 (offizielle PowerOcean-Doku:
   Endpunkte, Feldnamen, MQTT-Topics)
+- https://developer-eu.ecoflow.com/us/document/root (Signaturverfahren inkl.
+  Testvektor, Flattening-Regeln, generische Endpunkte, MQTT-Topics)
 - https://energy.ecoflow.com/eu/software/EcoFlow-Pro-App
 - https://pro-portal.ecoflow.com
 - https://energy.ecoflow.com/eu/support
