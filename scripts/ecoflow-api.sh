@@ -414,10 +414,18 @@ mqtt_request() {
 	# Give the subscription a moment to be established before asking.
 	sleep 2
 
+	# Publish over MQTT v5 at QoS 1 and show the handshake: only v5 carries a
+	# reason code in the PUBACK, which is what distinguishes "the broker refused
+	# to forward this" (0x87, not authorized) from "the device ignored it".
+	# Fall back to the protocol default if the broker does not speak v5.
 	printf 'publishing request to %s\n' "$get_topic" >&2
-	mosquitto_pub -h "$MQTT_URL" -p "$MQTT_PORT" -u "$MQTT_ACCOUNT" -P "$MQTT_PASSWORD" \
-		"${MQTT_TLS[@]}" -t "$get_topic" -m "$payload" ||
-		die 'publishing the request failed' 3
+	if ! mosquitto_pub -h "$MQTT_URL" -p "$MQTT_PORT" -u "$MQTT_ACCOUNT" -P "$MQTT_PASSWORD" \
+		"${MQTT_TLS[@]}" -t "$get_topic" -m "$payload" -V 5 -q 1 -d; then
+		printf 'MQTT v5 publish failed, retrying with the protocol default\n' >&2
+		mosquitto_pub -h "$MQTT_URL" -p "$MQTT_PORT" -u "$MQTT_ACCOUNT" -P "$MQTT_PASSWORD" \
+			"${MQTT_TLS[@]}" -t "$get_topic" -m "$payload" -q 1 -d ||
+			die 'publishing the request failed' 3
+	fi
 
 	wait "$sub_pid" || true
 	printf 'done waiting; no output above means the device did not answer\n' >&2

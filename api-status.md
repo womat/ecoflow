@@ -140,6 +140,7 @@ beim Verbindungsaufbau:
 | SUBSCRIBE auf `/open/<acct>/<SN>/quota` | **gewährt** (`SUBACK`, Granted QoS 0) |
 | SUBSCRIBE auf `/open/<acct>/<SN>/status` | **gewährt** |
 | SUBSCRIBE auf `/open/<acct>/<SN>/get_reply` | **abgelehnt** (`SUBACK` 128 = 0x80) |
+| PUBLISH auf `/open/<acct>/<SN>/get` | **abgelehnt** (`PUBACK` RC 135 = 0x87 „Not authorized") |
 
 Wichtig für eigene Tests: **Wildcards werden von der ACL abgelehnt, exakte Topics nicht.**
 Ein Test mit `#` erzeugt also ein falsches Negativ – genau der Fehlschluss, der aus
@@ -160,22 +161,24 @@ Nachmessbar mit `scripts/ecoflow-api.sh -v mqtt <SN>`; der Verbose-Modus zeigt C
 SUBACK und die Keepalive-Pakete, und jede eintreffende Nachricht wird mit Zeitstempel
 protokolliert.
 
-Die ACL ist damit minimal: Von den sechs dokumentierten Topics sind nur `quota` und
-`status` abonnierbar. Bemerkenswert, denn `get_reply` ist wie `quota` ein Gerät→App-Topic
-und wird trotzdem abgelehnt – der Anfrage-/Antwort-Weg scheint für dieses Konto bzw.
-Gerät gar nicht vorgesehen zu sein.
+**Zusammengefasst:** Das Konto darf sich verbinden und genau zwei Topics abonnieren, auf
+denen für dieses Gerät nichts publiziert wird. Anfragen darf es nicht. Von den sechs
+dokumentierten Topics bleiben zwei stumme übrig – konsistent zum 1006 auf allen
+REST-Datenendpunkten.
 
-Noch nicht beantwortet: ob das Gerät auf eine *Anfrage* über `.../get` überhaupt reagiert
-und die Antwort womöglich auf `quota` legt, da `get_reply` gesperrt ist. Dafür gibt es
-`scripts/ecoflow-api.sh request <SN> <quota…>`, das auf beiden Topics lauscht; Ergebnis
-hier eintragen, sobald gemessen.
+Wichtig für die Interpretation des Publish-Tests: Unter MQTT 3.1.1 bestätigt der Broker
+einen Publish auch dann, wenn die ACL ihn verwirft – „keine Antwort" wäre dort nicht
+deutbar gewesen. Erst **MQTT v5 mit QoS 1** liefert im PUBACK einen Reason Code und
+trennt damit „der Broker hat es nicht weitergereicht" (0x87) von „das Gerät hat nicht
+geantwortet". Genau so misst `scripts/ecoflow-api.sh request`, und die Antwort war 0x87:
+Die Anfrage hat den Broker nie verlassen.
 
 - Quellen: https://github.com/Feberdin/ecoflow-powerocean-ha (README),
   https://github.com/shuette42/ecoflow-energy-ha (Präfixlisten)
 
 **Fazit:** Für die PowerOcean-Familie inklusive **DC Fit** ist die offizielle Cloud-API
 zum Auslesen von Messwerten nicht nutzbar – weder über REST (1006) noch über MQTT
-(Abo gewährt, aber stumm). Es bleiben der lokale Modbus-Weg (Abschnitt 2) und – mit
+(zwei abonnierbare, aber stumme Topics; Anfragen per ACL verboten). Es bleiben der lokale Modbus-Weg (Abschnitt 2) und – mit
 allen Nachteilen – die inoffizielle App-Cloud (Abschnitt 2b).
 
 ## 2. Lokales Modbus TCP
@@ -309,6 +312,9 @@ REST-Interface – eine explizite Bestätigung dafür liegt aber nicht vor.
 - [x] Kommen auf dem MQTT-Topic `/open/<acct>/<SN>/quota` Nachrichten an? → **Nein**,
       Abo wird gewährt, Verbindung bleibt stehen, es wird nichts publiziert
       (kurze Beobachtung, September 2026)
+- [x] Hilft der dokumentierte Anfrage-Weg über `.../get`? → **Nein**, der Publish wird
+      mit PUBACK 0x87 „Not authorized" abgelehnt, das Abo auf `.../get_reply` mit
+      SUBACK 0x80. Damit ist MQTT vollständig ausgemessen.
 
 ## Quellenübersicht
 
