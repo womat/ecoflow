@@ -232,6 +232,84 @@ eigene EcoFlow-Konto gebunden sein, sonst bleibt die Liste leer.
 - Ob der MQTT-Weg der Open API für den DC Fit Daten liefert oder dieselbe
   1006-Sperre greift
 
+## Arbeiten an diesem Repo
+
+Jede Änderung – Go-Code wie Notizen – läuft über einen kurzlebigen Feature-Branch
+und einen PR nach `main`. `main` bleibt dadurch jederzeit auslieferbar, und die CI
+prüft *bevor* etwas ankommt, nicht danach. Das ist wichtig, weil ein Release ein Tag
+auf `main` ist (s.u.).
+
+**1. Sauber starten.** Du zweigst gleich von `main` ab; ist der Stand alt, baust du
+auf Veraltetem auf und handelst dir beim Merge Konflikte ein.
+
+```bash
+git checkout main && git pull
+```
+
+**2. Branch anlegen.** Kurz, kleingeschrieben, nach dem *Ziel* der Änderung benannt.
+
+```bash
+git checkout -b register-map-dcfit
+```
+
+**3. Ändern und lokal prüfen.** Das sind exakt die Prüfungen aus
+`.github/workflows/ci.yml` – laufen sie hier durch, wird die CI später kaum rot.
+
+```bash
+go build ./... && go vet ./... && go test ./...
+gofmt -l ./cmd ./internal      # keine Ausgabe = in Ordnung
+```
+
+Bei reinen Doku-Änderungen entfällt das. Dafür gilt: `README.md`, `api-status.md` und
+`modbus-registers.md` überschneiden sich absichtlich – ändert sich eine Aussage, die
+anderen Stellen und die „Offene Punkte"-Listen mitziehen.
+
+**4. Committen.** Betreffzeile im Imperativ, die das *Ergebnis* nennt; darunter ein
+Absatz zum **Warum**. Das Was steht schon im Diff. `git add -p` zeigt jeden Block
+einzeln, damit kein vergessener Debug-Ausdruck mitrutscht.
+
+```bash
+git add -p && git commit
+```
+
+**5. Pushen und PR öffnen.** `--fill` übernimmt Titel und Text aus dem Commit.
+
+```bash
+git push -u origin register-map-dcfit
+gh pr create --base main --fill
+```
+
+**6. CI abwarten.** Sie läuft auf einer frischen Maschine und findet damit die
+vergessene Datei und die Abhängigkeit, die es nur lokal gibt. Rot heißt: nachbessern,
+erneut committen, pushen – der PR aktualisiert sich von allein.
+
+```bash
+gh pr checks --watch
+```
+
+**7. Mergen.** Squash macht aus den Zwischenschritten einen lesbaren Commit auf
+`main`. Den entfernten Branch löscht GitHub selbst.
+
+```bash
+gh pr merge --squash --delete-branch
+git checkout main && git pull
+```
+
+**Release.** Wenn der Stand auf `main` veröffentlicht werden soll:
+
+```bash
+git checkout main && git pull
+git tag v0.3.0 && git push origin v0.3.0
+```
+
+Nur auf `main` taggen – `release.yml` baut daraus die Binaries und stempelt die
+Versionsnummer über `-X main.version` ein. Ein Tag auf einem anderen Branch erzeugte
+ein Release, das auf einen Stand zeigt, den es in `main` nie gab.
+
+> Beim Squash-Merge entsteht auf `main` ein *neuer* Commit; der Commit des Branches
+> wird nie ein Vorfahre von `main`. `git branch --merged` meldet solche Branches
+> deshalb dauerhaft als „nicht gemerged" – verlässlich ist `gh pr list`.
+
 ## Quellen
 
 - https://developer.ecoflow.com
