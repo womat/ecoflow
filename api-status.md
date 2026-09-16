@@ -119,8 +119,10 @@ Gegenprobe für die community-ermittelten Modbus-Register in `modbus-registers.m
 | `mpptHeartBeat` | json | Liste `mpptPv` mit je `vol`, `amp`, `pwr` |
 | `evPwr`, `chargingStatus`, `errorCode` | – | PowerPulse (Wallbox) |
 
-Vorzeichen-Konvention aus den Beispielen: negative `actPwr`/`sysGridPwr` bedeuten
-Einspeisung, negative `bpPwr` Entladung.
+Vorzeichen-Konvention laut den Beispielen der Doku: negative `actPwr`/`sysGridPwr`
+bedeuten Einspeisung, negative `bpPwr` Entladung. **Achtung:** Für `sysGridPwr` am
+Portal-Endpunkt gilt am DC Fit das Gegenteil (siehe „Vorzeichen: gemessen, nicht
+angenommen"). Die Dokuangabe ist für dieses Feld also nicht ungeprüft zu übernehmen.
 
 Ebenfalls dokumentiert: `POST /iot-open/sign/device/quota/data` für historische Werte
 (Zeitraum höchstens eine Woche, z.B. `code: JT303_Dashboard_Overview_Summary_Week`), und
@@ -215,7 +217,7 @@ was die Developer-API für dieses Gerät mit 1006 verweigert:
 | `bpSoc` | 51 | Batterie-SOC in % |
 | `bpPwr` | -204.28 | Batterieleistung |
 | `sysLoadPwr` | -204.28 | Hauslast |
-| `sysGridPwr` | 0.0 | Netzleistung |
+| `sysGridPwr` | 0.0 | Netzleistung – **positiv = Einspeisung** (siehe unten) |
 | `mpptPwr` | 0.0 | PV-Leistung |
 | `online` | 1 | Gerätestatus |
 | `todayElectricityGeneration` … `totalElectricityGeneration` | | Tages-/Monats-/Jahres-/Gesamtertrag |
@@ -235,6 +237,26 @@ für das DC-Fit-Modell stehen dürfte):
 Das ist **mehr, als Modbus exponiert** (siehe `modbus-registers.md`, „Bekannte Lücken"),
 und `DC303_ENERGY_STREAM_REPORT` trägt einen eigenen Zeitstempel – es taugt also auch zum
 Mitschreiben, nicht nur für einen Momentanwert.
+
+#### Vorzeichen: gemessen, nicht angenommen
+
+Die Vorzeichen sind **nicht einheitlich**, und die Oberfläche des Portals zeigt ohnehin
+Beträge an. Am Gerät bestimmt (September 2026):
+
+| Feld | positiv bedeutet |
+|---|---|
+| `bpPwr` | Batterie **lädt** (negativ = entlädt) |
+| `sysGridPwr` | **Einspeisung** (negativ = Bezug) |
+| `sysLoadPwr` | wird negativ gemeldet, während das Haus verbraucht |
+
+Entschieden über die Energiebilanz einer sonnigen Messung: 3378 W PV verteilen sich auf
+514 W Haus, 609 W in die Batterie und 2255 W ans Netz – das geht nur auf, wenn die positive
+Netzzahl das Haus *verlässt*. **Damit widerspricht der Portal-Endpunkt der offiziellen
+Feldbeschreibung**, die für `actPwr`/`sysGridPwr` negativ = Einspeisung nahelegt; für den
+DC Fit gilt die gemessene Richtung.
+
+`scripts/ecoflow-api.sh status` gibt deshalb Beträge aus und schreibt die Richtung als Wort
+dazu.
 
 Das Token gibt es auf zwei Wegen: aus dem eingeloggten Browser (*Local Storage → `S1_JWT`*)
 oder über den Login-Endpunkt der Endkunden-App:
