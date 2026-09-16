@@ -34,3 +34,6 @@ go.work.sum
 # EcoFlow's official Java demo client, downloaded for reference only.
 # Third-party code with no license file - read it, don't vendor it.
 ecoflow-open-demo/
+
+# Claude Code's permission rules - per-user, not a team-wide convention.
+.claude/settings.local.json
