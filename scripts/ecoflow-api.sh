@@ -445,6 +445,13 @@ portal_get() {
 # The portal reports load and battery power negative while its own dashboard
 # shows them positive, so the magnitude is printed and the direction spelled out
 # rather than passing a sign through that the reader would have to interpret.
+#
+# The directions are measured, not assumed, because the signs are not uniform:
+# bpPwr is positive while charging, but sysGridPwr is positive while exporting -
+# the opposite of what EcoFlow's own field documentation suggests for actPwr.
+# Settled by an energy balance on a sunny reading: 3378 W of PV split into 514 W
+# house, 609 W into the battery and 2255 W to the grid, which only adds up if
+# the positive grid figure leaves the house.
 portal_status() {
 	command -v jq >/dev/null 2>&1 || die 'status needs jq'
 
@@ -471,7 +478,7 @@ portal_status() {
 		    "device   : \($d.systemName // "?") (\(if $d.online == 1 then "online" else "offline" end))",
 		    "SoC      : \($d.bpSoc // "?") %",
 		    "PV       : \(w($d.mpptPwr)) W",
-		    "grid     : \(w($d.sysGridPwr)) W\(if ($d.sysGridPwr // 0) > 0 then " (import)" elif ($d.sysGridPwr // 0) < 0 then " (export)" else "" end)",
+		    "grid     : \(w(($d.sysGridPwr // 0) | fabs)) W\(if ($d.sysGridPwr // 0) > 0 then " (export)" elif ($d.sysGridPwr // 0) < 0 then " (import)" else " (idle)" end)",
 		    "house    : \(w(($d.sysLoadPwr // 0) | fabs)) W",
 		    "battery  : \(w(($d.bpPwr // 0) | fabs)) W\(if ($d.bpPwr // 0) < 0 then " (discharging)" elif ($d.bpPwr // 0) > 0 then " (charging)" else " (idle)" end)",
 		    "",
