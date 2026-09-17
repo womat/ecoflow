@@ -267,6 +267,10 @@ POST https://api-e.ecoflow.com/auth/login
 → data.token, data.user.userId
 ```
 
+Genau das macht `scripts/ecoflow-api.sh login [E-Mail]`: Es gibt ausschließlich den Token
+auf stdout aus, sodass er sich direkt einfangen lässt –
+`export ECOFLOW_PORTAL_TOKEN="$(scripts/ecoflow-api.sh login)"`, danach `status <SN>`.
+
 Das Passwort wird dabei nur **base64-kodiert, nicht gehasht** übertragen – Kodierung, keine
 Verschlüsselung. Wer das nicht will, nimmt den Browser-Token: kleineres Geheimnis, läuft von
 selbst ab. Quelle für den Ablauf: `shuette42/ecoflow-energy-ha`, `enhanced_auth.py`.

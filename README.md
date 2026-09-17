@@ -10,12 +10,12 @@ Modbus TCP) für den EcoFlow PowerOcean DC Fit.
 
 ## Inhalt
 
-| Datei | Beschreibung |
-|---|---|
-| [`api-status.md`](./api-status.md) | Überblick: Cloud-REST-API vs. lokales Modbus TCP, bekannte Probleme (z.B. Fehler 1006), Freischaltung |
-| [`modbus-registers.md`](./modbus-registers.md) | Register-Map (SOC, Batterie, PV, Netz, Energiezähler, Steuerregister) inkl. Decoding-Beispielen |
-| [`cmd/modbusread`](./cmd/modbusread) | Kleines Go-CLI zum Nachmessen der Register am Gerät (s.u.) |
-| [`scripts/ecoflow-api.sh`](./scripts/ecoflow-api.sh) | Shell-Skript für signierte Leseaufrufe gegen die EcoFlow Cloud-API (s.u.) |
+| Datei                                                | Beschreibung                                                                                          |
+|------------------------------------------------------|-------------------------------------------------------------------------------------------------------|
+| [`api-status.md`](./api-status.md)                   | Überblick: Cloud-REST-API vs. lokales Modbus TCP, bekannte Probleme (z.B. Fehler 1006), Freischaltung |
+| [`modbus-registers.md`](./modbus-registers.md)       | Register-Map (SOC, Batterie, PV, Netz, Energiezähler, Steuerregister) inkl. Decoding-Beispielen       |
+| [`cmd/modbusread`](./cmd/modbusread)                 | Kleines Go-CLI zum Nachmessen der Register am Gerät (s.u.)                                            |
+| [`scripts/ecoflow-api.sh`](./scripts/ecoflow-api.sh) | Shell-Skript für signierte Leseaufrufe gegen die EcoFlow Cloud-API (s.u.)                             |
 
 ## `modbusread`
 
@@ -35,11 +35,11 @@ Adresse dezimal (`42082`) oder hex (`0xA462`), Typ `raw`, `uint16`, `int16`, `ui
 
 Das **Ziel** entscheidet über den Transport, ohne zusätzliches Flag:
 
-| Eingabe | Transport |
-|---|---|
-| `192.168.1.50`, `plc.local:1502` | Modbus TCP (Port-Default 502) |
-| `/dev/ttyUSB0`, `/dev/tty.usbserial-…`, `COM3` | Modbus RTU über die serielle Leitung |
-| `rtu://…`, `tcp://…`, `rtuovertcp://…`, `udp://…` | explizit, schlägt die Erkennung |
+| Eingabe                                           | Transport                            |
+|---------------------------------------------------|--------------------------------------|
+| `192.168.1.50`, `plc.local:1502`                  | Modbus TCP (Port-Default 502)        |
+| `/dev/ttyUSB0`, `/dev/tty.usbserial-…`, `COM3`    | Modbus RTU über die serielle Leitung |
+| `rtu://…`, `tcp://…`, `rtuovertcp://…`, `udp://…` | explizit, schlägt die Erkennung      |
 
 ```console
 $ modbusread 192.168.1.50 42082 uint16
@@ -97,14 +97,14 @@ tar -xzf "modbusread-$VERSION-$ARCH.tar.gz"
 ./modbusread --version
 ```
 
-| Maschine | `ARCH` |
-|---|---|
-| Raspberry Pi 3/4/5 mit 64-bit Raspberry Pi OS | `linux-arm64` |
-| Raspberry Pi mit 32-bit OS, inkl. Zero und Pi 1 | `linux-arm` |
-| gewöhnlicher Linux-PC/Server, NAS | `linux-amd64` |
-| Mac mit Apple Silicon | `darwin-arm64` |
-| Mac mit Intel | `darwin-amd64` |
-| Windows | `windows-amd64` |
+| Maschine                                        | `ARCH`          |
+|-------------------------------------------------|-----------------|
+| Raspberry Pi 3/4/5 mit 64-bit Raspberry Pi OS   | `linux-arm64`   |
+| Raspberry Pi mit 32-bit OS, inkl. Zero und Pi 1 | `linux-arm`     |
+| gewöhnlicher Linux-PC/Server, NAS               | `linux-amd64`   |
+| Mac mit Apple Silicon                           | `darwin-arm64`  |
+| Mac mit Intel                                   | `darwin-amd64`  |
+| Windows                                         | `windows-amd64` |
 
 Das 32-bit-Archiv ist mit `GOARM=6` gebaut und läuft deshalb auch auf den älteren
 ARMv6-Modellen. Prüfen lässt sich der Download gegen die `checksums.txt` desselben
@@ -164,35 +164,75 @@ zusätzlich `jq` und `mosquitto_sub` (`brew install mosquitto` bzw.
 `portal` geht einen anderen Weg: Es fragt `provider-service/user/device/detail` ab – den
 Endpunkt, den das Endkunden-Portal selbst benutzt. Der antwortet auch für Geräte, die die
 Developer-API mit 1006 sperrt, und liefert SOC, Live-Leistungen, Energiezähler sowie die
-Rohblöcke der Firmware (69 EMS-Felder, DCDC-Status, Energy-Stream). Authentifiziert wird nicht mit den API-Keys, sondern mit dem
-**Session-Token des Portals** in `ECOFLOW_PORTAL_TOKEN`. Der Token läuft ab; bei HTTP 401
+Rohblöcke der Firmware (69 EMS-Felder, DCDC-Status, Energy-Stream). Authentifiziert wird nicht mit den API-Keys, sondern
+mit dem **Session-Token des Portals** in `ECOFLOW_PORTAL_TOKEN`. Der Token läuft ab; bei HTTP 401
 neu holen. Nicht ins Repo und möglichst nicht in die Shell-History.
 
-`status` rendert dieselbe Antwort als Übersicht:
+### Live-Werte abrufen
 
-```
+Für `status` und `portal` braucht es **kein** API-Schlüsselpaar – nur den Portal-Token.
+Einmalabruf aus einer frischen Shell, Login und Abfrage in einem Kommando:
+
+```console
+$ ECOFLOW_PORTAL_TOKEN="$(scripts/ecoflow-api.sh login vorname.nachname@example.com)" \
+    scripts/ecoflow-api.sh status HC31XXXXXXXXXXXX
+Password (not echoed):
+logged in as user 19701254481420…
 device   : Mathe (online)
-SoC      : 51 %
-PV       : 0 W
-grid     : 0 W
-house    : 204 W
-battery  : 204 W (discharging)
+SoC      : 18 %
+PV       : 1045 W
+grid     : 0 W (idle)
+house    : 446 W
+battery  : 599 W (charging)
+
+yield    : today 1.90 | month 282.67 | year 4548.79 | total 5236.71 kWh
+measured : 2026-09-17T08:39:26Z
 ```
 
-Das Portal meldet Haus- und Batterieleistung **negativ**, während seine eigene Oberfläche
-sie positiv anzeigt. `status` gibt deshalb den Betrag aus und schreibt die Richtung dazu,
-statt ein Vorzeichen durchzureichen, das man erst deuten muss.
+Die vorangestellte Zuweisung **ohne `export`** gilt nur für dieses eine Kommando: Danach
+kennt die Shell die Variable nicht, der Token steht in keiner weiteren Prozessumgebung, und
+es gibt nichts aufzuräumen – auch nicht nach einem Fehler oder Ctrl-C. Die Passwortabfrage
+kommt aus dem Terminal (`/dev/tty`) und funktioniert deshalb auch in der
+Kommandosubstitution: `login` schreibt **nur** den Token nach stdout, alles andere nach
+stderr. Die E-Mail darf fehlen, dann wird sie gefragt oder aus `ECOFLOW_EMAIL` genommen.
+Braucht `jq` (`brew install jq`).
+
+Für mehrere Abfragen, ohne jedes Mal das Passwort zu tippen, den Token einmal exportieren –
+dann aber am Ende **`unset`**, und mit `;` statt `&&`, sonst bleibt er gerade im Fehlerfall
+stehen. `export ECOFLOW_PORTAL_TOKEN=` löscht ihn nicht, es setzt ihn leer und lässt ihn
+exportiert:
+
+```bash
+export ECOFLOW_PORTAL_TOKEN="$(scripts/ecoflow-api.sh login)"
+scripts/ecoflow-api.sh status HC31XXXXXXXXXXXX
+scripts/ecoflow-api.sh portal HC31XXXXXXXXXXXX
+unset ECOFLOW_PORTAL_TOKEN
+```
+
+Eine Subshell nimmt den Token beim Verlassen von selbst mit, das erspart das Aufräumen:
+
+```bash
+( export ECOFLOW_PORTAL_TOKEN="$(scripts/ecoflow-api.sh login)"
+  scripts/ecoflow-api.sh status HC31XXXXXXXXXXXX )
+```
+
+Der Token gilt, bis er abläuft; bei HTTP 401 neu einloggen.
+
+`status` rendert die Antwort von `portal` als Übersicht. Das Portal meldet Haus- und
+Batterieleistung **negativ**, während seine eigene Oberfläche sie positiv anzeigt. `status`
+gibt deshalb den Betrag aus und schreibt die Richtung dazu, statt ein Vorzeichen
+durchzureichen, das man erst deuten muss. Kommt statt der Übersicht *„the response carried
+no data"*, passt `ECOFLOW_PRODUCT_TYPE` nicht zum Gerät (Default `85` = PowerOcean).
 
 Zwei Wege zum Token:
 
 - **Aus dem Browser:** im eingeloggten Portal unter *Local Storage → `S1_JWT`*.
 - **Per `login`:** fragt E-Mail und Passwort ab (Passwort ohne Echo, wahlweise aus
-  `ECOFLOW_PASSWORD`) und gibt ausschließlich den Token auf stdout aus – alles andere geht
-  nach stderr, damit sich der Token direkt einfangen lässt:
-  `export ECOFLOW_PORTAL_TOKEN="$(scripts/ecoflow-api.sh login)"`.
+  `ECOFLOW_PASSWORD` – besser nicht, eine exportierte Variable überlebt die Shell, die sie
+  gesetzt hat, und landet in Prozessumgebungen).
 
-Zur Abwägung: `login` benutzt den Login-Endpunkt der Endkunden-App, der das Passwort
-**base64-kodiert, nicht gehasht** überträgt – Base64 ist Kodierung, keine Verschlüsselung,
+Zur Abwägung: `login` benutzt den Login-Endpunkt der Endkunden-App, der das Passwort **base64-kodiert, nicht gehasht**
+überträgt – Base64 ist Kodierung, keine Verschlüsselung,
 geschützt ist allein der TLS-Kanal. Der Browser-Token ist das kleinere Geheimnis und läuft
 von selbst ab; das Passwort ist der bequemere Weg. Beides sind inoffizielle Schnittstellen.
 
@@ -202,16 +242,16 @@ Suffix ist fest verdrahtet – es gibt kein freies Topic-Argument, das `.../set`
 von hier aus also nicht erreichbar. Braucht zusätzlich `mosquitto_pub`.
 
 Exit-Code `0` heißt `code 0` von der API, `2` jeder andere Code. **`2` mit Code 1006**
-ist die interessante Antwort: Dann ist das Modell von der Developer-API ausgeschlossen
-(siehe `api-status.md`) und nur der lokale Modbus-Weg bleibt. Das Gerät muss an das
+ist die interessante Antwort: Dann ist das Modell von der Developer-API ausgeschlossen (siehe `api-status.md`) und nur
+der lokale Modbus-Weg bleibt. Das Gerät muss an das
 eigene EcoFlow-Konto gebunden sein, sonst bleibt die Liste leer.
 
 ## Kurzüberblick
 
 - Eine spezifische, offiziell dokumentierte REST-API für den DC Fit existiert nicht.
 - Die generische EcoFlow Developer/Open API (Cloud) liefert für die PowerOcean-Familie
-  Fehler 1006 "not allowed" – eine Modell-Sperrliste, kein Bug. Der **DC Fit
-  (SN-Präfix `HC31`) ist betroffen, am Gerät bestätigt**: `device/list` listet ihn zwar
+  Fehler 1006 "not allowed" – eine Modell-Sperrliste, kein Bug. Der **DC Fit (SN-Präfix `HC31`) ist betroffen, am Gerät
+  bestätigt**: `device/list` listet ihn zwar
   mit Code 0, `device/quota/all` verweigert aber die Messwerte mit 1006.
 - Praktikabler Weg: **lokales Modbus TCP** (Port 502) – muss vom Installateur über
   die EcoFlow Pro App freigeschaltet werden, Registerbelegung ist nicht offiziell
