@@ -41,7 +41,10 @@ Das **Ziel** entscheidet über den Transport, ohne zusätzliches Flag:
 |---------------------------------------------------|--------------------------------------|
 | `192.168.1.50`, `plc.local:1502`                  | Modbus TCP (Port-Default 502)        |
 | `/dev/ttyUSB0`, `/dev/tty.usbserial-…`, `COM3`    | Modbus RTU über die serielle Leitung |
-| `rtu://…`, `tcp://…`, `rtuovertcp://…`, `udp://…` | explizit, schlägt die Erkennung      |
+| `rtu://…`, `tcp://…`, `udp://…`, `rtuovertcp://…`, `rtuoverudp://…` | explizit, schlägt die Erkennung |
+
+`tcp+tls://` wird ausdrücklich abgelehnt statt stillschweigend ignoriert – die Bibliothek
+könnte es, aber ungeprüft anzubieten wäre eine Zusage ohne Deckung.
 
 ```console
 $ modbusread 192.168.1.50 42082 uint16
@@ -59,8 +62,10 @@ $ modbusread 192.168.1.50 40520 raw --count 120 --interval 1s --on-change
 ```
 
 Wichtig: **Adressen werden nicht umgerechnet** – sie gehen so auf den Draht, wie sie
-getippt werden (0-based). Die Tabellen in `modbus-registers.md` sind als 1-based
-bezeichnet; ob das stimmt, ist offen (siehe „Offene Punkte“).
+getippt werden (0-based). Ob die Tabellen in `modbus-registers.md` 1-based oder 0-based
+gemeint sind, ist ungeklärt; die Datei selbst zweifelt ihre frühere 1-based-Angabe
+inzwischen an. Das Umrechnen bleibt deshalb beim Menschen, damit das Werkzeug keine
+Annahme versteckt.
 
 Bei einem seriellen Ziel kommen die Leitungsparameter dazu – `--baud` (19200),
 `--databits` (8), `--parity` (none) und `--stopbits`. Letzteres folgt bei `0` der
@@ -136,7 +141,12 @@ Endpunkte wollen es nur so; das schreibende PUT-Gegenstück kennt das Skript nic
 Braucht `bash`, `curl` und `openssl`. **`jq` ist für die meisten Kommandos Pflicht** — nur
 `devices`, `quota`, `get` und `cert` kommen ohne aus, dort verschönert es die Ausgabe.
 
-Zugangsdaten kommen aus der Umgebung, nie aus dem Repo:
+Zugangsdaten kommen aus der Umgebung, nie aus dem Repo. **Es gibt zwei Sorten, und die
+meisten Kommandos brauchen die zweite:** Das API-Schlüsselpaar gilt nur für die
+Developer-API (`devices`, `quota`, `get`, `values`, `cert`, `mqtt`, `request`) — und genau
+die verweigert dem DC Fit die Messwerte. Alles, was tatsächlich Daten liefert, läuft über
+den Portal-Token (`login`, `portal`, `status`, `portal-get`, `app-cert`, `app-mqtt`,
+`live`, `fast`); dafür braucht es **kein** Schlüsselpaar.
 
 ```bash
 export ECOFLOW_ACCESS_KEY='…'   # developer-eu.ecoflow.com → Security
@@ -189,7 +199,7 @@ Einmalabruf aus einer frischen Shell, Login und Abfrage in einem Kommando:
 $ ECOFLOW_PORTAL_TOKEN="$(scripts/ecoflow-api.sh login vorname.nachname@example.com)" \
     scripts/ecoflow-api.sh status HC31XXXXXXXXXXXX
 Password (not echoed):
-logged in as user 19701254481420…
+logged in as user 1000000000000…
 device   : Mathe (online)
 SoC      : 18 %
 PV       : 1045 W
@@ -261,7 +271,7 @@ bleibt `measured` stehen, teils stundenlang. `live` übernimmt die Rolle der App
 
 ```bash
 export ECOFLOW_PORTAL_TOKEN="$(scripts/ecoflow-api.sh login)"
-export ECOFLOW_USER_ID=19701254481420        # gibt "login" fertig zum Exportieren aus
+export ECOFLOW_USER_ID=1000000000000000000   # gibt "login" fertig zum Exportieren aus
 scripts/ecoflow-api.sh live HC31XXXXXXXXXXXX
 ```
 
@@ -309,9 +319,13 @@ XOR-verschleiert ist und woran die Feldzuordnung hängt, steht in `api-status.md
 
 ### Schneller Takt: `fast`
 
-Statt minütlich alle paar Sekunden – dafür gibt es `fast` anstelle von `live`:
+Statt minütlich alle paar Sekunden – dafür gibt es `fast` anstelle von `live`. Es braucht
+dieselben zwei Variablen wie `live`:
 
 ```bash
+export ECOFLOW_PORTAL_TOKEN="$(scripts/ecoflow-api.sh login)"
+export ECOFLOW_USER_ID=1000000000000000000     # gibt "login" fertig zum Exportieren aus
+
 scripts/ecoflow-api.sh fast HC31XXXXXXXXXXXX | python3 scripts/ecoflow-frames.py
 ```
 
@@ -333,7 +347,8 @@ Stellen daneben — siehe `api-status.md`.
 09:13:22Z  PV     967 W | house    403 W | battery    472 W (charging) | grid     92 W (export) | SoC 63 %
 ```
 
-Gemessen: 62 Werte in 55 Sekunden statt zwei. Der Zeitstempel ist hier **sekundengenau**,
+Gemessen: 131 Werte über gut vier Minuten, im Schnitt alle 1,9 s — statt vier. Der
+Zeitstempel ist hier **sekundengenau**,
 beim Minutenbericht ist er auf die Minute gerundet.
 
 Solange der schnelle Strom läuft, wird der Minutenbericht **nicht** mit angezeigt: Er
@@ -431,10 +446,20 @@ lauschen ist kein Übereifer: Die ACL verweigert an manchen Konten `.../get_repl
 sie `.../quota` gewährt. Das Suffix ist fest verdrahtet, es gibt kein freies
 Topic-Argument. Braucht zusätzlich `mosquitto_pub`.
 
-Exit-Code `0` heißt `code 0` von der API, `2` jeder andere Code. **`2` mit Code 1006**
-ist die interessante Antwort: Dann ist das Modell von der Developer-API ausgeschlossen (siehe `api-status.md`) und nur
-der lokale Modbus-Weg bleibt. Das Gerät muss an das
-eigene EcoFlow-Konto gebunden sein, sonst bleibt die Liste leer.
+Vier Exit-Codes, nicht zwei — wer auf „ungleich 0" prüft, hält sonst einen Netzfehler für
+eine API-Antwort:
+
+| Code | Bedeutung                                                  |
+|------|------------------------------------------------------------|
+| `0`  | die API antwortete mit `code 0`                            |
+| `1`  | Bedienungs- oder Konfigurationsfehler (fehlende Variable …) |
+| `2`  | die API antwortete mit einem anderen Code                  |
+| `3`  | die Anfrage selbst scheiterte — Netz, TLS, Namensauflösung |
+
+**`2` mit Code 1006** ist die interessante Antwort: Dann ist das Modell von der
+Developer-API ausgeschlossen (siehe `api-status.md`) und nur der App-MQTT-Kanal oder
+lokales Modbus bleibt. Das Gerät muss an das eigene EcoFlow-Konto gebunden sein, sonst
+bleibt die Liste leer.
 
 ## `ecoflowd`
 
@@ -451,6 +476,35 @@ export ECOFLOW_PASSWORD='…'
 go build ./cmd/ecoflowd
 ./ecoflowd --sn HC31XXXXXXXXXXXX --stdout
 ```
+
+| Flag | Bedeutung |
+|---|---|
+| `--sn` | Seriennummer des Geräts (Pflicht) |
+| `--broker` | lokaler MQTT-Broker, z.B. `tcp://127.0.0.1:1883` |
+| `--topic` | Präfix am lokalen Broker, Default `ecoflow` |
+| `--mqtt-user` | Benutzer für den lokalen Broker; Passwort über `MQTT_PASSWORD` |
+| `--stdout` | jeden Messwert auch auf stdout schreiben |
+| `--fast` | den schnellen Strom einschalten — **schreibt**, s.u. |
+| `--switch-every` | Wiederholrate dafür, Default 3s; unter 1s wird abgelehnt |
+| `--host` | abweichender API-Host; für US-Konten `https://api-a.ecoflow.com` |
+| `-v` | jeden eintreffenden Frame melden |
+| `--version` | Version ausgeben und beenden |
+
+Zugangsdaten kommen ausschließlich aus der Umgebung — `ECOFLOW_EMAIL`, `ECOFLOW_PASSWORD`,
+wahlweise `ECOFLOW_HOST` und `MQTT_PASSWORD`. Nie aus Flags: Was in der Kommandozeile
+steht, kann jeder auf dem Rechner in der Prozessliste lesen.
+
+Vier Exit-Codes, und einer davon ist für den Dauerbetrieb entscheidend:
+
+| Code | Bedeutung |
+|---|---|
+| `0` | auf ein Signal hin beendet |
+| `1` | Bedienungs- oder Konfigurationsfehler |
+| `2` | nach einem wiederholten Fehlschlag aufgegeben |
+| `78` | **die Zugangsdaten wurden abgelehnt** — Warten hilft hier nie |
+
+Die systemd-Unit führt die `78` in `RestartPreventExitStatus`, damit ein Tippfehler in der
+Zugangsdatei nicht endlos Anmeldeversuche gegen einen inoffiziellen Endpunkt fährt.
 
 ```console
 connected to mqtt-e.ecoflow.com:8883, subscribed to 3 topics
@@ -506,7 +560,8 @@ Platte — der Sitzungstoken lebt im Speicher des Prozesses.
 
 `RestartPreventExitStatus=78` ist der Kern: Bei abgelehnten Zugangsdaten bleibt der Dienst
 stehen, statt einen Tippfehler stündlich gegen einen inoffiziellen Endpunkt zu fahren.
-Alles andere startet nach 30 Sekunden neu.
+Jeder *andere* Fehlschlag startet nach 30 Sekunden neu — ein sauberer Halt über Signal
+dagegen nicht, denn die Unit steht auf `Restart=on-failure`.
 
 ```bash
 systemctl status ecoflowd@HC31XXXXXXXXXXXX
@@ -524,7 +579,7 @@ Ein Topic je Wert, blanke Zahlen, kein JSON:
 | Topic                          | Beispiel               | Einheit                       |
 |--------------------------------|------------------------|-------------------------------|
 | `ecoflow/HC31XXXXXXXXXXXX/pv`             | `970`                  | W                             |
-| `ecoflow/HC31XXXXXXXXXXXX/house`          | `-415`                 | W                             |
+| `ecoflow/HC31XXXXXXXXXXXX/house`          | `-415`                 | W, **negativ = Verbrauch**    |
 | `ecoflow/HC31XXXXXXXXXXXX/battery`        | `482`                  | W, **positiv = laden**        |
 | `ecoflow/HC31XXXXXXXXXXXX/grid`           | `72`                   | W, **positiv = Einspeisung**  |
 | `ecoflow/HC31XXXXXXXXXXXX/dcdc`           | `379`                  | W, Rolle noch unbekannt       |
@@ -673,8 +728,8 @@ hält sie gegen dieselben Mitschnitte zusammen.
   bei zehn Sekunden Wiederholabstand nicht trägt
 - Was die übrigen Frame-Kennungen tragen (`cmd_id` 1, 108–111, 136); der
   Energiestrom auf 34 ist ausgewertet, der Rest nicht
-- Ob sich der schnelle ~3-Sekunden-Takt lohnt, den die App über das
-  `.../set`-Topic freischaltet – bewusst nicht ausprobiert (kein Schreibpfad)
+- Ob die Stundensumme und der Tagesertrag des Portals je zusammenfinden – gemessen
+  klaffen sie um mehrere hundert Wh auseinander, ohne erkennbaren Grund
 
 ## Arbeiten an diesem Repo
 
@@ -743,7 +798,7 @@ git checkout main && git pull
 
 ```bash
 git checkout main && git pull
-git tag v0.3.0 && git push origin v0.3.0
+git tag v0.5.0 && git push origin v0.5.0
 ```
 
 Nur auf `main` taggen – `release.yml` baut daraus die Binaries und stempelt die
