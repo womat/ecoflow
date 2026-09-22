@@ -64,6 +64,9 @@ func TestLogin(t *testing.T) {
 }
 
 func TestLoginRejected(t *testing.T) {
+	// The code and message here are plausible rather than measured - no list of
+	// them is published, and this account has never been refused. What the test
+	// pins down is the handling of any non-zero code, not the number 7.
 	tests := []struct {
 		name string
 		body string
@@ -89,6 +92,40 @@ func TestLoginRejected(t *testing.T) {
 			if got := errors.Is(err, ErrCredentials); got != wantPermanent {
 				t.Errorf("errors.Is(err, ErrCredentials) = %v, want %v (err: %v)",
 					got, wantPermanent, err)
+			}
+		})
+	}
+}
+
+// TestLoginRefusedServiceIsNotACredentialError is about what a caller does
+// with the answer. ErrCredentials makes the service exit for good, and the
+// systemd unit declines to restart it - so a cloud that is merely rate-limiting
+// or down must not produce one, however well-formed its reply. These bodies
+// carry a non-zero code on purpose: the status is what tells them apart.
+func TestLoginRefusedServiceIsNotACredentialError(t *testing.T) {
+	tests := []struct {
+		name   string
+		status int
+	}{
+		{"rate limited", http.StatusTooManyRequests},
+		{"server error", http.StatusInternalServerError},
+		{"bad gateway", http.StatusBadGateway},
+		{"unavailable", http.StatusServiceUnavailable},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			c := startCloud(t, func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(tc.status)
+				io.WriteString(w, `{"code":"1000","message":"too many requests"}`)
+			})
+
+			_, err := c.Login(context.Background(), "someone@example.com", "hunter2")
+			if err == nil {
+				t.Fatal("got no error, want one")
+			}
+			if errors.Is(err, ErrCredentials) {
+				t.Errorf("HTTP %d was taken for a rejected password: %v", tc.status, err)
 			}
 		})
 	}

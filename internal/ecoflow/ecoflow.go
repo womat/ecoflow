@@ -41,6 +41,13 @@ const DefaultProductType = "85"
 // It is kept apart from every other failure on purpose: a network that is
 // down heals by itself, a wrong password never does. A service that treats
 // them alike retries a typo against an undocumented endpoint forever.
+//
+// What counts as a rejection is deliberately narrow, because a caller may well
+// stop for good on it. A login that never got an answer, or got one that is
+// not JSON, or was refused service by status is not this. What remains is an
+// answer the cloud formed itself with a code other than zero; no list of those
+// codes is documented anywhere, so one that means something other than "wrong
+// password" would still land here. That is the known gap.
 var ErrCredentials = errors.New("the account credentials were rejected")
 
 // ErrTokenRejected reports a session token the cloud would not accept.
@@ -126,9 +133,16 @@ func (c *Client) Login(ctx context.Context, email, password string) (Session, er
 	}
 	req.Header.Set("Content-Type", "application/json;charset=UTF-8")
 
-	raw, err := c.do(req)
+	raw, status, err := c.do(req)
 	if err != nil {
 		return Session{}, err
+	}
+	// A cloud that is rate-limiting or down says so with a status, and it says
+	// nothing about the password. Read before the body, because these answers
+	// are sometimes well-formed JSON with a code in them - and a code is all
+	// that stands between a typo and a service that stops for good.
+	if status == http.StatusTooManyRequests || status >= http.StatusInternalServerError {
+		return Session{}, fmt.Errorf("login was refused service: HTTP %d", status)
 	}
 
 	var answer struct {
@@ -258,14 +272,15 @@ func (c *Client) get(ctx context.Context, url, auth string) ([]byte, int, error)
 	return body, resp.StatusCode, nil
 }
 
-func (c *Client) do(req *http.Request) ([]byte, error) {
+func (c *Client) do(req *http.Request) ([]byte, int, error) {
 	resp, err := c.httpClient().Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("request failed: %w", err)
+		return nil, 0, fmt.Errorf("request failed: %w", err)
 	}
 	defer resp.Body.Close()
 
-	return io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	return body, resp.StatusCode, err
 }
 
 func message(s string) string {

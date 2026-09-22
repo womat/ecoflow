@@ -59,7 +59,9 @@ func serve(ctx context.Context, cfg *config, stdout, stderr io.Writer) int {
 			return exitOK
 		case errors.Is(err, ecoflow.ErrCredentials):
 			fmt.Fprintln(stderr, "error:", err)
-			fmt.Fprintln(stderr, "this will not fix itself; check ECOFLOW_EMAIL and ECOFLOW_PASSWORD")
+			fmt.Fprintln(stderr, "stopping: check ECOFLOW_EMAIL and ECOFLOW_PASSWORD")
+			fmt.Fprintln(stderr, "if those are right, the cloud refused for a reason of its own -",
+				"the codes are documented nowhere, and a restart is then the way back")
 			return exitCredentials
 		case err != nil:
 			fmt.Fprintf(stderr, "error: %v; retrying in %s\n", err, wait)
