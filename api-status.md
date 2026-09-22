@@ -607,6 +607,31 @@ Abrufbar mit `scripts/ecoflow-api.sh fast <SN> | python3 scripts/ecoflow-frames.
 **Offen:** Die Tagessumme deckt sich nicht mit `todayElectricityGeneration` des Portals –
 siehe die Liste der offenen Fragen.
 
+#### Die Antwort auf den Schalter: `96/3` und `96/137`
+
+Beide kommen im schnellen Betrieb im Sekundentakt – und im langsamen **gar nicht**. Die
+Gegenprobe ist eindeutig: 83 bzw. 75 Frames bei aktivem Schalter, null ohne ihn. Der
+Schalter setzt `needAck = 1`, das Gerät antwortet also mit beidem.
+
+**`96/137` hat eine leere Nutzlast** – eine reine Bestätigung, ohne Inhalt.
+
+**`96/3` ist eine Komponentenliste.** Über 83 Frames hinweg byteweise identisch, also
+keine Messung. Jedes Feld enthält eine eingebettete Nachricht, deren Feld 1 eine
+Seriennummer als ASCII trägt:
+
+| Feld | Beispielwert       | Deutung                                         |
+|------|--------------------|-------------------------------------------------|
+| 1    | `HC31Z1H4ZG150145` | die Einheit selbst – dieselbe SN, die man abfragt |
+| 2    | `HC312103BFCP0504` | weitere `HC31`-Komponente, Rolle unbekannt      |
+| 3    | `HJ3AZD1AZH6C0814` | `HJ3A`-Präfix, mehrfach vorhanden               |
+| 3    | `HJ3AZD1B2HAA0025` | dito                                            |
+
+Nur Feld 1 ist belegt: Es stimmt mit der abgefragten Seriennummer überein. Dass die
+beiden `HJ3A`-Einträge die Batteriemodule sind, ist der Anzahl und dem Präfix nach
+naheliegend, aber **nicht bestätigt** – `HJ3x` führt die Präfixliste oben als
+PowerOcean-Familie. Deshalb gibt `ecoflow-frames.py --modules` sie mit Feldnummer statt
+mit erfundenen Bezeichnungen aus.
+
 Ausgewertet wird das von `scripts/ecoflow-frames.py`, das die Ausgabe von `live` auf
 stdin nimmt. Der schnellere ~3-Sekunden-Takt, den die App über `.../set` freischaltet,
 ist damit weiterhin nicht erreicht – für einen Minutentakt braucht es ihn aber auch nicht.
@@ -790,8 +815,11 @@ REST-Interface – eine explizite Bestätigung dafür liegt aber nicht vor.
 - [x] Was trägt `cmd_func 254 / cmd_id 32`? → **Die Stundenhistorie des laufenden Tages**,
   sechs Flüsse à 24 Stundenwerte in Wh. Aufgeschlüsselt unten, abrufbar mit
   `ecoflow-frames.py --hours`
-- [ ] Was tragen `96/3` und `96/137`? Im schnellen Betrieb ebenfalls im Sekundenbereich,
-  bisher nicht ausgewertet
+- [x] Was tragen `96/3` und `96/137`? → `96/3` ist eine **Komponentenliste** mit vier
+  Seriennummern, `96/137` hat eine **leere Nutzlast** und ist die Bestätigung auf den
+  Stream-Schalter. Beide erscheinen nur bei aktivem Schalter. Siehe unten
+- [ ] Welche Rolle haben die Komponenten ab Feld 2 der Liste? Die beiden `HJ3A`-Einträge
+  sind der Zahl nach die Batteriemodule, belegt ist das nicht
 - [ ] Warum weicht die Tagessumme der Stundenhistorie vom `todayElectricityGeneration`
   des Portals ab? Am 22.09.2026 stand dort um 07:13Z 1,74 kWh, während die Stundenwerte
   bis dahin rund 1,25 kWh ergeben. Womöglich misst das Portal an anderer Stelle –

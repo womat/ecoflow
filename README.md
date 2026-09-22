@@ -360,6 +360,27 @@ dort etwas anderes als eine Rundungsdifferenz, stimmt die Feldzuordnung nicht me
 weil eine Firmware die Nummern verschoben hat. Genau daran wurde sie ursprünglich belegt;
 Einzelheiten in `api-status.md`.
 
+### Welche Komponenten die Anlage meldet: `--modules`
+
+```console
+$ scripts/ecoflow-api.sh fast HC31XXXXXXXXXXXX | python3 scripts/ecoflow-frames.py --modules
+modules reported by the system
+
+  field 1   HC31Z1H4ZG150145
+  field 2   HC312103BFCP0504
+  field 3   HJ3AZD1AZH6C0814
+  field 3   HJ3AZD1B2HAA0025
+
+field 1 is the unit itself; the role of the others is not established
+```
+
+Nützlich, um ohne App an die Seriennummern der verbauten Teile zu kommen. Wie `--hours`
+wartet es auf die erste Meldung und endet dann.
+
+Die Feldnummern stehen absichtlich da, statt Bezeichnungen wie „Batterie 1“: Belegt ist
+nur Feld 1 — es ist die abgefragte Einheit selbst. Dass die beiden `HJ3A`-Einträge die
+Batteriemodule sind, ist naheliegend und ungeprüft.
+
 ### Mitlesen, was die App sendet: `app-mqtt`
 
 ```bash
