@@ -47,12 +47,6 @@ func TestUsageErrors(t *testing.T) {
 			want: "serial number looks wrong",
 		},
 		{
-			name: "name with a wildcard would break the topics",
-			args: []string{"--sn", "HC31XXXXXXXXXXXX", "--name", "a/b"},
-			env:  map[string]string{"ECOFLOW_EMAIL": "a@b.c", "ECOFLOW_PASSWORD": "x"},
-			want: "name must not contain",
-		},
-		{
 			name: "no credentials",
 			args: []string{"--sn", "HC31XXXXXXXXXXXX"},
 			want: "ECOFLOW_EMAIL and ECOFLOW_PASSWORD",
@@ -110,19 +104,22 @@ func TestHelp(t *testing.T) {
 	}
 }
 
-// TestNameDefaultsToSerial pins the topic namespace: without --name the serial
-// is used, which is unambiguous but also what one may not want in every log.
-func TestNameDefaultsToSerial(t *testing.T) {
+// TestTopicsCarryTheSerial pins the namespace. The serial is the only name a
+// device has, and having a second one would mean two things to keep in step
+// for no gain - the serial is already on the command line and in the systemd
+// instance name anyway.
+func TestTopicsCarryTheSerial(t *testing.T) {
 	t.Setenv("ECOFLOW_EMAIL", "a@b.c")
 	t.Setenv("ECOFLOW_PASSWORD", "x")
 
-	opts := &options{serial: "HC31XXXXXXXXXXXX"}
-	cfg, err := buildConfig(opts, nil)
+	cfg, err := buildConfig(&options{serial: "HC31XXXXXXXXXXXX", topic: "ecoflow"}, nil)
 	if err != nil {
 		t.Fatalf("buildConfig: %v", err)
 	}
-	if cfg.name != cfg.serial {
-		t.Errorf("got name %q, want it to default to the serial %q", cfg.name, cfg.serial)
+
+	want := "ecoflow/HC31XXXXXXXXXXXX/pv"
+	if got := topicFor(cfg.topic, cfg.serial, "pv"); got != want {
+		t.Errorf("got %q, want %q", got, want)
 	}
 }
 

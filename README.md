@@ -485,7 +485,7 @@ sudo systemctl enable --now ecoflowd@HC31XXXXXXXXXXXX
 ECOFLOW_EMAIL=vorname.nachname@example.com
 ECOFLOW_PASSWORD=…
 MQTT_PASSWORD=…
-ECOFLOWD_OPTIONS=--broker tcp://127.0.0.1:1883 --name mathe
+ECOFLOWD_OPTIONS=--broker tcp://127.0.0.1:1883
 ```
 
 **Diese Datei ist das Kontopasswort**, kein Anwendungstoken — `0700` auf das Verzeichnis
@@ -507,23 +507,27 @@ journalctl -fu ecoflowd@HC31XXXXXXXXXXXX
 ### An den lokalen Broker: `--broker`
 
 ```bash
-./ecoflowd --sn HC31XXXXXXXXXXXX --name mathe --broker tcp://127.0.0.1:1883
+./ecoflowd --sn HC31XXXXXXXXXXXX --broker tcp://127.0.0.1:1883
 ```
 
 Ein Topic je Wert, blanke Zahlen, kein JSON:
 
 | Topic                          | Beispiel               | Einheit                       |
 |--------------------------------|------------------------|-------------------------------|
-| `ecoflow/mathe/pv`             | `970`                  | W                             |
-| `ecoflow/mathe/house`          | `-415`                 | W                             |
-| `ecoflow/mathe/battery`        | `482`                  | W, **positiv = laden**        |
-| `ecoflow/mathe/grid`           | `72`                   | W, **positiv = Einspeisung**  |
-| `ecoflow/mathe/dcdc`           | `379`                  | W, Rolle noch unbekannt       |
-| `ecoflow/mathe/soc`            | `63`                   | %                             |
-| `ecoflow/mathe/measured`       | `2026-09-22T09:13:19Z` | ISO 8601, UTC                 |
-| `ecoflow/mathe/energy/pv`      | `3301`                 | Wh, Tagessumme                |
-| `ecoflow/mathe/energy/…`       |                        | `house`, `battery_in/out`, `grid_in/out` |
-| `ecoflow/mathe/status`         | `online` / `offline`   | Verfügbarkeit, retained       |
+| `ecoflow/HC31XXXXXXXXXXXX/pv`             | `970`                  | W                             |
+| `ecoflow/HC31XXXXXXXXXXXX/house`          | `-415`                 | W                             |
+| `ecoflow/HC31XXXXXXXXXXXX/battery`        | `482`                  | W, **positiv = laden**        |
+| `ecoflow/HC31XXXXXXXXXXXX/grid`           | `72`                   | W, **positiv = Einspeisung**  |
+| `ecoflow/HC31XXXXXXXXXXXX/dcdc`           | `379`                  | W, Rolle noch unbekannt       |
+| `ecoflow/HC31XXXXXXXXXXXX/soc`            | `63`                   | %                             |
+| `ecoflow/HC31XXXXXXXXXXXX/measured`       | `2026-09-22T09:13:19Z` | ISO 8601, UTC                 |
+| `ecoflow/HC31XXXXXXXXXXXX/energy/pv`      | `3301`                 | Wh, Tagessumme                |
+| `ecoflow/HC31XXXXXXXXXXXX/energy/…`       |                        | `house`, `battery_in/out`, `grid_in/out` |
+| `ecoflow/HC31XXXXXXXXXXXX/status`         | `online` / `offline`   | Verfügbarkeit, retained       |
+
+Im Topic steht die Seriennummer — sie ist der einzige Name, den ein Gerät hat, und ein
+zweiter wäre nur eine weitere Sache, die man nachziehen muss. Mit `--topic` lässt sich das
+Präfix davor ändern.
 
 Mit `--mqtt-user` und `MQTT_PASSWORD` für einen Broker, der Anmeldung verlangt. Das
 Passwort kommt aus der Umgebung, weil ein Flag in der Prozessliste stünde.
@@ -552,25 +556,25 @@ meters:
     type: custom
     power:
       source: mqtt
-      topic: ecoflow/mathe/pv
+      topic: ecoflow/HC31XXXXXXXXXXXX/pv
       timeout: 180s          # ohne timeout gilt jeder Wert unbegrenzt als aktuell
   - name: grid
     type: custom
     power:
       source: mqtt
-      topic: ecoflow/mathe/grid
+      topic: ecoflow/HC31XXXXXXXXXXXX/grid
       scale: -1              # Gerät: positiv = Einspeisung, evcc: positiv = Bezug
       timeout: 180s
   - name: battery
     type: custom
     power:
       source: mqtt
-      topic: ecoflow/mathe/battery
+      topic: ecoflow/HC31XXXXXXXXXXXX/battery
       scale: -1              # Gerät: positiv = laden, evcc: positiv = entladen
       timeout: 180s
     soc:
       source: mqtt
-      topic: ecoflow/mathe/soc
+      topic: ecoflow/HC31XXXXXXXXXXXX/soc
       timeout: 180s
 ```
 
@@ -585,11 +589,11 @@ Für Energiewerte kommt `scale: 0.001` dazu, weil evcc kWh erwartet und hier Wh 
 mqtt:
   sensor:
     - name: "PV"
-      state_topic: "ecoflow/mathe/pv"
+      state_topic: "ecoflow/HC31XXXXXXXXXXXX/pv"
       unit_of_measurement: "W"
       device_class: power
       state_class: measurement
-      availability_topic: "ecoflow/mathe/status"
+      availability_topic: "ecoflow/HC31XXXXXXXXXXXX/status"
       expire_after: 180
 ```
 

@@ -85,7 +85,7 @@ func TestSwitchFrameIsTheAppsOne(t *testing.T) {
 	const captured = "0a390a0408011001102018602001280138034060486150045801700a800103880101" +
 		"ba0103696f73ca011048433331585858585858585858585858"
 
-	cfg := &config{serial: "HC31XXXXXXXXXXXX", name: "mathe"}
+	cfg := &config{serial: "HC31XXXXXXXXXXXX"}
 	got, err := frames.BuildStreamSwitch(cfg.serial, 10)
 	if err != nil {
 		t.Fatalf("BuildStreamSwitch: %v", err)

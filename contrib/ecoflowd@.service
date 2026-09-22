@@ -15,7 +15,7 @@
 #   ECOFLOW_EMAIL=someone@example.com
 #   ECOFLOW_PASSWORD=...
 #   MQTT_PASSWORD=...
-#   ECOFLOWD_OPTIONS=--broker tcp://127.0.0.1:1883 --name mathe
+#   ECOFLOWD_OPTIONS=--broker tcp://127.0.0.1:1883
 #
 # The password there is the EcoFlow account password, not an application token,
 # and the login endpoint carries it base64-encoded rather than hashed. Anyone

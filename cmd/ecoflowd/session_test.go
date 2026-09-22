@@ -44,7 +44,6 @@ func (c *cloud) start(t *testing.T) *config {
 
 	return &config{
 		serial: "HC31XXXXXXXXXXXX",
-		name:   "test",
 		email:  "a@b.c", password: "x",
 		host: srv.URL,
 	}
