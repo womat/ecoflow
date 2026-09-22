@@ -411,11 +411,76 @@ mit `grid_pwr, dcdc_pwr, bp_pwr, pv_pwr, timestamp, timezone, bp_soc, load_pwr, 
 Wer hier die falsche Tabelle nimmt, bekommt plausible Zahlen an den falschen Namen. Das
 ist derselbe Vorbehalt wie beim Register-Mapping.
 
-**Herkunft:** Endpunktpfad, Client-ID-Form, Topics und Weckruf-Payload sind
-**unbestätigte Übernahmen** aus fremdem Reverse-Engineering, nicht aus eigener Messung und
-erst recht nicht aus EcoFlow-Doku. Quellen: `shuette42/ecoflow-energy-ha`,
+**Herkunft:** Endpunktpfad, Client-ID-Form, Topics und Weckruf-Payload waren Übernahmen
+aus fremdem Reverse-Engineering. Am Gerät nachgeprüft wurden sie am 22. September 2026 –
+siehe den nächsten Abschnitt. Quellen: `shuette42/ecoflow-energy-ha`,
 `tolwi/hassio-ecoflow-cloud`, `jensfr1/ha-ecoflow-ocean2`,
 `foxthefox/ioBroker.ecoflow-mqtt`.
+
+### Am DC Fit gemessen (22. September 2026)
+
+Der Kanal **trägt**. `app-cert` antwortet mit `code 0` und liefert
+`mqtt-e.ecoflow.com:8883` samt Zugangsdaten; der Broker akzeptiert die Client-ID der Form
+`ANDROID_<hex>_<userId>`, alle drei Topics werden abonniert, und auf
+`/app/device/property/<SN>` treffen **alle paar Sekunden Frames ein**. Damit ist dies der
+einzige Cloud-Weg, auf dem für dieses Modell tatsächlich Messwerte fließen.
+
+Drei Befunde aus derselben Messung:
+
+**1. Der Weckruf wird nicht beantwortet.** In zweieinhalb Minuten kam auf
+`.../thing/property/get_reply` keine einzige Nachricht. Der Push läuft trotzdem – das Abo
+allein scheint zu genügen. Ob der Weckruf überflüssig ist oder ob er den Push erst
+auslöst, ist damit nicht entschieden.
+
+**2. Der REST-Endpunkt wird davon nicht frisch.** `status` lieferte während der ganzen
+Zeit unverändert `measured : 2026-09-22T07:13:28Z`, während die MQTT-Frames bereits
+`08:19Z` trugen – über eine Stunde Unterschied. **Der Umweg über `provider-service` ist
+also keine Live-Quelle, auch nicht mit laufendem Zuhörer.** Wer aktuelle Werte will, muss
+die Frames auswerten.
+
+**3. Die Nutzlast ist XOR-verschleiert.** Jedes Byte der Nutzlast ist mit dem niederwertigen
+Byte der Sequenznummer (Header-Feld 14) verodert. Aufgefallen ist das daran, dass zwei
+Frames mit benachbarten Sequenznummern sich in *jedem* Byte um dasselbe Bitmuster
+unterscheiden. Ohne diesen Schritt ist die Nutzlast kein gültiges Protobuf.
+
+**Rahmenaufbau** (Feldnummern des äußeren Headers, bestätigt):
+
+| Feld | Bedeutung                                |
+|------|------------------------------------------|
+| 1    | Nutzlast (XOR-verschleiert, s.o.)        |
+| 8    | `cmd_func` – bei allen Frames hier 96    |
+| 9    | `cmd_id` – unterscheidet die Berichte    |
+| 14   | Sequenznummer, zugleich der XOR-Schlüssel |
+
+**Beobachtete `cmd_id` bei `cmd_func 96`:** 1, **34**, 108, 109, 110, 111, 136.
+
+**Der Energiestrom liegt auf `cmd_id 34`** – nicht auf 33, wie die Fremdquelle für den DC
+Fit angibt. Die Nutzlast enthält eine eingebettete Nachricht mit dieser Belegung:
+
+| Feld | Typ     | Bedeutung                              |
+|------|---------|----------------------------------------|
+| 1    | float   | Netzleistung (positiv = Einspeisung)   |
+| 2    | float   | DCDC-Leistung                          |
+| 3    | float   | Batterieleistung (positiv = Laden)     |
+| 4    | float   | PV-Leistung                            |
+| 5    | uint32  | Zeitstempel (Unix-Sekunden, UTC)       |
+| 6    | sint32  | Zeitzone                               |
+| 7    | uint32  | SoC in %                               |
+| 8    | float   | Hauslast (wird negativ gemeldet)       |
+
+**Wie das belegt ist:** über die Energiebilanz. In jedem einzelnen Frame gilt
+`PV = Batterie + Haus + Netz` auf zwei Nachkommastellen genau – etwa 968,59 W PV =
+530,0 W Batterie + 351,6 W Haus + 87,0 W Netz. Eine falsche Feldzuordnung würde das nicht
+treffen. Die Vorzeichen decken sich mit denen des Portal-Endpunkts (siehe „Vorzeichen:
+gemessen, nicht angenommen").
+
+**Takt:** Das Gerät meldet den Energiestrom etwa minütlich und schickt jeden Frame
+**doppelt**. Der Gerätezeitstempel lief in der Messung sauber mit (`08:18:00Z`,
+`08:19:00Z`).
+
+Ausgewertet wird das von `scripts/ecoflow-frames.py`, das die Ausgabe von `live` auf
+stdin nimmt. Der schnellere ~3-Sekunden-Takt, den die App über `.../set` freischaltet,
+ist damit weiterhin nicht erreicht – für einen Minutentakt braucht es ihn aber auch nicht.
 
 ## 2. Lokales Modbus TCP
 
@@ -575,15 +640,21 @@ REST-Interface – eine explizite Bestätigung dafür liegt aber nicht vor.
   mit PUBACK 0x87 „Not authorized" abgelehnt, das Abo auf `.../get_reply` mit
   SUBACK 0x80. Damit ist der **Open-API**-MQTT-Kanal vollständig ausgemessen. Der
   App-Kanal ist ein anderer und noch offen – siehe die nächsten drei Punkte.
-- [ ] Antwortet `/iot-auth/app/certification` mit dem Endkunden-Token, und lässt der
-  Broker die Client-ID-Form `ANDROID_<hex>_<userId>` zu? → `ecoflow-api.sh app-cert`,
-  dann `-v live <SN>` (CONNACK und SUBACKs stehen im Verbose-Mitschnitt)
-- [ ] Liefert `.../thing/property/get_reply` beim DC Fit JSON (`data.quotaMap`) oder
-  Protobuf? Davon hängt ab, ob sich die Werte ohne Protobuf-Decoder aufbereiten lassen
-- [ ] Wird `measured` im REST-Endpunkt wieder frisch, solange `live` läuft? Das ist die
-  Gegenprobe auf die Einfrier-Beobachtung: `live` in einem Terminal, `status` in einem
-  zweiten. Falls nicht, fehlt vermutlich der `EnergyStreamSwitch` auf `.../set` – und
-  dann steht die Entscheidung, das `set`-Topic tabu zu lassen, neu zur Debatte
+- [x] Antwortet `/iot-auth/app/certification` mit dem Endkunden-Token, und lässt der
+  Broker die Client-ID-Form `ANDROID_<hex>_<userId>` zu? → **Ja, beides** (22.09.2026);
+  Frames treffen auf `/app/device/property/<SN>` ein
+- [x] Liefert `.../thing/property/get_reply` beim DC Fit JSON? → **Es kam gar nichts**;
+  der Push läuft trotzdem. Die Werte stecken ausschließlich in den Protobuf-Frames
+- [x] Wird `measured` im REST-Endpunkt wieder frisch, solange `live` läuft? → **Nein.**
+  Über zweieinhalb Minuten unverändert, während die Frames eine Stunde weiter waren.
+  Der REST-Weg ist damit als Live-Quelle erledigt
+- [ ] Ist der Weckruf auf `.../get` überhaupt nötig, oder genügt das Abo? Unbeantwortet:
+  gemessen wurde nur mit laufendem Weckruf. Ein Lauf ohne ihn würde das klären
+- [ ] Bringt der `EnergyStreamSwitch` auf `.../set` den ~3-Sekunden-Takt? Offen und
+  bewusst nicht ausprobiert – das Skript publiziert nicht auf `set`. Für einen
+  Minutentakt wird er nicht gebraucht
+- [ ] Was tragen die übrigen `cmd_id` (1, 108, 109, 110, 111, 136)? Nach den Namen der
+  Fremdquelle EMS-Heartbeat, Batterie- und DCDC-Berichte – ungeprüft
 
 ## Quellenübersicht
 

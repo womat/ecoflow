@@ -16,6 +16,7 @@ Modbus TCP) für den EcoFlow PowerOcean DC Fit.
 | [`modbus-registers.md`](./modbus-registers.md)       | Register-Map (SOC, Batterie, PV, Netz, Energiezähler, Steuerregister) inkl. Decoding-Beispielen       |
 | [`cmd/modbusread`](./cmd/modbusread)                 | Kleines Go-CLI zum Nachmessen der Register am Gerät (s.u.)                                            |
 | [`scripts/ecoflow-api.sh`](./scripts/ecoflow-api.sh) | Shell-Skript für signierte Leseaufrufe gegen die EcoFlow Cloud-API (s.u.)                             |
+| [`scripts/ecoflow-frames.py`](./scripts/ecoflow-frames.py) | Packt die Live-Frames aus `ecoflow-api.sh live` aus – der Weg zu aktuellen Messwerten (s.u.)    |
 
 ## `modbusread`
 
@@ -260,22 +261,37 @@ Topics des Geräts und schickt alle `ECOFLOW_LIVE_INTERVAL` Sekunden (Default 30
 Anfrage hinterher, damit der Strom nicht versiegt. Läuft bis Ctrl-C. Braucht `jq`,
 `mosquitto_sub` und `mosquitto_pub`.
 
-Die Ausgabe ist **absichtlich roh** – Zeitstempel, Topic, Länge und Nutzlast als Hex, plus
-eine zweite Zeile mit dem Klartext, wenn die Nutzlast lesbar ist:
+Die Ausgabe von `live` ist **roh** – Zeitstempel, Topic, Länge und Nutzlast als Hex, weil
+der Push Protobuf ist und nicht JSON:
 
 ```console
-2026-09-22T09:14:03+0200 /app/device/property/HC31... 20 7b22636f6465...
-    text: {"code":"ok","v":1}
-2026-09-22T09:14:06+0200 /app/device/property/HC31... 88 0a1b2c3d4e5f...
+2026-09-22T10:18:05+0200 /app/device/property/HC31... 74 0a480a26f6ddf1e70b98...
 ```
 
-Der Grund: Der Push des PowerOcean ist **Protobuf**, nicht JSON, und die Feldnummern
-weichen zwischen PowerOcean Plus und DC Fit ab. Eine hübsche Anzeige würde hier Zahlen an
-falsche Namen hängen. Erst messen, dann deuten – Einzelheiten und Quellen in
-`api-status.md`.
+### Aktuelle Messwerte: `ecoflow-frames.py`
 
-Die Gegenprobe auf das Ausgangsproblem läuft in zwei Terminals: `live` im einen, `status`
-im anderen. Wandert `measured` mit, war die fehlende Nachfrage die Ursache.
+Zum Lesen gibt es `scripts/ecoflow-frames.py`, das die Frames auspackt. Es braucht nur
+`python3`, keine weiteren Pakete:
+
+```console
+$ scripts/ecoflow-api.sh live HC31XXXXXXXXXXXX | python3 scripts/ecoflow-frames.py
+08:18:00Z  PV     969 W | house    352 W | battery    530 W (charging) | grid     87 W (export) | SoC 60 %
+08:19:00Z  PV     976 W | house    349 W | battery    540 W (charging) | grid     87 W (export) | SoC 61 %
+```
+
+Das ist der Weg zu aktuellen Werten – **nicht** `status`. Am Gerät gemessen (22. September
+2026): Während `live` lief und Frames mit `08:19Z` ankamen, meldete `status` unverändert
+`measured : 07:13:28Z`. Der Cloud-Umweg wird also auch von einem laufenden Zuhörer nicht
+aufgefrischt.
+
+Der Zeitstempel links ist der des Geräts (UTC), das Gerät meldet etwa minütlich und
+schickt jeden Frame doppelt. Wie die Frames aufgebaut sind, warum die Nutzlast
+XOR-verschleiert ist und woran die Feldzuordnung hängt, steht in `api-status.md`.
+
+**Vorbehalt:** Die Feldnummern gelten für den **DC Fit**. Beim PowerOcean Plus liegen
+dieselben Größen auf anderen Nummern – dort lieferte das Skript plausible Zahlen an den
+falschen Namen. Belegt ist die Zuordnung hier über die Energiebilanz: In jedem Frame geht
+`PV = Batterie + Haus + Netz` auf zwei Nachkommastellen auf.
 
 `request` und `live` sind die **einzigen** Kommandos, die publizieren, und beide nur auf
 ein `get`-Topic. `request` abonniert `.../get_reply`,
@@ -316,10 +332,12 @@ eigene EcoFlow-Konto gebunden sein, sonst bleibt die Liste leer.
   „Modbus control"* in der Pro App läuft (Checkliste in `api-status.md`)
 - Welche Werte `product_category`/`product_number` (40002/40003) am DC Fit liefern –
   die Referenz-Integration kennt sie nicht
-- Ob der App-MQTT-Kanal (`live`) beim DC Fit trägt: ob der Broker die Client-ID
-  annimmt, ob `get_reply` lesbares JSON liefert und ob der Weckruf genügt, um
-  `measured` im Portal-Endpunkt wieder wandern zu lassen. Der MQTT-Weg der
-  *Open* API ist dagegen erledigt – er liefert nichts (`api-status.md`)
+- Ob der Weckruf auf `.../get` überhaupt nötig ist oder das Abo allein genügt –
+  gemessen wurde bisher nur mit laufendem Weckruf
+- Was die übrigen Frame-Kennungen tragen (`cmd_id` 1, 108–111, 136); der
+  Energiestrom auf 34 ist ausgewertet, der Rest nicht
+- Ob sich der schnelle ~3-Sekunden-Takt lohnt, den die App über das
+  `.../set`-Topic freischaltet – bewusst nicht ausprobiert (kein Schreibpfad)
 
 ## Arbeiten an diesem Repo
 
