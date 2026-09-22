@@ -17,6 +17,7 @@ Modbus TCP) für den EcoFlow PowerOcean DC Fit.
 | [`cmd/modbusread`](./cmd/modbusread)                 | Kleines Go-CLI zum Nachmessen der Register am Gerät (s.u.)                                            |
 | [`scripts/ecoflow-api.sh`](./scripts/ecoflow-api.sh) | Shell-Skript für signierte Leseaufrufe gegen die EcoFlow Cloud-API (s.u.)                             |
 | [`scripts/ecoflow-frames.py`](./scripts/ecoflow-frames.py) | Packt die Live-Frames aus `ecoflow-api.sh live` aus – aktuelle Messwerte und Stundenbilanz (s.u.) |
+| [`cmd/ecoflowd`](./cmd/ecoflowd)                     | Go-Dienst, der denselben Kanal dauerhaft liest – im Entstehen (s.u.)                                  |
 
 ## `modbusread`
 
@@ -426,6 +427,47 @@ Exit-Code `0` heißt `code 0` von der API, `2` jeder andere Code. **`2` mit Code
 ist die interessante Antwort: Dann ist das Modell von der Developer-API ausgeschlossen (siehe `api-status.md`) und nur
 der lokale Modbus-Weg bleibt. Das Gerät muss an das
 eigene EcoFlow-Konto gebunden sein, sonst bleibt die Liste leer.
+
+## `ecoflowd`
+
+Das Gegenstück zu `modbusread` für den Dauerbetrieb: ein Go-Dienst, der den App-MQTT-Kanal
+liest, statt ihn für eine Messung zu öffnen. Gedacht für einen Raspberry Pi unter systemd.
+
+**Im Entstehen.** Heute verbindet er sich, verbindet sich bei Abbruch neu und gibt die
+Messwerte auf stdout aus. Das Weiterreichen an einen lokalen MQTT-Broker kommt als
+Nächstes.
+
+```bash
+export ECOFLOW_EMAIL='vorname.nachname@example.com'
+export ECOFLOW_PASSWORD='…'
+
+go build ./cmd/ecoflowd
+./ecoflowd --sn HC31XXXXXXXXXXXX --stdout
+```
+
+```console
+connected to mqtt-e.ecoflow.com:8883, subscribed to 3 topics
+10:29:00Z  PV    1511 W | house    480 W | battery    980 W (charging) | grid     52 W (export) | SoC 73 %
+10:30:00Z  PV    1544 W | house    618 W | battery    926 W (charging) | grid      0 W (idle) | SoC 74 %
+```
+
+**Er publiziert nichts.** Das ist keine Vorsicht, sondern das, was das Gerät braucht: Das
+Abo allein hält es am Reden, gemessen über 23 Minuten ohne eine einzige gesendete
+Nachricht. Der Takt ist damit eine Minute; für Sekundenwerte braucht es den
+Stream-Schalter, und der kommt später hinter ein eigenes Flag.
+
+**Zugangsdaten kommen aus der Umgebung, nie aus Flags.** Der Login-Endpunkt überträgt das
+Passwort base64-kodiert statt gehasht, und es ist das **Kontopasswort**, kein
+Anwendungstoken — wer die Datei lesen kann, hat den vollen EcoFlow-Zugang. Auf einem
+Dauerläufer gehört es in eine Datei, die nur root lesen kann.
+
+Mit `--state <verzeichnis>` legt der Dienst den Sitzungstoken ab und benutzt ihn wieder.
+Ohne das meldet er sich bei jedem Neustart neu an; der Token hielt in der Beobachtung 30
+Tage.
+
+Die Ausgabe ist **zeichengleich** zu `scripts/ecoflow-frames.py` — nicht aus Geschmack,
+sondern damit sich beide Fassungen nebeneinander laufen lassen und vergleichen; ein Test
+hält sie gegen dieselben Mitschnitte zusammen.
 
 ## Kurzüberblick
 

@@ -47,6 +47,9 @@ Fehlermeldungen auf Englisch, weil das Tool universell einsetzbar sein soll.
 ## Struktur & Zusammenhang der Dateien
 
 - `cmd/modbusread/` – CLI: Flags, Lesen mit Chunking/Fehlerisolierung, Ausgabe, Polling
+- `cmd/ecoflowd/` – Dienst für den Dauerbetrieb am Cloud-Kanal: Flags, Verbindungsschleife
+  mit Rücknahme, Token-Zwischenspeicher, Ausgabe. Anders als `modbusread` bewusst
+  gerätespezifisch; das Wissen dazu liegt in `internal/frames` und `internal/ecoflow`
 - `internal/decode/` – reine Funktionen über `[]uint16` (Typen, Word-/Byte-Order,
   Adress-Parsing). Hier liegt die Logik, die bei Fehlern *falsche Zahlen* statt
   Abstürze liefert – deshalb netzwerkfrei und vollständig testbar gehalten
