@@ -619,18 +619,22 @@ Schalter setzt `needAck = 1`, das Gerät antwortet also mit beidem.
 keine Messung. Jedes Feld enthält eine eingebettete Nachricht, deren Feld 1 eine
 Seriennummer als ASCII trägt:
 
-| Feld | Beispielwert       | Deutung                                         |
-|------|--------------------|-------------------------------------------------|
-| 1    | `HC31Z1H4ZG150145` | die Einheit selbst – dieselbe SN, die man abfragt |
-| 2    | `HC312103BFCP0504` | weitere `HC31`-Komponente, Rolle unbekannt      |
-| 3    | `HJ3AZD1AZH6C0814` | `HJ3A`-Präfix, mehrfach vorhanden               |
-| 3    | `HJ3AZD1B2HAA0025` | dito                                            |
+| Feld | Beispielwert       | Komponente                          |
+|------|--------------------|-------------------------------------|
+| 1    | `HC31Z1H4ZG150145` | das System selbst – die abgefragte SN |
+| 2    | `HC312103BFCP0504` | PV Storage Converter, 5 kW          |
+| 3    | `HJ3AZD1AZH6C0814` | Batterie, 5 kWh                     |
+| 3    | `HJ3AZD1B2HAA0025` | Batterie, 5 kWh                     |
 
-Nur Feld 1 ist belegt: Es stimmt mit der abgefragten Seriennummer überein. Dass die
-beiden `HJ3A`-Einträge die Batteriemodule sind, ist der Anzahl und dem Präfix nach
-naheliegend, aber **nicht bestätigt** – `HJ3x` führt die Präfixliste oben als
-PowerOcean-Familie. Deshalb gibt `ecoflow-frames.py --modules` sie mit Feldnummer statt
-mit erfundenen Bezeichnungen aus.
+**Belegt über das Portal**, nicht über die Präfixe geraten: `user-portal.ecoflow.com`
+führt unter *System information → Component information* dieselben Seriennummern mit Typ,
+Modell, Firmware-Stand und Aktivierungsdatum. Feld 2 ist dort der Wechselrichter, die
+`HJ3A`-Einträge sind die Batteriemodule – beim Beispielsystem zwei à 5 kWh, dazu ein
+5-kW-Konverter. `ecoflow-frames.py --modules` übernimmt diese Bezeichnungen.
+
+Nutzen: Seriennummern, Anzahl und Bestückung der Batterie ohne App und ohne Portal.
+Firmware-Stände und Aktivierungsdatum liefert der Frame allerdings **nicht** – die gibt es
+weiterhin nur im Portal.
 
 Ausgewertet wird das von `scripts/ecoflow-frames.py`, das die Ausgabe von `live` auf
 stdin nimmt. Der schnellere ~3-Sekunden-Takt, den die App über `.../set` freischaltet,
@@ -818,8 +822,9 @@ REST-Interface – eine explizite Bestätigung dafür liegt aber nicht vor.
 - [x] Was tragen `96/3` und `96/137`? → `96/3` ist eine **Komponentenliste** mit vier
   Seriennummern, `96/137` hat eine **leere Nutzlast** und ist die Bestätigung auf den
   Stream-Schalter. Beide erscheinen nur bei aktivem Schalter. Siehe unten
-- [ ] Welche Rolle haben die Komponenten ab Feld 2 der Liste? Die beiden `HJ3A`-Einträge
-  sind der Zahl nach die Batteriemodule, belegt ist das nicht
+- [x] Welche Rolle haben die Komponenten ab Feld 2 der Liste? → Über
+  *System information → Component information* im Portal aufgelöst: Feld 2 ist der
+  PV Storage Converter, die `HJ3A`-Einträge sind die Batteriemodule
 - [ ] Warum weicht die Tagessumme der Stundenhistorie vom `todayElectricityGeneration`
   des Portals ab? Am 22.09.2026 stand dort um 07:13Z 1,74 kWh, während die Stundenwerte
   bis dahin rund 1,25 kWh ergeben. Womöglich misst das Portal an anderer Stelle –

@@ -52,7 +52,16 @@ import time
 # stream is being switched on - neither appeared at all in a capture taken
 # without it. The switch asks for an acknowledgement (needAck = 1), and the
 # device answers with both.
+#
+# The field numbers were matched against the portal's own "Component
+# information" table, which lists the same serials with their types, so these
+# names are read off EcoFlow's interface rather than guessed from prefixes.
 MODULES = (96, 3)
+MODULE_KINDS = {
+    1: 'system',
+    2: 'converter',
+    3: 'battery',
+}
 
 HOURLY = (254, 32)
 HOURLY_FLOWS = {
@@ -231,18 +240,10 @@ def modules(frame):
 
 
 def render_modules(found):
-    """The module list.
-
-    Only the first entry has an established meaning - it is the serial the
-    stream was asked for. What the others are is inference from their prefixes,
-    so they are printed as what they are, a field number and a serial, rather
-    than under invented labels.
-    """
+    """The module list, with the types the portal gives for the same serials."""
     lines = ['modules reported by the system', '']
     for slot, serial in found:
-        lines.append(f'  field {slot}   {serial}')
-    lines.append('')
-    lines.append('field 1 is the unit itself; the role of the others is not established')
+        lines.append(f'  {MODULE_KINDS.get(slot, f"field {slot}"):<10} {serial}')
     return '\n'.join(lines)
 
 

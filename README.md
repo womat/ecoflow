@@ -366,20 +366,19 @@ Einzelheiten in `api-status.md`.
 $ scripts/ecoflow-api.sh fast HC31XXXXXXXXXXXX | python3 scripts/ecoflow-frames.py --modules
 modules reported by the system
 
-  field 1   HC31Z1H4ZG150145
-  field 2   HC312103BFCP0504
-  field 3   HJ3AZD1AZH6C0814
-  field 3   HJ3AZD1B2HAA0025
-
-field 1 is the unit itself; the role of the others is not established
+  system     HC31Z1H4ZG150145
+  converter  HC312103BFCP0504
+  battery    HJ3AZD1AZH6C0814
+  battery    HJ3AZD1B2HAA0025
 ```
 
-Nützlich, um ohne App an die Seriennummern der verbauten Teile zu kommen. Wie `--hours`
-wartet es auf die erste Meldung und endet dann.
+Seriennummern und Bestückung ohne App und ohne Portal — hier also ein 5-kW-Konverter mit
+zwei Batteriemodulen. Wie `--hours` wartet es auf die erste Meldung und endet dann.
 
-Die Feldnummern stehen absichtlich da, statt Bezeichnungen wie „Batterie 1“: Belegt ist
-nur Feld 1 — es ist die abgefragte Einheit selbst. Dass die beiden `HJ3A`-Einträge die
-Batteriemodule sind, ist naheliegend und ungeprüft.
+Die Bezeichnungen sind **nicht aus den Präfixen geraten**, sondern gegen die Anzeige des
+Portals geprüft: `user-portal.ecoflow.com` führt unter *System information → Component
+information* dieselben Seriennummern mit Typ und Modell. Firmware-Stände und
+Aktivierungsdatum stehen allerdings nur dort, nicht im Frame.
 
 ### Mitlesen, was die App sendet: `app-mqtt`
 
