@@ -872,12 +872,19 @@ mqtt_live() {
 			sleep 2
 			local seq=1
 			while :; do
-				stream_switch_frame "$sn" "$seq" |
+				# MQTT v5 at QoS 1 on purpose: only there does the PUBACK carry
+			# a reason code, which separates "the broker refused to forward
+			# this" from "the device ignored it". The same measurement the
+			# "request" command relies on, and the only way to tell whether a
+			# stream that stays slow is a rejected message or an ineffective
+			# one.
+			stream_switch_frame "$sn" "$seq" |
 					mosquitto_pub -h "$MQTT_URL" -p "$MQTT_PORT" \
 						-u "$MQTT_ACCOUNT" -P "$MQTT_PASSWORD" "${MQTT_TLS[@]}" \
+						${debug[@]+"${debug[@]}"} \
 						-i "$(app_client_id "$user_id")" \
-						-t "$set_topic" -s >"$quiet" 2>&1 ||
-					printf 'stream switch failed, retrying\n' >&2
+						-t "$set_topic" -s -V 5 -q 1 >"$quiet" 2>&1 ||
+					printf 'stream switch was not accepted\n' >&2
 				# The app repeats this every few seconds and the stream stops
 				# again when nothing renews it. The counter wraps at 127 so the
 				# sequence stays a single-byte varint, as the app's own does.
