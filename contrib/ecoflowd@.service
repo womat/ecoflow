@@ -15,7 +15,7 @@
 #   ECOFLOW_EMAIL=someone@example.com
 #   ECOFLOW_PASSWORD=...
 #   MQTT_PASSWORD=...
-#   ECOFLOWD_OPTIONS=--broker tcp://127.0.0.1:1883 --name mathe
+#   ECOFLOWD_OPTIONS=--broker tcp://127.0.0.1:1883
 #
 # The password there is the EcoFlow account password, not an application token,
 # and the login endpoint carries it base64-encoded rather than hashed. Anyone
@@ -32,16 +32,16 @@ Type=exec
 
 # $ECOFLOWD_OPTIONS is unbraced on purpose: systemd splits it into separate
 # arguments that way, which ${...} would not do.
-ExecStart=/usr/local/bin/ecoflowd --sn %i --state ${STATE_DIRECTORY} $ECOFLOWD_OPTIONS
+ExecStart=/usr/local/bin/ecoflowd --sn %i $ECOFLOWD_OPTIONS
 
 EnvironmentFile=/etc/ecoflowd/env
 EnvironmentFile=-/etc/ecoflowd/%i.env
 
-# systemd creates /var/lib/ecoflowd and hands it to the dynamic user, which is
-# where the session token is cached. Without it the service would log in again
-# on every restart; the token lasts about a month.
-StateDirectory=ecoflowd
-
+# No state on disk. The session token is held in memory for the life of the
+# process, and the process outlives everything except a signal or rejected
+# credentials - a network that comes and goes is handled internally. So the
+# only thing persisting it would save is one login per reboot, which is not
+# worth another copy of a credential on a filesystem.
 Restart=on-failure
 RestartSec=30
 

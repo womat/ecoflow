@@ -15,9 +15,7 @@ import (
 // options is the raw command line, before validation.
 type options struct {
 	serial      string
-	name        string
 	host        string
-	state       string
 	broker      string
 	topic       string
 	mqttUser    string
@@ -31,11 +29,9 @@ type options struct {
 // config is the validated form.
 type config struct {
 	serial       string
-	name         string
 	email        string
 	password     string
 	host         string
-	state        string
 	broker       string
 	topic        string
 	mqttUser     string
@@ -68,9 +64,7 @@ func newFlagSet(o *options, stderr io.Writer) *flag.FlagSet {
 	fs.SetOutput(stderr)
 
 	fs.StringVar(&o.serial, "sn", "", "serial number of the device")
-	fs.StringVar(&o.name, "name", "", "name to use instead of the serial number")
 	fs.StringVar(&o.host, "host", "", "API host (default "+ecoflow.DefaultHost+")")
-	fs.StringVar(&o.state, "state", "", "directory for the cached session token")
 	fs.StringVar(&o.broker, "broker", "", "local MQTT broker, e.g. tcp://127.0.0.1:1883")
 	fs.StringVar(&o.topic, "topic", defaultTopic, "topic prefix on the local broker")
 	fs.StringVar(&o.mqttUser, "mqtt-user", "", "user for the local broker")
@@ -89,7 +83,7 @@ Reads an EcoFlow PowerOcean over the consumer app's cloud channel and keeps
 reading it. Subscribing is all it does there, unless --fast is given.
 
 With --broker the readings go to a local MQTT broker, one topic per value:
-<topic>/<name>/pv, /house, /battery, /grid, /dcdc, /soc, /measured, the day's
+<topic>/<SN>/pv, /house, /battery, /grid, /dcdc, /soc, /measured, the day's
 totals under /energy/, and /status as availability. Values carry the device's
 own signs - positive grid is export, positive battery is charging - and watts
 and watt-hours as measured. evcc turns those with scale: -1 and scale: 0.001.
@@ -134,9 +128,8 @@ exit status:
 
 examples:
   ecoflowd --sn HC31XXXXXXXXXXXX --stdout
-  ecoflowd --sn HC31XXXXXXXXXXXX --name mathe --state /var/lib/ecoflowd
   ecoflowd --sn HC31XXXXXXXXXXXX --stdout --fast
-  ecoflowd --sn HC31XXXXXXXXXXXX --name mathe --broker tcp://127.0.0.1:1883
+  ecoflowd --sn HC31XXXXXXXXXXXX --broker tcp://127.0.0.1:1883
 `)
 	}
 
@@ -163,9 +156,7 @@ func parseArgs(argv []string, stderr io.Writer) (*options, *flag.FlagSet, error)
 func buildConfig(o *options, _ *flag.FlagSet) (*config, error) {
 	c := &config{
 		serial:      strings.TrimSpace(o.serial),
-		name:        strings.TrimSpace(o.name),
 		host:        o.host,
-		state:       o.state,
 		broker:      o.broker,
 		topic:       o.topic,
 		mqttUser:    o.mqttUser,
@@ -185,12 +176,6 @@ func buildConfig(o *options, _ *flag.FlagSet) (*config, error) {
 	}
 	if strings.ContainsAny(c.serial, " \t/#+") {
 		return nil, fmt.Errorf("serial number looks wrong: %q", c.serial)
-	}
-	if c.name == "" {
-		c.name = c.serial
-	}
-	if strings.ContainsAny(c.name, " \t/#+") {
-		return nil, fmt.Errorf("name must not contain spaces or MQTT wildcards: %q", c.name)
 	}
 	if c.email == "" || c.password == "" {
 		return nil, errors.New("ECOFLOW_EMAIL and ECOFLOW_PASSWORD must be set; see --help")

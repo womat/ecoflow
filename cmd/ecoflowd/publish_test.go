@@ -45,17 +45,17 @@ func TestBrokerURL(t *testing.T) {
 
 func TestTopicFor(t *testing.T) {
 	tests := []struct {
-		prefix, name, leaf, want string
+		prefix, serial, leaf, want string
 	}{
-		{"ecoflow", "mathe", "pv", "ecoflow/mathe/pv"},
-		{"/ecoflow/", "mathe", "status", "ecoflow/mathe/status"},
+		{"ecoflow", "HC31XXXXXXXXXXXX", "pv", "ecoflow/HC31XXXXXXXXXXXX/pv"},
+		{"/ecoflow/", "HC31XXXXXXXXXXXX", "status", "ecoflow/HC31XXXXXXXXXXXX/status"},
 		{"solar/dach", "HC31XXXXXXXXXXXX", "energy/pv", "solar/dach/HC31XXXXXXXXXXXX/energy/pv"},
 	}
 
 	for _, tc := range tests {
-		if got := topicFor(tc.prefix, tc.name, tc.leaf); got != tc.want {
+		if got := topicFor(tc.prefix, tc.serial, tc.leaf); got != tc.want {
 			t.Errorf("topicFor(%q, %q, %q) = %q, want %q",
-				tc.prefix, tc.name, tc.leaf, got, tc.want)
+				tc.prefix, tc.serial, tc.leaf, got, tc.want)
 		}
 	}
 }
@@ -184,7 +184,7 @@ func TestStatusTopicNames(t *testing.T) {
 		t.Errorf("availability payloads are %q and %q, want online and offline",
 			payloadOnline, payloadOffline)
 	}
-	if !strings.Contains(topicFor("ecoflow", "mathe", "status"), "/status") {
+	if !strings.Contains(topicFor("ecoflow", "HC31XXXXXXXXXXXX", "status"), "/status") {
 		t.Error("the availability topic is not called status")
 	}
 }

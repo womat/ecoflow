@@ -3,12 +3,9 @@ package main
 import (
 	"context"
 	"crypto/tls"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
-	"os"
-	"path/filepath"
 	"time"
 
 	mqtt "github.com/eclipse/paho.mqtt.golang"
@@ -37,10 +34,15 @@ func serve(ctx context.Context, cfg *config, stdout, stderr io.Writer) int {
 		out = p
 	}
 
+	// The session is held here rather than fetched per attempt. Logging in is
+	// what costs something - an undocumented endpoint, the account password on
+	// the wire - and a token lasts about a month, so a network that comes and
+	// goes must not turn into a login each time it does.
+	var s ecoflow.Session
 	wait := backoffStart
 
 	for {
-		err := session(ctx, cfg, out, stdout, stderr)
+		err := session(ctx, cfg, &s, out, stdout, stderr)
 		switch {
 		case ctx.Err() != nil:
 			fmt.Fprintln(stderr, "stopping")
@@ -69,24 +71,31 @@ func serve(ctx context.Context, cfg *config, stdout, stderr io.Writer) int {
 }
 
 // session runs one connection from start to finish.
-func session(ctx context.Context, cfg *config, out *publisher, stdout, stderr io.Writer) error {
+func session(ctx context.Context, cfg *config, s *ecoflow.Session,
+	out *publisher, stdout, stderr io.Writer) error {
+
 	client := &ecoflow.Client{Host: cfg.host}
 
-	s, err := sessionToken(ctx, cfg, client, stderr)
-	if err != nil {
-		return err
+	if s.Token == "" {
+		got, err := client.Login(ctx, cfg.email, cfg.password)
+		if err != nil {
+			return err
+		}
+		fmt.Fprintf(stderr, "logged in as user %s\n", got.UserID)
+		*s = got
 	}
 
-	broker, err := client.Certification(ctx, s)
+	broker, err := client.Certification(ctx, *s)
 	if err != nil {
-		// The cached token may simply have expired. Drop it and let the next
-		// pass log in again rather than failing forever on a stale file.
-		forgetToken(cfg, stderr)
+		// The token may simply have expired - they last about a month. Forget
+		// it so the next pass logs in again instead of retrying a dead one
+		// until someone notices.
+		*s = ecoflow.Session{}
 		return fmt.Errorf("fetch broker credentials: %w", err)
 	}
 
 	topics := ecoflow.TopicsFor(s.UserID, cfg.serial)
-	return listen(ctx, cfg, out, broker, s, topics, stdout, stderr)
+	return listen(ctx, cfg, out, broker, *s, topics, stdout, stderr)
 }
 
 // listen subscribes and reports what arrives, until the connection or the
@@ -305,71 +314,4 @@ func tokenErr(t mqtt.Token) error {
 		return err
 	}
 	return errors.New("timed out")
-}
-
-// sessionToken returns a usable session, from the cache if there is one.
-//
-// The token was observed to last 30 days. Throwing it away because the service
-// restarted would mean logging in again every time systemd bounces it, which
-// is both wasteful and the kind of traffic that makes an account stand out.
-func sessionToken(ctx context.Context, cfg *config, c *ecoflow.Client, stderr io.Writer) (ecoflow.Session, error) {
-	if s, ok := loadToken(cfg); ok {
-		return s, nil
-	}
-
-	s, err := c.Login(ctx, cfg.email, cfg.password)
-	if err != nil {
-		return ecoflow.Session{}, err
-	}
-	fmt.Fprintf(stderr, "logged in as user %s\n", s.UserID)
-	saveToken(cfg, s, stderr)
-	return s, nil
-}
-
-func tokenPath(cfg *config) string {
-	if cfg.state == "" {
-		return ""
-	}
-	return filepath.Join(cfg.state, "session.json")
-}
-
-func loadToken(cfg *config) (ecoflow.Session, bool) {
-	path := tokenPath(cfg)
-	if path == "" {
-		return ecoflow.Session{}, false
-	}
-	b, err := os.ReadFile(path)
-	if err != nil {
-		return ecoflow.Session{}, false
-	}
-	var s ecoflow.Session
-	if err := json.Unmarshal(b, &s); err != nil || s.Token == "" || s.UserID == "" {
-		return ecoflow.Session{}, false
-	}
-	return s, true
-}
-
-func saveToken(cfg *config, s ecoflow.Session, stderr io.Writer) {
-	path := tokenPath(cfg)
-	if path == "" {
-		return
-	}
-	b, err := json.Marshal(s)
-	if err != nil {
-		return
-	}
-	// 0600: the token is as good as the password for as long as it lasts.
-	if err := os.WriteFile(path, b, 0o600); err != nil {
-		fmt.Fprintln(stderr, "warning: could not cache the session token:", err)
-	}
-}
-
-func forgetToken(cfg *config, stderr io.Writer) {
-	path := tokenPath(cfg)
-	if path == "" {
-		return
-	}
-	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
-		fmt.Fprintln(stderr, "warning: could not discard the cached token:", err)
-	}
 }

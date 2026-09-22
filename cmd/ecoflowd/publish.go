@@ -56,8 +56,11 @@ type publisher struct {
 	online   bool
 }
 
-func topicFor(prefix, name, leaf string) string {
-	return strings.Trim(prefix, "/") + "/" + name + "/" + leaf
+// topicFor builds one topic. The device is named by its serial: it is the one
+// name a device actually has, and a second one would be a second thing to keep
+// in step for nothing.
+func topicFor(prefix, serial, leaf string) string {
+	return strings.Trim(prefix, "/") + "/" + serial + "/" + leaf
 }
 
 // newPublisher connects to the local broker.
@@ -71,11 +74,11 @@ func newPublisher(cfg *config, stderr io.Writer) (*publisher, error) {
 		return nil, err
 	}
 
-	status := topicFor(cfg.topic, cfg.name, "status")
+	status := topicFor(cfg.topic, cfg.serial, "status")
 
 	opts := mqtt.NewClientOptions().
 		AddBroker(broker).
-		SetClientID("ecoflowd-"+cfg.name).
+		SetClientID("ecoflowd-"+cfg.serial).
 		SetCleanSession(true).
 		SetWill(status, payloadOffline, 0, true).
 		SetConnectTimeout(15 * time.Second).
@@ -96,7 +99,7 @@ func newPublisher(cfg *config, stderr io.Writer) (*publisher, error) {
 	opts.SetOnConnectHandler(func(c mqtt.Client) {
 		c.Publish(status, 0, true, payloadOnline)
 		fmt.Fprintf(stderr, "publishing to %s under %s\n", broker,
-			topicFor(cfg.topic, cfg.name, "")+"…")
+			topicFor(cfg.topic, cfg.serial, "")+"…")
 	})
 
 	c := mqtt.NewClient(opts)
@@ -112,7 +115,7 @@ func newPublisher(cfg *config, stderr io.Writer) (*publisher, error) {
 
 	return &publisher{
 		client: c,
-		prefix: strings.Trim(cfg.topic, "/") + "/" + cfg.name,
+		prefix: strings.Trim(cfg.topic, "/") + "/" + cfg.serial,
 		stderr: stderr,
 		last:   map[string]string{},
 		online: true,
