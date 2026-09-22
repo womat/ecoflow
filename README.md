@@ -749,12 +749,16 @@ hält sie gegen dieselben Mitschnitte zusammen.
   „Modbus control"* in der Pro App läuft (Checkliste in `api-status.md`)
 - Welche Werte `product_category`/`product_number` (40002/40003) am DC Fit liefern –
   die Referenz-Integration kennt sie nicht
-- Warum der Stream-Schalter einerseits nach vier Minuten noch nachwirkt, andererseits
-  bei zehn Sekunden Wiederholabstand nicht trägt
-- Was die übrigen Frame-Kennungen tragen (`cmd_id` 1, 108–111, 136); der
-  Energiestrom auf 34 ist ausgewertet, der Rest nicht
-- Ob die Stundensumme und der Tagesertrag des Portals je zusammenfinden – gemessen
-  klaffen sie um mehrere hundert Wh auseinander, ohne erkennbaren Grund
+- Ob der schnelle Strom nach dem letzten Schalter aus Zeitgründen endet oder weil die
+  MQTT-Verbindung abriss. Gemessen sind **rund 25 Sekunden** Nachlauf; in derselben
+  Messung wurde aber auch neu verbunden, das trennt sie also nicht
+- Die Feldzuordnung von `cmd_id` 109 und 110. Die Ebene ist klar (DC-Zwischenkreis,
+  rund 429 V), die einzelnen Felder sind es nicht; 1, 108, 111 und 136 sind
+  aufgeschlüsselt
+- Ob die Stundensumme und der Tagesertrag des Portals je zusammenfinden. Das Vorzeichen
+  der Abweichung **dreht sich im Lauf eines Tages**, ein Nachlauf oder ein fester
+  Wandlungsverlust scheiden damit aus. Auf der Geräteseite stimmen zwei unabhängige
+  Quellen auf wenige Wh überein
 
 ## Arbeiten an diesem Repo
 

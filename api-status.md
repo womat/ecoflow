@@ -644,7 +644,8 @@ nachts und lädt, sobald die Sonne das Haus trägt.
 Abrufbar mit `scripts/ecoflow-api.sh fast <SN> | python3 scripts/ecoflow-frames.py --hours`.
 
 **Offen:** Die Tagessumme deckt sich nicht mit `todayElectricityGeneration` des Portals –
-siehe die Liste der offenen Fragen.
+siehe die Liste der offenen Fragen. Mit dem Gerät selbst deckt sie sich dagegen: Feld 23
+in `96/1` trägt dieselbe Summe als Float, im selben Sekundenfenster auf 5,5 Wh genau.
 
 #### Die Antwort auf den Schalter: `96/3` und `96/137`
 
@@ -682,6 +683,60 @@ Ausgewertet wird das von `scripts/ecoflow-frames.py`, das die Ausgabe von `live`
 stdin nimmt. Der schnellere ~3-Sekunden-Takt, den die App über `.../set` freischaltet,
 ist damit für `live` nicht erreicht – dafür gibt es `fast` bzw. `ecoflowd --fast`. Für
 einen Minutentakt braucht es ihn ohnehin nicht.
+
+#### Die übrigen Kennungen: `96/1`, `96/108`–`96/111`, `96/136`
+
+Aus einem Mitschnitt vom 22.09.2026, 14:21–14:31Z (5 min `fast`, danach 6 min nur
+zuhören). Alle sechs tragen eine XOR-verschleierte Nutzlast wie die übrigen und kommen
+**nur bei aktivem Stream-Schalter** in dichter Folge; ohne ihn bleiben sie selten.
+
+**`96/1` ist der Systembericht** und trägt die **laufenden Tagessummen als Float**. Das
+ist der Befund, der sich am besten belegen lässt – dieselben sechs Flüsse wie die
+Stundenhistorie, im selben Sekundenfenster gemessen:
+
+| Feld | `96/1` (Wh) | Stundenhistorie | Differenz | Fluss           |
+|------|-------------|-----------------|-----------|-----------------|
+| 23   | 15960,50    | 15955           | +5,50     | PV              |
+| 24   | 4812,19     | 4809            | +3,19     | Batterie hinein |
+| 25   | −1565,22    | 1562            | +3,22     | Batterie heraus |
+| 26   | −109,56     | 103             | +6,56     | Netzbezug       |
+| 27   | 5867,35     | 5861            | +6,35     | Einspeisung     |
+| 28   | −6955,67    | 6948            | +7,67     | Haus            |
+
+Die Stundenhistorie zählt in ganzen Wh je Stundenkübel; über 15 Kübel summiert sich die
+Rundung auf die paar Wh Unterschied. **Die Vorzeichen sind die der Geräteseite**, wie im
+Energiebericht: Bezug und Verbrauch negativ.
+
+Weiter im selben Frame, weniger sicher: Feld 3 = `10698,0` ist die Gesamtkapazität in Wh
+(zwei Module, siehe `96/108`); Feld 13–15 sind die drei Netzspannungen (234,7 / 234,3 /
+235,3 V), Feld 16–18 die Ströme (3,18 / 3,35 / 3,02 A). Feld 12 (2217 W) liegt in der
+Größenordnung von U·I über drei Phasen (2242 W) und der Netzleistung des Energieberichts
+derselben Sekunde (2308 W), stimmt aber mit keiner von beiden überein – **welcher
+Messpunkt das ist, ist offen**. Feld 4 und 34 tragen 99 bzw. 100, der Ladestand also
+vermutlich in zwei Auflösungen.
+
+**`96/108` ist der Bericht je Batteriemodul.** Jeder Frame trägt **zwei** verschachtelte
+Einträge – genauso viele, wie `96/3` Batteriemodule auflistet:
+
+| Feld | Beispiel  | Deutung                                            |
+|------|-----------|----------------------------------------------------|
+| 2    | 99,90 %   | Ladestand des Moduls                               |
+| 4    | 53,51 V   | Modulspannung – deckt sich mit `96/111` Feld 9     |
+| 7    | 5345,52   | Kapazität in Wh; beide Einträge zusammen 10707,6, was zu `96/1` Feld 3 (10698) passt |
+
+**`96/111` ist der Bericht eines Batteriemoduls im Detail.** Feld 16 trägt die
+Seriennummer als ASCII (`HJ3A…`), Feld 9 die Modulspannung (53,43 V), Feld 14 sind
+**16 Zellspannungen in mV** (3342–3344) – ihre Summe, 53,495 V, ergibt die Modulspannung
+zurück. Feld 5 sind neun Temperaturen (26–27 °C).
+
+**`96/109` und `96/110`** liegen beim DC-Zwischenkreis: In `96/109` stehen mehrere
+Spannungen um 429 V nebeneinander, dazu Ströme um 2,9 A und vier Temperaturen (35, 29,
+29, 29 °C); `96/110` trägt dieselbe Spannungsebene, dazu Grenzwerte wie 120000 und 105000.
+**Keine Feldzuordnung belegt** – hier fehlt die Gegenprobe, die bei `96/1` die Sache
+entschieden hat.
+
+**`96/136` ist eine Konstante.** Über alle Proben dieselben zwei Byte: `08 0b`, also
+Feld 1 = 11. Kein Messwert.
 
 ### Einordnung: der „Enhanced Mode" der Community
 
@@ -865,9 +920,17 @@ REST-Interface – eine explizite Bestätigung dafür liegt aber nicht vor.
   umgesetzt als Kommando `fast`
 - [x] Hält der schnelle Takt durch? → **Ja, bei 3 s Wiederholung**; bei 10 s fällt das
   Gerät auf den Minutentakt zurück
-- [ ] Wie lange wirkt der Schalter nach? Zwei Messungen widersprechen sich: Bei 10 s
-  Wiederholabstand trägt er nicht, nach dem *letzten* Schalter lief der Strom aber noch
-  rund **vier Minuten** weiter. Beides ist gemessen, keines erklärt das andere
+- [x] Wie lange wirkt der Schalter nach? → **Rund 25 Sekunden**, sauber gemessen: Am
+  22.09.2026 endete der letzte Schalter um 14:25:57Z, danach kamen noch genau sechs
+  `96/33` im **4-Sekunden-Takt** (14:26:01 bis 14:26:21Z), dann nichts mehr über
+  fünf weitere Minuten Zuhören. Bemerkenswert ist der Takt: Während der Schalter läuft,
+  kommen die Berichte im 1–3-Sekunden-Abstand, im Nachlauf gleichmäßig alle 4 s.
+  **Die frühere Angabe „rund vier Minuten" ist damit nicht bestätigt.** Ein Unterschied
+  zwischen beiden Läufen ist bekannt und könnte die Erklärung sein: Hier wurde der
+  MQTT-Client zwischen beiden Phasen **neu verbunden** (der Broker verlangt ohnehin eine
+  frische Client-ID). Ob das Ende des Stroms an der Zeit hing oder am Verbindungsabbruch,
+  trennt diese Messung **nicht** – dafür müsste dieselbe Verbindung stehen bleiben und
+  nur das Schalten aufhören
 - [x] Schaltet das Gerät den schnellen Strom je von selbst ein? → **Nein.** Die Kontrolle
   mit geschlossener App und geschlossenem Portal zeigte über 23 Minuten **keinen einzigen**
   `96/33`. In einem früheren Lauf war er ohne unser Zutun aufgetaucht; die Ursache war
@@ -882,11 +945,33 @@ REST-Interface – eine explizite Bestätigung dafür liegt aber nicht vor.
   *System information → Component information* im Portal aufgelöst: Feld 2 ist der
   PV Storage Converter, die `HJ3A`-Einträge sind die Batteriemodule
 - [ ] Warum weicht die Tagessumme der Stundenhistorie vom `todayElectricityGeneration`
-  des Portals ab? Am 22.09.2026 stand dort um 07:13Z 1,74 kWh, während die Stundenwerte
-  bis dahin rund 1,25 kWh ergeben. Womöglich misst das Portal an anderer Stelle –
-  ungeklärt
-- [ ] Was tragen die übrigen `cmd_id` (1, 108, 109, 110, 111, 136)? Nach den Namen der
-  Fremdquelle EMS-Heartbeat, Batterie- und DCDC-Berichte – ungeprüft
+  des Portals ab? **Ungeklärt, aber eingegrenzt.** Zwei Messungen am 22.09.2026:
+
+  | Zeitpunkt | Portal | Gerät | Portal ist |
+  |-----------|--------|-------|------------|
+  | 07:13Z    | 1,74 kWh | 1,26 kWh | **höher** |
+  | 14:21Z    | 14,00 kWh | 15,96 kWh | **niedriger** |
+
+  Das Vorzeichen dreht sich im Lauf desselben Tages. Damit scheiden zwei naheliegende
+  Erklärungen aus: **Nachlauf** kann einen steigenden Zähler nie zu hoch ablesen lassen,
+  und ein **fester Wandlungsverlust** (14,00/15,96 = 88 %, für DC→AC plausibel) müsste
+  in dieselbe Richtung wirken.
+
+  Auf der Geräteseite ist der Wert dagegen doppelt belegt: Die Stundenhistorie
+  (`254/32`) und das Summenfeld 23 in `96/1` stimmen im selben Sekundenfenster auf
+  5,5 Wh überein. Der Unterschied liegt also nicht am Auspacken.
+
+  Was als Nächstes weiterhilft: **nicht** zwei Stichproben, sondern dieselbe Größe über
+  einen Tag mehrfach parallel abgefragt. Vorsicht bei der Zeitachse – im Mitschnitt vom
+  Vormittag lag der Portal-Zeitstempel (`07:13:28Z`) genau zwei Stunden hinter der
+  Gerätezeit derselben Aufnahme (`09:13:18Z`); das ist der bekannte Einfrier-Effekt,
+  keine Zeitzone: Am Nachmittag stimmten Gerätezeit und UTC auf die Sekunde
+- [x] Was tragen die übrigen `cmd_id` (1, 108, 109, 110, 111, 136)? → **Aufgeschlüsselt**,
+  siehe Abschnitt 3. Kurz: `96/1` ist der Systembericht und trägt die Tagessummen als
+  Float (gegen die Stundenhistorie auf wenige Wh belegt), `96/108` den Bericht je
+  Batteriemodul, `96/111` ein Modul im Detail samt Seriennummer und 16 Zellspannungen,
+  `96/136` eine Konstante. Bei `96/109` und `96/110` ist nur die Ebene klar
+  (DC-Zwischenkreis, rund 429 V) – **keine Feldzuordnung belegt**
 
 ## Quellenübersicht
 
