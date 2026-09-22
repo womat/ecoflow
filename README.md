@@ -149,6 +149,8 @@ scripts/ecoflow-api.sh status <SN>                # dieselben Daten als Kurzübe
 scripts/ecoflow-api.sh portal-get <pfad>          # beliebiger GET gegen die Portal-API
 scripts/ecoflow-api.sh app-cert                   # MQTT-Zugangsdaten des App-Kanals
 scripts/ecoflow-api.sh live <SN>                  # App-Kanal abonnieren und wachhalten
+scripts/ecoflow-api.sh fast <SN>                  # dasselbe mit schnellem Takt (schreibt!)
+scripts/ecoflow-api.sh app-mqtt <SN>              # mitlesen, was die App ans Geraet sendet
 scripts/ecoflow-api.sh selftest                   # Signatur gegen EcoFlows Testvektor
 ```
 
@@ -284,9 +286,43 @@ Das ist der Weg zu aktuellen Werten – **nicht** `status`. Am Gerät gemessen (
 `measured : 07:13:28Z`. Der Cloud-Umweg wird also auch von einem laufenden Zuhörer nicht
 aufgefrischt.
 
-Der Zeitstempel links ist der des Geräts (UTC), das Gerät meldet etwa minütlich und
-schickt jeden Frame doppelt. Wie die Frames aufgebaut sind, warum die Nutzlast
-XOR-verschleiert ist und woran die Feldzuordnung hängt, steht in `api-status.md`.
+Der Zeitstempel links ist der des Geräts (UTC), das Gerät meldet minütlich und schickt
+jeden Frame doppelt. Wie die Frames aufgebaut sind, warum die Nutzlast XOR-verschleiert
+ist und woran die Feldzuordnung hängt, steht in `api-status.md`.
+
+### Schneller Takt: `fast`
+
+Statt minütlich alle paar Sekunden – dafür gibt es `fast` anstelle von `live`:
+
+```bash
+scripts/ecoflow-api.sh fast HC31XXXXXXXXXXXX | python3 scripts/ecoflow-frames.py
+```
+
+Es tut alles, was `live` tut, und schaltet zusätzlich den schnellen Datenstrom ein.
+
+**Das ist das einzige Kommando im Skript, das auf ein `.../set`-Topic schreibt** – also
+auf den Weg, über den sich das Gerät auch verstellen ließe. Deshalb ist es ein eigenes
+Kommando: Der Schreibzugriff passiert nie nebenbei, sondern nur, wenn man `fast` tippt.
+
+Was dabei gesendet wird, ist **nicht geraten**. Der Befehl wurde mitgelesen, indem das
+`set`-Topic abonniert und dabei die Handy-App bedient wurde (`app-mqtt`, s.u.); das Skript
+gibt diese Bytes unverändert wieder und ändert nur die laufende Nummer. Er trägt keine
+Parameter. Ein früherer Versuch, ihn aus Fremdquellen zusammenzusetzen, lag an vier
+Stellen daneben — siehe `api-status.md`.
+
+`ECOFLOW_FAST_INTERVAL` setzt die Wiederholrate (Default 10 s); die App selbst wiederholt
+etwa alle drei Sekunden.
+
+### Mitlesen, was die App sendet: `app-mqtt`
+
+```bash
+scripts/ecoflow-api.sh app-mqtt HC31XXXXXXXXXXXX        # Default-Topic: set
+```
+
+Abonniert eines der App-Topics unter `/app/<userId>/<SN>/thing/property/` und zeigt, was
+dort ankommt. Voreingestellt ist `set` — das Topic, auf das das Skript sonst nichts
+schreibt. Wer die Handy-App bedient, während das läuft, sieht ihre Befehle im Original.
+Reines Abonnieren, kein Schreibzugriff.
 
 **Vorbehalt:** Die Feldnummern gelten für den **DC Fit**. Beim PowerOcean Plus liegen
 dieselben Größen auf anderen Nummern – dort lieferte das Skript plausible Zahlen an den
@@ -306,10 +342,9 @@ schickt die Anfrage an `.../get` und wartet `ECOFLOW_WAIT` Sekunden (Default 15)
 Suffix ist fest verdrahtet – es gibt kein freies Topic-Argument, das `.../set`-Topic ist
 von hier aus also nicht erreichbar. Braucht zusätzlich `mosquitto_pub`.
 
-Diese Grenze hat einen Preis: Die App schaltet ihren schnellen Stream über das
-`.../set`-Topic ein, also kann `live` das nicht und bleibt beim Takt seiner eigenen
-Anfragen. Das ist bewusst so – ein Werkzeug ohne Schreibpfad kann nichts verstellen,
-dieselbe Regel wie bei `modbusread`.
+Die Ausnahme ist `fast` (s.o.): Es publiziert als einziges Kommando auf `.../set`, mit
+einem mitgelesenen, parameterlosen Befehl. Dass es ein eigenes Kommando ist und nicht ein
+Schalter an `live`, ist Absicht – wer Werte abfragt, soll dabei nicht unbemerkt schreiben.
 
 Exit-Code `0` heißt `code 0` von der API, `2` jeder andere Code. **`2` mit Code 1006**
 ist die interessante Antwort: Dann ist das Modell von der Developer-API ausgeschlossen (siehe `api-status.md`) und nur

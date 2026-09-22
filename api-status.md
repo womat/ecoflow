@@ -479,8 +479,52 @@ gemessen, nicht angenommen").
 `08:31:00Z`, `08:32:00Z`).
 
 Der Takt hängt **nicht** am Weckruf: Ein Lauf mit `ECOFLOW_LIVE_INTERVAL=5` meldete
-weiterhin minütlich. Den schnelleren Rhythmus der App (~3 s) schaltet ein
-`EnergyStreamSwitch` auf dem `.../set`-Topic frei – von hier aus bewusst nicht erreichbar.
+weiterhin minütlich. Den schnelleren Rhythmus schaltet die App über das `.../set`-Topic
+frei – siehe den nächsten Abschnitt.
+
+#### Der Befehl für den schnellen Takt, mitgelesen statt geraten
+
+Das `set`-Topic lässt sich **abonnieren**, und Abonnieren ist lesend. Wer dabei die
+Handy-App bedient, sieht, was sie sendet – `scripts/ecoflow-api.sh app-mqtt <SN>` tut
+genau das. Am 22. September 2026 aufgezeichnet:
+
+```
+0a390a0408011001102018602001280138034060486150045801700a800103880101ba0103696f73ca0110<SN als ASCII>
+```
+
+| Feld | Wert            | Bedeutung                                       |
+|------|-----------------|-------------------------------------------------|
+| 1    | `08 01 10 01`   | Nutzlast: zwei Flags, beide 1 – **im Klartext** |
+| 2    | 32              | `src` – die App                                 |
+| 3    | 96              | `dest` – die Energieverwaltung                  |
+| 4, 5 | 1, 1            | `dSrc`, `dDest`                                 |
+| 7    | 3               | unbekannt                                       |
+| 8    | 96              | `cmd_func`                                      |
+| 9    | **97**          | `cmd_id` – der Stream-Schalter                  |
+| 10   | 4               | `dataLen`                                       |
+| 11   | 1               | `needAck`                                       |
+| 14   | kleiner Zähler  | `seq` – 3, 5, 7, 10 … einstellig beginnend      |
+| 16, 17 | 3, 1          | `version`, `payloadVer`                         |
+| 23   | `"ios"`         | womit die App sich meldet                       |
+| 25   | Seriennummer    | als ASCII                                       |
+
+Die App wiederholt das etwa alle drei Sekunden; das Gerät meldet dann ebenso oft.
+
+**Die Verschleierung gilt nur Gerät → App.** Was die App sendet, ist unverschlüsselt –
+der XOR-Schritt entfällt in dieser Richtung.
+
+**Warum das Mitlesen den Unterschied machte.** Ein aus den Fremdquellen zusammengesetzter
+Versuch lag an vier Stellen daneben: verschleierte statt klare Nutzlast, falsch verschachtelter
+Inhalt (`0a020801` statt `08011001`), eine sechsstellige statt einer einstelligen
+Sequenznummer, dazu zwei erfundene und zwei fehlende Felder. Richtig geraten waren allein
+`cmd_func 96` und `cmd_id 97`. Auf einem Schreib-Topic wäre das ein Schuss ins Dunkle
+gewesen – es gibt keinen Grund, so etwas zu raten, wenn man es messen kann.
+
+Umgesetzt in `scripts/ecoflow-api.sh fast <SN>`: dasselbe wie `live`, zusätzlich dieser
+eine Frame alle `ECOFLOW_FAST_INTERVAL` Sekunden (Default 10). Es ist das **einzige**
+Kommando des Skripts, das auf ein `set`-Topic publiziert, es trägt keine Parameter, und
+es ist absichtlich ein eigenes Kommando – damit der Schreibzugriff nie als Nebenwirkung
+einer Werteabfrage passiert.
 
 Ausgewertet wird das von `scripts/ecoflow-frames.py`, das die Ausgabe von `live` auf
 stdin nimmt. Der schnellere ~3-Sekunden-Takt, den die App über `.../set` freischaltet,
@@ -657,9 +701,12 @@ REST-Interface – eine explizite Bestätigung dafür liegt aber nicht vor.
   gehört dem Gerät, nicht dem Frager
 - [ ] Ist der Weckruf damit überhaupt nötig, oder genügt das Abo allein? Naheliegend nach
   dem Befund oben, aber ungeprüft – dafür bräuchte es einen Lauf ganz ohne Weckruf
-- [ ] Bringt der `EnergyStreamSwitch` auf `.../set` den ~3-Sekunden-Takt? Offen und
-  bewusst nicht ausprobiert – das Skript publiziert nicht auf `set`. Für einen
-  Minutentakt wird er nicht gebraucht
+- [x] Wie sieht der Befehl für den schnellen Takt wirklich aus? → **Mitgelesen** auf dem
+  `set`-Topic, während die App lief (22.09.2026). Bytes und Feldbelegung siehe oben;
+  umgesetzt als Kommando `fast`
+- [ ] Hält der schnelle Takt auch durch? Der Frame wird alle 10 s wiederholt, weil die
+  App das ebenso tut – ob das nötig ist und ob der Stream von selbst wieder ausgeht,
+  ist ungeprüft
 - [ ] Was tragen die übrigen `cmd_id` (1, 108, 109, 110, 111, 136)? Nach den Namen der
   Fremdquelle EMS-Heartbeat, Batterie- und DCDC-Berichte – ungeprüft
 

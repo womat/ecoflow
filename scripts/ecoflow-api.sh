@@ -86,6 +86,11 @@ commands:
                        asks. Payloads are printed as hex, with the text spelled
                        out when they are readable. Runs until Ctrl-C.
                        Needs jq, mosquitto_sub and mosquitto_pub.
+  fast <SN>            like "live", but also switches on the device's fast
+                       stream: roughly every three seconds instead of once a
+                       minute. This is the one command that publishes to a
+                       .../set topic - see the note below before using it.
+                       Needs jq, mosquitto_sub and mosquitto_pub.
   selftest             check the signature assembly, no keys and no network
   help                 show this message
 
@@ -153,19 +158,23 @@ note:
   quotas is a POST. It is still a read: this script never touches the PUT
   endpoint that would set values on the device.
 
-  "request" and "live" are the only commands that publish, and both can only
-  publish to a .../get topic: the suffix is hard-wired, there is no free topic
-  argument, so the .../set topic that would change the device stays unreachable
-  from here. Everything else only ever subscribes.
+  Three commands publish; everything else only ever subscribes. "request" and
+  "live" publish to a .../get topic, which is a read request, and the suffix is
+  hard-wired so no other topic can be reached through them.
 
-  That boundary has a price worth knowing: the app switches on its fast stream
-  by publishing to .../set, so "live" cannot do that and has to settle for the
-  pace of its own wake-up calls.
+  "fast" is the exception and the only one that publishes to .../set. What it
+  sends is not built from guesswork: the message was captured off the wire by
+  subscribing to that topic while operating the phone app, and this script
+  reproduces those bytes exactly, varying only the sequence number. It carries
+  no parameters, and it is a separate command so that the write never happens
+  as a side effect of asking for values - "live" stays free of it.
 
-  "app-mqtt" does subscribe to .../set by default, which is the opposite of
-  writing to it: it shows what the phone app sends there. Reading a topic the
-  script refuses to publish on is how one finds out what such a message even
-  looks like, instead of guessing it from someone else's notes.
+  Even so: .../set is the topic through which the device can be changed. An
+  earlier attempt to assemble this message from third-party notes came out
+  wrong in four places, which is why it was measured instead.
+
+  "app-mqtt" subscribes to .../set by default, which is the opposite of writing
+  to it: it shows what the phone app sends there.
 
   The MQTT password is passed to the mosquitto clients on the command line, so
   it is briefly visible to other users of this machine via the process list.
@@ -793,7 +802,7 @@ hex_lines() {
 # engineering, so the output stays deliberately raw: this is a measuring tool
 # first. See api-status.md for what is established and what is not.
 mqtt_live() {
-	local sn="$1"
+	local sn="$1" mode="${2:-}"
 
 	command -v jq >/dev/null 2>&1 || die 'live needs jq'
 	command -v mosquitto_sub >/dev/null 2>&1 ||
@@ -812,6 +821,7 @@ mqtt_live() {
 	local reply_topic="/app/${user_id}/${sn}/thing/property/get_reply"
 	local state_topic="/app/device/status/${sn}"
 	local get_topic="/app/${user_id}/${sn}/thing/property/get"
+	local set_topic="/app/${user_id}/${sn}/thing/property/set"
 
 	local -a debug=()
 	local quiet=/dev/null
@@ -852,6 +862,32 @@ mqtt_live() {
 	) &
 	local pub_pid=$!
 
+	# The fast stream, and the only place in this script that publishes to a
+	# .../set topic. It sends exactly one message - the EnergyStreamSwitch as it
+	# was captured off the wire, nothing parameterised and nothing assembled
+	# from someone's notes - and only when "fast" was typed on the command line.
+	local switch_pid=''
+	if [ "$mode" = 'fast' ]; then
+		(
+			sleep 2
+			local seq=1
+			while :; do
+				stream_switch_frame "$sn" "$seq" |
+					mosquitto_pub -h "$MQTT_URL" -p "$MQTT_PORT" \
+						-u "$MQTT_ACCOUNT" -P "$MQTT_PASSWORD" "${MQTT_TLS[@]}" \
+						-i "$(app_client_id "$user_id")" \
+						-t "$set_topic" -s >"$quiet" 2>&1 ||
+					printf 'stream switch failed, retrying\n' >&2
+				# The app repeats this every few seconds and the stream stops
+				# again when nothing renews it. The counter wraps at 127 so the
+				# sequence stays a single-byte varint, as the app's own does.
+				seq=$((seq % 127 + 1))
+				sleep "${ECOFLOW_FAST_INTERVAL:-10}"
+			done
+		) &
+		switch_pid=$!
+	fi
+
 	# The only trap in this file, and it earns its place: everything else either
 	# runs in the foreground or ends itself on a timeout, but this loop would
 	# outlive the Ctrl-C that stops the subscription. Its sleeping child is
@@ -861,8 +897,10 @@ mqtt_live() {
 	# group, so the subscription ends at once and this trap runs right after. A
 	# signal sent to this process alone waits for the subscription to finish
 	# first, because bash defers traps until the foreground command returns.
-	trap 'pkill -P "$pub_pid" 2>/dev/null || true; kill "$pub_pid" 2>/dev/null || true' \
-		INT TERM EXIT
+	trap 'for p in "$pub_pid" $switch_pid; do
+		pkill -P "$p" 2>/dev/null || true
+		kill "$p" 2>/dev/null || true
+	done' INT TERM EXIT
 
 	printf 'subscribing to %s, %s and %s (Ctrl-C to stop)\n' \
 		"$push_topic" "$reply_topic" "$state_topic" >&2
@@ -912,6 +950,74 @@ wake_payload() {
 	jq -cn --arg id "$(date +%s)000" \
 		'{from: "Android", id: $id, moduleType: 0,
 		  operateType: "latestQuotas", params: {}, version: "1.0"}'
+}
+
+# hex_to_bytes HEX - write the raw bytes of a hex string to stdout
+#
+# Pure bash on purpose: xxd is not everywhere, and this runs a handful of times.
+hex_to_bytes() {
+	local hex="$1" i
+	for ((i = 0; i < ${#hex}; i += 2)); do
+		printf '\x'"${hex:i:2}"
+	done
+}
+
+# stream_switch_frame SN SEQ - the message that turns on the fast stream
+#
+# Not derived from anyone's notes: captured off the wire on 22 September 2026 by
+# subscribing to .../set while operating the phone app (see "app-mqtt"). The
+# app repeats it every few seconds, and the device answers with an energy
+# stream every three seconds instead of every minute.
+#
+# Byte for byte, as measured:
+#
+#   field 1  pdata      08 01 10 01   two flags, both 1 - plain, not obfuscated
+#   field 2  src        32            the app
+#   field 3  dest       96            the energy management unit
+#   field 4  dSrc       1
+#   field 5  dDest      1
+#   field 7  (unknown)  3
+#   field 8  cmd_func   96
+#   field 9  cmd_id     97
+#   field 10 dataLen    4
+#   field 11 needAck    1
+#   field 14 seq        small counter, 1 upwards
+#   field 16 version    3
+#   field 17 payloadVer 1
+#   field 23 from       "ios" - what the captured app called itself
+#   field 25 sn         the serial number as ASCII
+#
+# Only the sequence number and the serial number vary, so the rest is a
+# constant. Guarding the two lengths keeps them single-byte varints, which is
+# what makes that possible.
+stream_switch_frame() {
+	local sn="$1" seq="$2"
+
+	[ "$seq" -ge 1 ] && [ "$seq" -le 127 ] || die "sequence out of range: $seq"
+
+	local sn_hex
+	sn_hex="$(printf '%s' "$sn" | od -An -tx1 | tr -d ' \n')"
+	local sn_len=$((${#sn_hex} / 2))
+	[ "$sn_len" -ge 1 ] && [ "$sn_len" -le 60 ] || die "serial number has an odd length: $sn"
+
+	local inner=''
+	inner+='0a0408011001' # 1  pdata = 08 01 10 01
+	inner+='1020'         # 2  src        32
+	inner+='1860'         # 3  dest       96
+	inner+='2001'         # 4  dSrc        1
+	inner+='2801'         # 5  dDest       1
+	inner+='3803'         # 7  unknown     3
+	inner+='4060'         # 8  cmd_func   96
+	inner+='4861'         # 9  cmd_id     97
+	inner+='5004'         # 10 dataLen     4
+	inner+='5801'         # 11 needAck     1
+	inner+="70$(printf '%02x' "$seq")" # 14 seq
+	inner+='800103'       # 16 version     3
+	inner+='880101'       # 17 payloadVer  1
+	inner+='ba0103696f73' # 23 from     "ios"
+	inner+="ca01$(printf '%02x' "$sn_len")${sn_hex}" # 25 sn
+
+	hex_to_bytes "$(printf '0a%02x%s' "$((${#inner} / 2))" "$inner")"
 }
 
 # app_client_id USERID - a client id the app's broker accepts
@@ -1096,6 +1202,13 @@ main() {
 		*[!A-Za-z0-9_-]*) die "serial number looks wrong: $1" ;;
 		esac
 		mqtt_live "$1"
+		;;
+	fast)
+		[ "$#" -eq 1 ] || die 'usage: ecoflow-api.sh fast <SN>'
+		case "$1" in
+		*[!A-Za-z0-9_-]*) die "serial number looks wrong: $1" ;;
+		esac
+		mqtt_live "$1" fast
 		;;
 	selftest)
 		selftest
