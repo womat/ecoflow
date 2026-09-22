@@ -451,10 +451,31 @@ connected to mqtt-e.ecoflow.com:8883, subscribed to 3 topics
 10:30:00Z  PV    1544 W | house    618 W | battery    926 W (charging) | grid      0 W (idle) | SoC 74 %
 ```
 
-**Er publiziert nichts.** Das ist keine Vorsicht, sondern das, was das Gerät braucht: Das
-Abo allein hält es am Reden, gemessen über 23 Minuten ohne eine einzige gesendete
-Nachricht. Der Takt ist damit eine Minute; für Sekundenwerte braucht es den
-Stream-Schalter, und der kommt später hinter ein eigenes Flag.
+**Ohne `--fast` publiziert er nichts.** Das ist keine Vorsicht, sondern das, was das Gerät
+braucht: Das Abo allein hält es am Reden, gemessen über 23 Minuten ohne eine einzige
+gesendete Nachricht. Der Takt ist dann eine Minute.
+
+### Sekundenwerte: `--fast`
+
+```bash
+./ecoflowd --sn HC31XXXXXXXXXXXX --stdout --fast
+```
+
+Schickt alle `--switch-every` Sekunden (Default 3) den Stream-Schalter und liefert Werte
+alle zwei bis drei Sekunden statt minütlich.
+
+**Das ist der einzige Schreibpfad des Programms**, und er geht auf das `.../set`-Topic —
+den Weg, über den sich das Gerät auch verstellen ließe. Deshalb ein Flag und kein Default:
+Wer Werte abfragt, schreibt dabei nie unbemerkt.
+
+Der Befehl selbst ist nicht geraten. Er wurde am Draht mitgelesen, während die Handy-App
+lief; das Programm gibt diese Bytes unverändert wieder und ändert nur die laufende Nummer.
+Er trägt keine Parameter. Zehn Sekunden Wiederholabstand waren gemessen zu langsam — das
+Gerät fällt dann auf den Minutentakt zurück —, deshalb drei, der Takt der App.
+
+Bleibt der schnelle Strom trotzdem aus, sagt der Dienst das **einmal** und läuft im
+Minutentakt weiter. Der Broker nimmt den Schalter nämlich in jedem Fall an (`PUBACK RC:0`
+gemessen); ob er wirkt, zeigt allein, ob schnelle Berichte eintreffen.
 
 **Zugangsdaten kommen aus der Umgebung, nie aus Flags.** Der Login-Endpunkt überträgt das
 Passwort base64-kodiert statt gehasht, und es ist das **Kontopasswort**, kein
