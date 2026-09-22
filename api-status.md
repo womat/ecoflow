@@ -238,6 +238,36 @@ Das ist **mehr, als Modbus exponiert** (siehe `modbus-registers.md`, „Bekannte
 und `DC303_ENERGY_STREAM_REPORT` trägt einen eigenen Zeitstempel – es taugt also auch zum
 Mitschreiben, nicht nur für einen Momentanwert.
 
+#### Der Zeitstempel steht still, wenn niemand hinsieht
+
+Genau dieser Zeitstempel ist es, den `scripts/ecoflow-api.sh status` als `measured`
+ausgibt – und er ist der **Messzeitpunkt der Firmware, nicht der Abrufzeitpunkt**. Am
+Gerät beobachtet (22. September 2026): Drei `status`-Aufrufe kurz hintereinander lieferten
+dreimal exakt dieselbe Antwort, `measured` blieb auf `2026-09-22T06:18:28Z` stehen, während
+die Anlage nachweislich lief. Nach dem Öffnen der App bzw. des Portals wanderte der Wert
+wieder.
+
+Die Erklärung, die dazu passt: **Der REST-Endpunkt pollt das Gerät nicht.** Er gibt
+heraus, was zuletzt in die Cloud gepusht wurde. Gepusht wird aber offenbar nur, solange
+ein Client aktiv nachfragt – ist keiner da, versiegt der Strom und der Cloud-Stand friert
+ein. Ein `status`-Aufruf sieht dann aus wie ein Live-Wert und ist ein Standbild.
+
+Fremdbelege für denselben Mechanismus bei anderen EcoFlow-Geräten:
+
+- `jensfr1/ha-ecoflow-ocean2` hält dafür ein eigenes Intervall von 60 s vor, mit dem
+  Kommentar „Ohne diesen regelmaessigen Weckruf sendet das Geraet keine Telemetrie,
+  solange keine EcoFlow-App geoeffnet ist."
+- `shuette42/ecoflow-energy-ha` schickt nach jedem Verbindungsaufbau und danach alle
+  20–30 s eine Anfrage nach; für den PowerOcean **Plus** ist dort zusätzlich vermerkt, dass
+  manche Geräte nur direkt nach einem Abo antworten.
+- Die openHAB-Anbindung berichtet dasselbe für den STREAM Micro über die offizielle API:
+  Updates nur bei geöffneter App, sonst alle 13–16 Minuten.
+
+**Einschränkung:** Das ist eine Beobachtung an einem Gerät plus Fremdbelege für andere
+Modelle, keine bewiesene Ursache. Ob die Drosselung im Gerät oder in der Cloud sitzt, ist
+von außen nicht zu unterscheiden. Nachmessbar ist es mit `scripts/ecoflow-api.sh live`
+(siehe unten) in einem Terminal und `status` in einem zweiten.
+
 #### Vorzeichen: gemessen, nicht angenommen
 
 Die Vorzeichen sind **nicht einheitlich**, und die Oberfläche des Portals zeigt ohnehin
@@ -275,12 +305,48 @@ Das Passwort wird dabei nur **base64-kodiert, nicht gehasht** übertragen – Ko
 Verschlüsselung. Wer das nicht will, nimmt den Browser-Token: kleineres Geheimnis, läuft von
 selbst ab. Quelle für den Ablauf: `shuette42/ecoflow-energy-ha`, `enhanced_auth.py`.
 
-Dort steht auch, wofür dieses Token sonst noch taugt: Der Endpunkt
-`/iot-auth/enterprise-development/user/certification` – den das Portal beim Laden selbst
-aufruft – liefert **AES-verschlüsselte MQTT-Zugangsdaten**; Schlüssel ist `SHA256(token)`,
-der IV eine Konstante aus dem Portal-JS. Das ist der MQTT-Kanal der App, auf dem im
-Unterschied zum Open-API-Kanal tatsächlich Daten fließen. Von diesem Repo nicht
-implementiert, aber dokumentiert, falls ein Live-Stream gebraucht wird.
+Dort steht auch, wofür dieses Token sonst noch taugt: Es öffnet den **MQTT-Kanal der
+App**, auf dem im Unterschied zum Open-API-Kanal tatsächlich Daten fließen. Dorthin
+führen zwei Türen.
+
+**Die einfache (von diesem Repo benutzt):**
+
+```
+GET /iot-auth/app/certification?userId=<userId>
+Authorization: Bearer <token>
+lang: en_US
+→ data.certificateAccount, data.certificatePassword, data.url, data.port, data.protocol
+```
+
+Klartext-JSON, keine Entschlüsselung nötig. Abrufbar mit
+`scripts/ecoflow-api.sh app-cert`, die `userId` kommt aus `ECOFLOW_USER_ID` (das
+`login`-Kommando gibt sie fertig zum Exportieren aus).
+
+**Die verschlüsselte:** `/iot-auth/enterprise-development/user/certification` – den das
+Portal beim Laden selbst aufruft – liefert dieselben Felder **AES-verschlüsselt**, dafür
+ohne `userId`. Genauer, als es hier bisher stand:
+
+| Parameter  | Wert                                                              |
+|------------|-------------------------------------------------------------------|
+| Verfahren  | AES-256 im Modus **CFB128** – *nicht* CBC                         |
+| Schlüssel  | `SHA256(token)` als **rohe 32 Byte** (nicht hex, nicht gekürzt)   |
+| IV         | ASCII-Konstante `ojsajkqjwk1w2dfg` aus dem Portal-JS               |
+| Kodierung  | `data` ist ein Base64-String, kein Objekt                         |
+| Padding    | PKCS7 – die Restbytes bleiben nach dem Entschlüsseln übrig         |
+
+Mit dem openssl-CLI nachvollziehbar:
+
+```bash
+KEY=$(printf %s "$TOKEN" | openssl dgst -sha256 -binary | xxd -p -c64)
+printf %s "$CIPHERTEXT_B64" |
+  openssl enc -d -aes-256-cfb -K "$KEY" -iv 6f6a73616a6b716a776b317732646667 -a -A -nopad
+```
+
+**Bewusst nicht implementiert.** Der Klartextweg liefert dieselben Zugangsdaten, und ein
+Krypto-Pfad in einem Shell-Skript ist Code, der schweigend falsche Bytes produzieren kann.
+Er steht hier, falls EcoFlow die einfache Tür schließt. Unbestätigt bleibt außerdem, ob
+der `enterprise-development`-Pfad mit einem reinen Endkunden-Token überhaupt antwortet –
+der Pfadname legt einen Pro-/Installateurskontext nahe.
 
 **Einordnung:** Das ist eine interne Schnittstelle der Weboberfläche, von EcoFlow weder
 dokumentiert noch zugesagt, und das Token läuft ab. Als dauerhafte Datenquelle taugt das
@@ -292,6 +358,214 @@ Laut `MaxGrmm/EF-PowerOcean-TcpModbus` liefert derselbe Endpunkt noch deutlich m
 das Dashboard zeigt – Zellspannungen, SOH, phasenweise Wirk-/Blind-/Scheinleistung, rund
 180 Netzschutzparameter. Es bleiben der lokale Modbus-Weg (Abschnitt 2) und – mit
 allen Nachteilen – die inoffizielle App-Cloud (Abschnitt 2b).
+
+### Der MQTT-Kanal der App
+
+Der Kanal, den die App benutzt – und der einzige Cloud-Kanal, auf dem für dieses Gerät
+tatsächlich Nachrichten ankommen. Abonnierbar mit `scripts/ecoflow-api.sh live <SN>`.
+
+**Broker:** `mqtt-e.ecoflow.com:8883` (MQTTS), Host und Port kommen aus der
+Certification-Antwort; Benutzername und Passwort sind `certificateAccount` und
+`certificatePassword` daraus – nicht die Kontodaten, nicht das Token.
+
+**Client-ID:** `ANDROID_<32 Hex-Zeichen, Großbuchstaben>_<userId>`. Das ist keine
+Kosmetik: Der Broker weist Client-IDs ab, die nicht so aussehen, und er weist eine bereits
+gesehene ID nach dem Verbindungsabbruch erneut ab. Deshalb baut `live` für **jede**
+Verbindung eine neue.
+
+**Topics** (Wildcards meiden – die ACL lehnt sie ab, siehe oben):
+
+| Topic                                           | Richtung  | Inhalt                          |
+|-------------------------------------------------|-----------|---------------------------------|
+| `/app/device/property/<SN>`                     | subscribe | Telemetrie-Push, **Protobuf**   |
+| `/app/<userId>/<SN>/thing/property/get`         | publish   | Anfrage/Weckruf                 |
+| `/app/<userId>/<SN>/thing/property/get_reply`   | subscribe | Antwort darauf                  |
+| `/app/device/status/<SN>`                       | subscribe | online/offline                  |
+| `/app/<userId>/<SN>/thing/property/set`         | publish   | **schreibend – hier tabu**      |
+
+**Der Weckruf**, den `live` alle `ECOFLOW_LIVE_INTERVAL` Sekunden (Default 30) auf das
+`get`-Topic schickt:
+
+```json
+{"from":"Android","id":"<Millisekunden>","moduleType":0,
+ "operateType":"latestQuotas","params":{},"version":"1.0"}
+```
+
+**Was `live` bewusst nicht tut:** Die App aktiviert ihren schnellen Stream (~3 s) über
+einen Protobuf-Frame `EnergyStreamSwitch` auf dem `.../set`-Topic. Das Skript publiziert
+grundsätzlich nur auf `get`-Topics, damit kein Schreibpfad existiert, der versehentlich
+das Gerät verstellen könnte – dieselbe Regel, nach der `modbusread` keine `Write*`-Methode
+aufruft. Der Preis: `live` bekommt vermutlich nur den Takt seiner eigenen Anfragen.
+
+**Format:** Der Push ist beim PowerOcean **Protobuf**, nicht JSON – `jq` hilft dort nicht.
+`live` gibt deshalb jede Nachricht als Hex aus und schreibt den Text nur dann zusätzlich
+hin, wenn die Nutzlast vollständig druckbar ist. Ob `get_reply` beim DC Fit JSON
+(`data.quotaMap`) oder Protobuf liefert, ist offen – das ist die erste Frage, die eine
+Messung beantworten muss.
+
+**Vorbehalt Plus vs. DC Fit.** Die Protobuf-Feldnummern unterscheiden sich zwischen den
+Modellen. Für den JT-S1-PowerOcean trägt `cmd_func 96 / cmd_id 33` die Reihenfolge
+`sys_load_pwr, sys_grid_pwr, mppt_pwr, bp_pwr, bp_soc`; die DC-Fit-Definition bei
+`foxthefox/ioBroker.ecoflow-mqtt` (Gerätetyp `poweroceanfit`) belegt dieselbe Kennung
+mit `grid_pwr, dcdc_pwr, bp_pwr, pv_pwr, timestamp, timezone, bp_soc, load_pwr, …`.
+Wer hier die falsche Tabelle nimmt, bekommt plausible Zahlen an den falschen Namen. Das
+ist derselbe Vorbehalt wie beim Register-Mapping.
+
+**Herkunft:** Endpunktpfad, Client-ID-Form, Topics und Weckruf-Payload waren Übernahmen
+aus fremdem Reverse-Engineering. Am Gerät nachgeprüft wurden sie am 22. September 2026 –
+siehe den nächsten Abschnitt. Quellen: `shuette42/ecoflow-energy-ha`,
+`tolwi/hassio-ecoflow-cloud`, `jensfr1/ha-ecoflow-ocean2`,
+`foxthefox/ioBroker.ecoflow-mqtt`.
+
+### Am DC Fit gemessen (22. September 2026)
+
+Der Kanal **trägt**. `app-cert` antwortet mit `code 0` und liefert
+`mqtt-e.ecoflow.com:8883` samt Zugangsdaten; der Broker akzeptiert die Client-ID der Form
+`ANDROID_<hex>_<userId>`, alle drei Topics werden abonniert, und auf
+`/app/device/property/<SN>` treffen **alle paar Sekunden Frames ein**. Damit ist dies der
+einzige Cloud-Weg, auf dem für dieses Modell tatsächlich Messwerte fließen.
+
+Drei Befunde aus derselben Messung:
+
+**1. Der Weckruf wird nicht beantwortet.** In zweieinhalb Minuten kam auf
+`.../thing/property/get_reply` keine einzige Nachricht. Der Push läuft trotzdem – das Abo
+allein scheint zu genügen. Ob der Weckruf überflüssig ist oder ob er den Push erst
+auslöst, ist damit nicht entschieden.
+
+**2. Der REST-Endpunkt wird davon nicht frisch.** `status` lieferte während der ganzen
+Zeit unverändert `measured : 2026-09-22T07:13:28Z`, während die MQTT-Frames bereits
+`08:19Z` trugen – über eine Stunde Unterschied. **Der Umweg über `provider-service` ist
+also keine Live-Quelle, auch nicht mit laufendem Zuhörer.** Wer aktuelle Werte will, muss
+die Frames auswerten.
+
+**3. Die Nutzlast ist XOR-verschleiert.** Jedes Byte der Nutzlast ist mit dem niederwertigen
+Byte der Sequenznummer (Header-Feld 14) verodert. Aufgefallen ist das daran, dass zwei
+Frames mit benachbarten Sequenznummern sich in *jedem* Byte um dasselbe Bitmuster
+unterscheiden. Ohne diesen Schritt ist die Nutzlast kein gültiges Protobuf.
+
+**Rahmenaufbau** (Feldnummern des äußeren Headers, bestätigt):
+
+| Feld | Bedeutung                                |
+|------|------------------------------------------|
+| 1    | Nutzlast (XOR-verschleiert, s.o.)        |
+| 8    | `cmd_func` – bei allen Frames hier 96    |
+| 9    | `cmd_id` – unterscheidet die Berichte    |
+| 14   | Sequenznummer, zugleich der XOR-Schlüssel |
+
+**Beobachtete `cmd_id` bei `cmd_func 96`:** 1, **34**, 108, 109, 110, 111, 136.
+
+**Den Energiestrom gibt es zweimal, auf `cmd_id 34` und `cmd_id 33`** – mit derselben
+Feldbelegung, aber unterschiedlichem Takt und unterschiedlicher Verpackung:
+
+| Kennung | Takt          | Zeitstempel     | Nutzlast                        | Bedingung                    |
+|---------|---------------|-----------------|---------------------------------|------------------------------|
+| **34**  | genau minütlich | auf die Minute gerundet | Felder in eine Nachricht eingepackt | kommt immer                  |
+| **33**  | alle 2–3 s    | sekundengenau   | Felder direkt in der Nutzlast   | nur bei aktivem Stream-Schalter |
+
+Wer also nur mit `live` misst, sieht ausschließlich 34 und hält 33 für nicht vorhanden –
+und wer der Fremdquelle folgt, die nur 33 nennt, findet ohne den Schalter gar nichts.
+
+**Bei laufendem schnellen Strom ist 34 überflüssig:** Über eine Messreihe hinweg hatte
+*jeder* Minutenbericht einen Sekundenbericht mit demselben Zeitstempel. Er trägt also
+nichts bei, sieht aber wie ein Stillstand aus, weil sein Zeitstempel auf die Minute
+gerundet ist. `ecoflow-frames.py` unterdrückt ihn deshalb, solange innerhalb der letzten
+90 Sekunden ein 33er kam – und zeigt ihn wieder, sobald der schnelle Strom versiegt.
+
+Unabhängig davon schickt das Gerät manche Frames **zweimal**, bei beiden Kennungen. Zwei
+gleiche Messwerte sind ein Messwert, deshalb wird eine Zeile unterdrückt, die mit der
+vorigen identisch ist. Zwei *verschiedene* Werte in derselben Sekunde bleiben stehen – die
+kommen vor und sind keine Wiederholung.
+
+Die Feldbelegung ist in beiden Fällen dieselbe:
+
+| Feld | Typ     | Bedeutung                              |
+|------|---------|----------------------------------------|
+| 1    | float   | Netzleistung (positiv = Einspeisung)   |
+| 2    | float   | DCDC-Leistung                          |
+| 3    | float   | Batterieleistung (positiv = Laden)     |
+| 4    | float   | PV-Leistung                            |
+| 5    | uint32  | Zeitstempel (Unix-Sekunden, UTC)       |
+| 6    | sint32  | Zeitzone                               |
+| 7    | uint32  | SoC in %                               |
+| 8    | float   | Hauslast (wird negativ gemeldet)       |
+
+**Wie das belegt ist:** über die Energiebilanz. In jedem einzelnen Frame gilt
+`PV = Batterie + Haus + Netz` auf zwei Nachkommastellen genau – etwa 968,59 W PV =
+530,0 W Batterie + 351,6 W Haus + 87,0 W Netz. Eine falsche Feldzuordnung würde das nicht
+treffen. Die Vorzeichen decken sich mit denen des Portal-Endpunkts (siehe „Vorzeichen:
+gemessen, nicht angenommen").
+
+**Takt:** Das Gerät meldet den Energiestrom **genau minütlich** und schickt jeden Frame
+**doppelt**. Der Gerätezeitstempel liegt dabei auf der vollen Minute (`08:30:00Z`,
+`08:31:00Z`, `08:32:00Z`).
+
+Der Takt hängt **nicht** am Weckruf: Ein Lauf mit `ECOFLOW_LIVE_INTERVAL=5` meldete
+weiterhin minütlich. Den schnelleren Rhythmus schaltet die App über das `.../set`-Topic
+frei – siehe den nächsten Abschnitt.
+
+#### Der Befehl für den schnellen Takt, mitgelesen statt geraten
+
+Das `set`-Topic lässt sich **abonnieren**, und Abonnieren ist lesend. Wer dabei die
+Handy-App bedient, sieht, was sie sendet – `scripts/ecoflow-api.sh app-mqtt <SN>` tut
+genau das. Am 22. September 2026 aufgezeichnet:
+
+```
+0a390a0408011001102018602001280138034060486150045801700a800103880101ba0103696f73ca0110<SN als ASCII>
+```
+
+| Feld | Wert            | Bedeutung                                       |
+|------|-----------------|-------------------------------------------------|
+| 1    | `08 01 10 01`   | Nutzlast: zwei Flags, beide 1 – **im Klartext** |
+| 2    | 32              | `src` – die App                                 |
+| 3    | 96              | `dest` – die Energieverwaltung                  |
+| 4, 5 | 1, 1            | `dSrc`, `dDest`                                 |
+| 7    | 3               | unbekannt                                       |
+| 8    | 96              | `cmd_func`                                      |
+| 9    | **97**          | `cmd_id` – der Stream-Schalter                  |
+| 10   | 4               | `dataLen`                                       |
+| 11   | 1               | `needAck`                                       |
+| 14   | kleiner Zähler  | `seq` – 3, 5, 7, 10 … einstellig beginnend      |
+| 16, 17 | 3, 1          | `version`, `payloadVer`                         |
+| 23   | `"ios"`         | womit die App sich meldet                       |
+| 25   | Seriennummer    | als ASCII                                       |
+
+Die App wiederholt das etwa alle drei Sekunden; das Gerät meldet dann ebenso oft.
+
+**Die Verschleierung gilt nur Gerät → App.** Was die App sendet, ist unverschlüsselt –
+der XOR-Schritt entfällt in dieser Richtung.
+
+**Warum das Mitlesen den Unterschied machte.** Ein aus den Fremdquellen zusammengesetzter
+Versuch lag an vier Stellen daneben: verschleierte statt klare Nutzlast, falsch verschachtelter
+Inhalt (`0a020801` statt `08011001`), eine sechsstellige statt einer einstelligen
+Sequenznummer, dazu zwei erfundene und zwei fehlende Felder. Richtig geraten waren allein
+`cmd_func 96` und `cmd_id 97`. Auf einem Schreib-Topic wäre das ein Schuss ins Dunkle
+gewesen – es gibt keinen Grund, so etwas zu raten, wenn man es messen kann.
+
+Umgesetzt in `scripts/ecoflow-api.sh fast <SN>`: dasselbe wie `live`, zusätzlich dieser
+eine Frame alle `ECOFLOW_FAST_INTERVAL` Sekunden. Es ist das **einzige** Kommando des
+Skripts, das auf ein `set`-Topic publiziert, es trägt keine Parameter, und es ist
+absichtlich ein eigenes Kommando – damit der Schreibzugriff nie als Nebenwirkung einer
+Werteabfrage passiert.
+
+**Am Gerät gemessen (22. September 2026):**
+
+- Der Broker **nimmt den Publish an**: `PUBACK RC:0` unter MQTT v5 mit QoS 1. Auf dem
+  `set`-Topic des App-Kanals greift also keine ACL-Sperre – anders als auf dem `get`-Topic
+  des Open-API-Kanals, wo derselbe Test `0x87` lieferte.
+- **Der Wiederholabstand entscheidet.** Mit 3 Sekunden (dem Rhythmus der App) läuft der
+  schnelle Strom: 62 Messwerte in 55 Sekunden. Mit 10 Sekunden fiel das Gerät auf den
+  Minutentakt zurück. Der Schalter hält also nur kurz vor; Default ist deshalb 3.
+- Nebenbei sichtbar wurde noch `cmd_func 254 / cmd_id 32` (rund zweimal pro Sekunde) sowie
+  `96/3`, `96/1` und `96/137` im Sekundenbereich – alle nicht ausgewertet.
+
+**Preis:** Das Skript startet für jeden Schalter einen eigenen `mosquitto_pub`, also alle
+3 Sekunden einen Verbindungsaufbau. Für eine Messung ist das in Ordnung, für Dauerbetrieb
+wäre eine stehende Verbindung angebracht – die kann `mosquitto_pub` von der Kommandozeile
+aus nicht, das wäre ein Grund, diesen Teil in Go zu ziehen.
+
+Ausgewertet wird das von `scripts/ecoflow-frames.py`, das die Ausgabe von `live` auf
+stdin nimmt. Der schnellere ~3-Sekunden-Takt, den die App über `.../set` freischaltet,
+ist damit weiterhin nicht erreicht – für einen Minutentakt braucht es ihn aber auch nicht.
 
 ## 2. Lokales Modbus TCP
 
@@ -346,6 +620,10 @@ Genau das nutzen die Home-Assistant-Integrationen für die
 gesperrten Modelle. **Community-Weg ohne jede Zusage von EcoFlow**: kann jederzeit
 brechen, und die Kontozugangsdaten liegen im Klartext in der Konfiguration.
 (Quelle: https://github.com/shuette42/ecoflow-energy-ha)
+
+Dieses Repo geht genau diesen Weg, aber nur bis zur Hälfte: `scripts/ecoflow-api.sh live`
+abonniert den Kanal und hält ihn wach, dekodiert die Protobuf-Frames aber nicht. Der
+Aufbau ist oben unter „Der MQTT-Kanal der App" beschrieben.
 
 ## 2c. Checkliste für den Installateurstermin
 
@@ -445,7 +723,30 @@ REST-Interface – eine explizite Bestätigung dafür liegt aber nicht vor.
   Abo wird gewährt, Verbindung bleibt stehen, es wird nichts publiziert (kurze Beobachtung, September 2026)
 - [x] Hilft der dokumentierte Anfrage-Weg über `.../get`? → **Nein**, der Publish wird
   mit PUBACK 0x87 „Not authorized" abgelehnt, das Abo auf `.../get_reply` mit
-  SUBACK 0x80. Damit ist MQTT vollständig ausgemessen.
+  SUBACK 0x80. Damit ist der **Open-API**-MQTT-Kanal vollständig ausgemessen. Der
+  App-Kanal ist ein anderer und noch offen – siehe die nächsten drei Punkte.
+- [x] Antwortet `/iot-auth/app/certification` mit dem Endkunden-Token, und lässt der
+  Broker die Client-ID-Form `ANDROID_<hex>_<userId>` zu? → **Ja, beides** (22.09.2026);
+  Frames treffen auf `/app/device/property/<SN>` ein
+- [x] Liefert `.../thing/property/get_reply` beim DC Fit JSON? → **Es kam gar nichts**;
+  der Push läuft trotzdem. Die Werte stecken ausschließlich in den Protobuf-Frames
+- [x] Wird `measured` im REST-Endpunkt wieder frisch, solange `live` läuft? → **Nein.**
+  Über zweieinhalb Minuten unverändert, während die Frames eine Stunde weiter waren.
+  Der REST-Weg ist damit als Live-Quelle erledigt
+- [x] Ändert ein häufigerer Weckruf den Meldetakt? → **Nein.** Mit
+  `ECOFLOW_LIVE_INTERVAL=5` kam der Energiestrom weiterhin genau minütlich. Der Takt
+  gehört dem Gerät, nicht dem Frager
+- [ ] Ist der Weckruf damit überhaupt nötig, oder genügt das Abo allein? Naheliegend nach
+  dem Befund oben, aber ungeprüft – dafür bräuchte es einen Lauf ganz ohne Weckruf
+- [x] Wie sieht der Befehl für den schnellen Takt wirklich aus? → **Mitgelesen** auf dem
+  `set`-Topic, während die App lief (22.09.2026). Bytes und Feldbelegung siehe oben;
+  umgesetzt als Kommando `fast`
+- [x] Hält der schnelle Takt durch? → **Ja, bei 3 s Wiederholung**; bei 10 s fällt das
+  Gerät auf den Minutentakt zurück. Der Schalter hält also nur wenige Sekunden vor
+- [ ] Was tragen `cmd_func 254 / cmd_id 32` (rund zweimal pro Sekunde) sowie `96/3`,
+  `96/137`? Im schnellen Betrieb die häufigsten Frames überhaupt, bisher nicht ausgewertet
+- [ ] Was tragen die übrigen `cmd_id` (1, 108, 109, 110, 111, 136)? Nach den Namen der
+  Fremdquelle EMS-Heartbeat, Batterie- und DCDC-Berichte – ungeprüft
 
 ## Quellenübersicht
 
@@ -457,7 +758,12 @@ REST-Interface – eine explizite Bestätigung dafür liegt aber nicht vor.
 - https://docs.evcc.io/en/meters/ecoflow-powerocean-modbus
 - https://www.photovoltaikforum.com/thread/247994-ecoflow-powerocean-modbus-protokoll/
 - https://www.photovoltaikforum.com/thread/218848-erfahrungen-mit-system-ecoflow-powerocean/?pageNo=17
-- https://github.com/shuette42/ecoflow-energy-ha
+- https://github.com/shuette42/ecoflow-energy-ha (Enhanced Mode: AES-Certification,
+  Client-ID-Bau, Keepalive-Intervalle)
+- https://github.com/tolwi/hassio-ecoflow-cloud (`app/certification`, Client-ID-Form)
+- https://github.com/jensfr1/ha-ecoflow-ocean2 (Weckruf-Intervall mit Begründung)
+- https://github.com/foxthefox/ioBroker.ecoflow-mqtt (Gerätetyp `poweroceanfit`:
+  abweichende Protobuf-Feldnummern für den DC Fit)
 - https://github.com/evcc-io/evcc – `templates/definition/meter/ecoflow-powerocean-modbus.yaml`
 - https://github.com/openhab/openhab-addons – `bundles/org.openhab.binding.ecoflow`
 - https://developer.ecoflow.com/us/document/introduction

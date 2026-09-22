@@ -14,10 +14,11 @@
 #                        use https://api-a.ecoflow.com for US accounts
 #   ECOFLOW_PORTAL_TOKEN session token of the consumer web portal, for the
 #                        "portal" commands only - see usage()
+#   ECOFLOW_USER_ID      numeric account id, for "app-cert", "app-mqtt" and "live"
 #
 # Requires: bash, curl, openssl. jq is used for pretty-printing when present and
-# is mandatory for the mqtt and request commands; mqtt needs mosquitto_sub, request
-# needs mosquitto_pub as well.
+# is mandatory for the mqtt, request, app-mqtt and live commands; the mqtt and
+# app-mqtt commands need mosquitto_sub, request and live need mosquitto_pub too.
 
 set -euo pipefail
 
@@ -68,6 +69,28 @@ commands:
   status <SN>          the same data as one readable overview instead of the
                        raw JSON. Needs jq.
   portal-get <path>    any other GET against the portal API
+  app-cert             fetch the MQTT credentials of the consumer app channel
+                       GET /iot-auth/app/certification?userId=<ECOFLOW_USER_ID>
+                       Uses the portal token, not the API keys. Needs jq.
+  app-mqtt <SN> [suffix]
+                       subscribe to one of the app's own topics under
+                       /app/<userId>/<SN>/thing/property/; suffix defaults to
+                       "set", the topic this script never publishes to - so
+                       operating the phone app while this runs shows what it
+                       actually sends. Subscribing only. Runs until Ctrl-C.
+                       Needs jq and mosquitto_sub.
+  live <SN>            watch the consumer app's MQTT channel and keep it awake:
+                       subscribe to the device's push, reply and status topics
+                       and publish a wake-up call every ECOFLOW_LIVE_INTERVAL
+                       seconds, because the device stops pushing when nothing
+                       asks. Payloads are printed as hex, with the text spelled
+                       out when they are readable. Runs until Ctrl-C.
+                       Needs jq, mosquitto_sub and mosquitto_pub.
+  fast <SN>            like "live", but also switches on the device's fast
+                       stream: roughly every three seconds instead of once a
+                       minute. This is the one command that publishes to a
+                       .../set topic - see the note below before using it.
+                       Needs jq, mosquitto_sub and mosquitto_pub.
   selftest             check the signature assembly, no keys and no network
   help                 show this message
 
@@ -83,6 +106,20 @@ environment:
                        (PowerOcean). It is the productKey the portal itself puts
                        in its URL; without a matching value the endpoint answers
                        with no data at all.
+  ECOFLOW_USER_ID      numeric account id, required for "app-cert", "app-mqtt"
+                       and "live".
+                       "login" prints it ready to export; in the browser it is
+                       the userId the portal sends with its own requests.
+  ECOFLOW_LIVE_INTERVAL
+                       seconds between the wake-up calls of "live", default 30.
+                       Other integrations use 20 to 60; below that the device
+                       gains nothing and the broker sees more traffic.
+  ECOFLOW_FAST_INTERVAL
+                       seconds between the stream switches of "fast", default 3,
+                       which is the rate the phone app uses. The fast stream
+                       lapses if it is renewed much slower: at 10 seconds the
+                       device fell back to one report a minute. Each switch
+                       opens its own connection, so this is not free.
   ECOFLOW_PORTAL_TOKEN required for the portal commands. It is the session token
                        of https://user-portal.ecoflow.com, not an API key: open
                        the portal while logged in, then read the S1_JWT entry
@@ -111,6 +148,9 @@ examples:
   ecoflow-api.sh request HC31XXXXXXXXXXXX bpSoc bpPwr
   ECOFLOW_PORTAL_TOKEN=... ecoflow-api.sh portal HC31XXXXXXXXXXXX
   ECOFLOW_PORTAL_TOKEN=... ecoflow-api.sh status HC31XXXXXXXXXXXX
+  ECOFLOW_USER_ID=... ecoflow-api.sh app-cert
+  ECOFLOW_USER_ID=... ecoflow-api.sh live HC31XXXXXXXXXXXX
+  ECOFLOW_USER_ID=... ecoflow-api.sh app-mqtt HC31XXXXXXXXXXXX set
 
 note on "login":
   This is the consumer app's login endpoint, not a documented API. It takes the
@@ -124,10 +164,23 @@ note:
   quotas is a POST. It is still a read: this script never touches the PUT
   endpoint that would set values on the device.
 
-  "request" is the only command that publishes, and it can only publish to the
-  .../get topic: the suffix is hard-wired, there is no free topic argument, so
-  the .../set topic that would change the device stays unreachable from here.
-  Everything else only ever subscribes.
+  Three commands publish; everything else only ever subscribes. "request" and
+  "live" publish to a .../get topic, which is a read request, and the suffix is
+  hard-wired so no other topic can be reached through them.
+
+  "fast" is the exception and the only one that publishes to .../set. What it
+  sends is not built from guesswork: the message was captured off the wire by
+  subscribing to that topic while operating the phone app, and this script
+  reproduces those bytes exactly, varying only the sequence number. It carries
+  no parameters, and it is a separate command so that the write never happens
+  as a side effect of asking for values - "live" stays free of it.
+
+  Even so: .../set is the topic through which the device can be changed. An
+  earlier attempt to assemble this message from third-party notes came out
+  wrong in four places, which is why it was measured instead.
+
+  "app-mqtt" subscribes to .../set by default, which is the opposite of writing
+  to it: it shows what the phone app sends there.
 
   The MQTT password is passed to the mosquitto clients on the command line, so
   it is briefly visible to other users of this machine via the process list.
@@ -249,7 +302,7 @@ api_post() {
 		[ -n "$line" ] && flat+=("$line")
 	done < <(flatten_json "$body" | LC_ALL=C sort)
 
-	str="$(sign_string "$access_key" "$nonce" "$timestamp" "${flat[@]}")"
+	str="$(sign_string "$access_key" "$nonce" "$timestamp" ${flat[@]+"${flat[@]}"})"
 	sign="$(hmac_sha256 "$secret_key" "$str")"
 
 	if [ "$VERBOSE" -eq 1 ]; then
@@ -377,24 +430,43 @@ portal_login() {
 	user_id="$(printf '%s' "$body" | jq -r '.data.user.userId // empty')"
 	[ -n "$token" ] || die 'no token in the login response'
 
+	# The user id goes to stderr like everything else, because stdout carries the
+	# token and nothing else - but "live" needs it, so print it ready to paste.
 	printf 'logged in as user %s\n' "$user_id" >&2
+	[ -n "$user_id" ] &&
+		printf 'for the "live" command: export ECOFLOW_USER_ID=%s\n' "$user_id" >&2
+
 	printf '%s\n' "$token"
 }
 
-# portal_fetch URL AUTHORIZATION -> body, then the HTTP status on the last line
+# portal_fetch URL AUTHORIZATION [HEADER ...] -> body, then the HTTP status on
+# the last line
 #
 # The portal sends a product-type header alongside the token, and the endpoint
 # answers with an empty body without it - code 0, no data, which looks like an
 # empty account rather than a missing header. The browser also sends signature
 # headers (x-appid, x-nonce, x-sign, x-timestamp); leaving them out changes
 # nothing about the answer, so they are not sent here.
+#
+# Further headers can be appended: the app's certification endpoint lives on the
+# same host and takes the same token, but expects a language header as well.
 portal_fetch() {
-	curl -sS -w '\n%{http_code}' "$1" \
-		-H "Authorization: $2" \
-		-H "product-type: ${ECOFLOW_PRODUCT_TYPE:-85}"
+	local url="$1" auth="$2"
+	shift 2
+
+	local -a extra=()
+	local h
+	for h in "$@"; do
+		extra+=(-H "$h")
+	done
+
+	curl -sS -w '\n%{http_code}' "$url" \
+		-H "Authorization: $auth" \
+		-H "product-type: ${ECOFLOW_PRODUCT_TYPE:-85}" \
+		${extra[@]+"${extra[@]}"}
 }
 
-# portal_get PATH [QUERY] -> raw response body on stdout
+# portal_get PATH [QUERY] [HEADER ...] -> raw response body on stdout
 #
 # The consumer web portal authenticates with a session token rather than the
 # signed API keys, and its endpoints answer for devices the Developer API blocks.
@@ -402,13 +474,15 @@ portal_fetch() {
 # deployments, so try it as given and retry prefixed on 401/403.
 portal_get() {
 	local path="$1" query="${2:-}"
+	# Drop path and query, leaving any extra headers in "$@".
+	shift $(($# > 2 ? 2 : $#))
 	local token="${ECOFLOW_PORTAL_TOKEN:-}"
 	[ -n "$token" ] || die 'ECOFLOW_PORTAL_TOKEN is not set (see --help)'
 
 	local url="${HOST}${path}${query}"
 	local body status
 
-	body="$(portal_fetch "$url" "$token")" || die 'request failed' 3
+	body="$(portal_fetch "$url" "$token" "$@")" || die 'request failed' 3
 	status="${body##*$'\n'}"
 	body="${body%$'\n'*}"
 
@@ -417,7 +491,7 @@ portal_get() {
 		Bearer\ *) ;;
 		*)
 			[ "$VERBOSE" -eq 1 ] && printf 'retrying with a Bearer prefix\n' >&2
-			body="$(portal_fetch "$url" "Bearer $token")" || die 'request failed' 3
+			body="$(portal_fetch "$url" "Bearer $token" "$@")" || die 'request failed' 3
 			status="${body##*$'\n'}"
 			body="${body%$'\n'*}"
 			;;
@@ -534,8 +608,14 @@ mqtt_credentials() {
 	[ -n "$MQTT_ACCOUNT" ] && [ "$MQTT_ACCOUNT" != 'null' ] ||
 		die 'no MQTT credentials in response'
 
-	# TLS trust store: newer mosquitto knows the OS store, older builds need an
-	# explicit file or directory.
+	mqtt_tls_opts
+}
+
+# mqtt_tls_opts - fill the MQTT_TLS array with the right trust store options
+#
+# Newer mosquitto knows the OS store, older builds need an explicit file or
+# directory. Both MQTT channels need this, so it lives on its own.
+mqtt_tls_opts() {
 	MQTT_TLS=()
 	if mosquitto_sub --help 2>&1 | grep -q -- '--tls-use-os-certs'; then
 		MQTT_TLS=(--tls-use-os-certs)
@@ -546,6 +626,43 @@ mqtt_credentials() {
 	else
 		die 'no CA trust store found for TLS'
 	fi
+}
+
+# app_credentials - fetch the MQTT credentials of the consumer app channel
+#
+# Same globals as mqtt_credentials, but a different door: this endpoint
+# authenticates with the portal session token instead of the signed API keys,
+# and it answers for devices the Developer API blocks with 1006. Unlike the
+# Open API's channel, data is actually published on this one.
+#
+# The portal's own variant of this endpoint
+# (/iot-auth/enterprise-development/user/certification) returns the same fields
+# AES-encrypted and needs no userId; it is described in api-status.md but not
+# implemented here, because this one answers in plain JSON.
+app_credentials() {
+	local user_id="${ECOFLOW_USER_ID:-}"
+	[ -n "$user_id" ] || die 'ECOFLOW_USER_ID is not set - "login" prints it (see --help)'
+	case "$user_id" in
+	*[!0-9]*) die "user id must be numeric: $user_id" ;;
+	esac
+
+	local body code
+	body="$(portal_get /iot-auth/app/certification "?userId=${user_id}" 'lang: en_US')" || exit $?
+	code="$(response_code "$body")"
+	if [ "$code" != '0' ]; then
+		printf '%s' "$body" | jq . >&2 || printf '%s\n' "$body" >&2
+		report_code "$code"
+		exit $?
+	fi
+
+	MQTT_ACCOUNT="$(printf '%s' "$body" | jq -r '.data.certificateAccount // empty')"
+	MQTT_PASSWORD="$(printf '%s' "$body" | jq -r '.data.certificatePassword // empty')"
+	MQTT_URL="$(printf '%s' "$body" | jq -r '.data.url // empty')"
+	MQTT_PORT="$(printf '%s' "$body" | jq -r '.data.port // empty')"
+
+	[ -n "$MQTT_ACCOUNT" ] || die 'no MQTT credentials in response'
+
+	mqtt_tls_opts
 }
 
 # mqtt_subscribe SN [SUFFIX] - subscribe to the device topic, read-only
@@ -572,7 +689,7 @@ mqtt_subscribe() {
 	# it was quiet.
 	printf 'subscribing to %s (Ctrl-C to stop)\n' "$topic" >&2
 	mosquitto_sub -h "$MQTT_URL" -p "$MQTT_PORT" -u "$MQTT_ACCOUNT" -P "$MQTT_PASSWORD" \
-		"${MQTT_TLS[@]}" "${debug[@]}" -t "$topic" -F '%I %t %p'
+		"${MQTT_TLS[@]}" ${debug[@]+"${debug[@]}"} -t "$topic" -F '%I %t %p'
 }
 
 # mqtt_request SN QUOTA... - ask the device over MQTT and wait for the reply
@@ -634,6 +751,296 @@ mqtt_request() {
 
 	wait "$sub_pid" || true
 	printf 'done waiting; no output above means the device did not answer\n' >&2
+}
+
+# hex_lines - pass frames through, adding a decoded line when they are text
+#
+# The payload arrives as hex: that is lossless, and it keeps binary protobuf
+# frames from tearing up the terminal. Some topics answer in JSON though, so a
+# payload that is entirely printable gets a second, indented line with the text.
+# Raw first, reading second - the same rule modbusread follows for its words.
+hex_lines() {
+	awk '
+	BEGIN {
+		for (i = 0; i < 16; i++) {
+			d = sprintf("%x", i)
+			H[d] = i
+			H[toupper(d)] = i
+		}
+	}
+	{
+		print
+		fflush()
+		if (NF < 4) next
+		hex = $NF
+		if (length(hex) == 0 || length(hex) % 2 != 0) next
+		text = ""
+		ok = 1
+		for (i = 1; i < length(hex); i += 2) {
+			c = H[substr(hex, i, 1)] * 16 + H[substr(hex, i + 1, 1)]
+			if (c < 32 || c > 126) {
+				ok = 0
+				break
+			}
+			text = text sprintf("%c", c)
+		}
+		if (ok) {
+			print "    text: " text
+			fflush()
+		}
+	}'
+}
+
+# mqtt_live SN - watch the consumer app's MQTT channel and keep it awake
+#
+# This is the answer to a measured problem: the portal REST endpoint hands out
+# the last state the device pushed into the cloud, not a fresh reading. With no
+# client asking, the device stops pushing and "status" keeps reporting the same
+# measured timestamp for hours. Several third-party integrations work around
+# this by publishing a wake-up call every 20 to 60 seconds; that is what the
+# loop below does.
+#
+# This publishes, which only "request" did before, and like there the topic is
+# hard-wired to .../get - a read request. The .../set topic, which the app uses
+# to switch on its fast stream, stays unreachable from this script.
+#
+# The payloads are unverified transcriptions from other projects' reverse
+# engineering, so the output stays deliberately raw: this is a measuring tool
+# first. See api-status.md for what is established and what is not.
+mqtt_live() {
+	local sn="$1" mode="${2:-}"
+
+	command -v jq >/dev/null 2>&1 || die 'live needs jq'
+	command -v mosquitto_sub >/dev/null 2>&1 ||
+		die 'live needs mosquitto_sub (brew install mosquitto, apt install mosquitto-clients)'
+	command -v mosquitto_pub >/dev/null 2>&1 || die 'live needs mosquitto_pub'
+
+	local interval="${ECOFLOW_LIVE_INTERVAL:-30}"
+	case "$interval" in
+	'' | *[!0-9]*) die "ECOFLOW_LIVE_INTERVAL must be a number of seconds: $interval" ;;
+	esac
+
+	app_credentials
+	local user_id="$ECOFLOW_USER_ID"
+
+	local push_topic="/app/device/property/${sn}"
+	local reply_topic="/app/${user_id}/${sn}/thing/property/get_reply"
+	local state_topic="/app/device/status/${sn}"
+	local get_topic="/app/${user_id}/${sn}/thing/property/get"
+	local set_topic="/app/${user_id}/${sn}/thing/property/set"
+
+	local -a debug=()
+	local quiet=/dev/null
+	if [ "$VERBOSE" -eq 1 ]; then
+		debug=(-d)
+		# Let the wake-up calls report their own handshake instead of being
+		# silenced: whether they reach the broker is the whole question here.
+		quiet=/dev/stderr
+		{
+			printf 'subscribe: %s\n' "$push_topic"
+			printf 'subscribe: %s\n' "$reply_topic"
+			printf 'subscribe: %s\n' "$state_topic"
+			printf 'publish:   %s every %ss\n' "$get_topic" "$interval"
+			printf 'payload:   %s\n' "$(wake_payload)"
+			printf 'broker:    %s:%s as %s with <password>\n' \
+				"$MQTT_URL" "$MQTT_PORT" "$MQTT_ACCOUNT"
+		} >&2
+	fi
+
+	# The wake-up calls run in the background while the subscription holds the
+	# foreground. The first one waits for the subscription to be established,
+	# the same two-step "request" uses.
+	#
+	# Every connection gets a fresh client id: the broker rejects ids that do
+	# not look like the app's own, and it refuses to reuse one it has already
+	# seen. Hence a random one per publish rather than a single shared id.
+	(
+		sleep 3
+		while :; do
+			mosquitto_pub -h "$MQTT_URL" -p "$MQTT_PORT" \
+				-u "$MQTT_ACCOUNT" -P "$MQTT_PASSWORD" "${MQTT_TLS[@]}" \
+				${debug[@]+"${debug[@]}"} \
+				-i "$(app_client_id "$user_id")" \
+				-t "$get_topic" -m "$(wake_payload)" >"$quiet" 2>&1 ||
+				printf 'wake-up call failed, retrying in %ss\n' "$interval" >&2
+			sleep "$interval"
+		done
+	) &
+	local pub_pid=$!
+
+	# The fast stream, and the only place in this script that publishes to a
+	# .../set topic. It sends exactly one message - the EnergyStreamSwitch as it
+	# was captured off the wire, nothing parameterised and nothing assembled
+	# from someone's notes - and only when "fast" was typed on the command line.
+	local switch_pid=''
+	if [ "$mode" = 'fast' ]; then
+		(
+			sleep 2
+			local seq=1
+			while :; do
+				# MQTT v5 at QoS 1 on purpose: only there does the PUBACK carry
+			# a reason code, which separates "the broker refused to forward
+			# this" from "the device ignored it". The same measurement the
+			# "request" command relies on, and the only way to tell whether a
+			# stream that stays slow is a rejected message or an ineffective
+			# one.
+			stream_switch_frame "$sn" "$seq" |
+					mosquitto_pub -h "$MQTT_URL" -p "$MQTT_PORT" \
+						-u "$MQTT_ACCOUNT" -P "$MQTT_PASSWORD" "${MQTT_TLS[@]}" \
+						${debug[@]+"${debug[@]}"} \
+						-i "$(app_client_id "$user_id")" \
+						-t "$set_topic" -s -V 5 -q 1 >"$quiet" 2>&1 ||
+					printf 'stream switch was not accepted\n' >&2
+				# The app repeats this every few seconds and the stream stops
+				# again when nothing renews it. The counter wraps at 127 so the
+				# sequence stays a single-byte varint, as the app's own does.
+				seq=$((seq % 127 + 1))
+				sleep "${ECOFLOW_FAST_INTERVAL:-3}"
+			done
+		) &
+		switch_pid=$!
+	fi
+
+	# The only trap in this file, and it earns its place: everything else either
+	# runs in the foreground or ends itself on a timeout, but this loop would
+	# outlive the Ctrl-C that stops the subscription. Its sleeping child is
+	# taken down as well, so nothing is left running in the background.
+	#
+	# Ctrl-C is the way to stop this: the terminal signals the whole process
+	# group, so the subscription ends at once and this trap runs right after. A
+	# signal sent to this process alone waits for the subscription to finish
+	# first, because bash defers traps until the foreground command returns.
+	trap 'for p in "$pub_pid" $switch_pid; do
+		pkill -P "$p" 2>/dev/null || true
+		kill "$p" 2>/dev/null || true
+	done' INT TERM EXIT
+
+	printf 'subscribing to %s, %s and %s (Ctrl-C to stop)\n' \
+		"$push_topic" "$reply_topic" "$state_topic" >&2
+	mosquitto_sub -h "$MQTT_URL" -p "$MQTT_PORT" -u "$MQTT_ACCOUNT" -P "$MQTT_PASSWORD" \
+		"${MQTT_TLS[@]}" ${debug[@]+"${debug[@]}"} -i "$(app_client_id "$user_id")" \
+		-t "$push_topic" -t "$reply_topic" -t "$state_topic" \
+		-F '%I %t %l %x' | hex_lines
+}
+
+# app_watch SN [SUFFIX] - subscribe to one of the app's own device topics
+#
+# The point is to watch what the app does rather than guess it. The interesting
+# one is "set": that is where the app publishes the commands this script will
+# not send, so subscribing to it while operating the app on the phone captures
+# the real bytes. Hence the default.
+#
+# Subscribing only - this adds no write path.
+app_watch() {
+	local sn="$1" suffix="${2:-set}"
+
+	command -v jq >/dev/null 2>&1 || die 'app-mqtt needs jq'
+	command -v mosquitto_sub >/dev/null 2>&1 ||
+		die 'app-mqtt needs mosquitto_sub (brew install mosquitto, apt install mosquitto-clients)'
+
+	app_credentials
+	local topic="/app/${ECOFLOW_USER_ID}/${sn}/thing/property/${suffix}"
+
+	local -a debug=()
+	if [ "$VERBOSE" -eq 1 ]; then
+		debug=(-d)
+		printf 'mosquitto_sub -h %s -p %s -u %s -P <password> -t %s\n' \
+			"$MQTT_URL" "$MQTT_PORT" "$MQTT_ACCOUNT" "$topic" >&2
+	fi
+
+	printf 'subscribing to %s (Ctrl-C to stop)\n' "$topic" >&2
+	mosquitto_sub -h "$MQTT_URL" -p "$MQTT_PORT" -u "$MQTT_ACCOUNT" -P "$MQTT_PASSWORD" \
+		"${MQTT_TLS[@]}" ${debug[@]+"${debug[@]}"} -i "$(app_client_id "$ECOFLOW_USER_ID")" \
+		-t "$topic" -F '%I %t %l %x' | hex_lines
+}
+
+# wake_payload - the request that keeps the device talking
+#
+# Transcribed from other projects' captures, not from EcoFlow documentation. A
+# fresh id per call, because that is what the app sends and a repeated one may
+# well be discarded as a duplicate.
+wake_payload() {
+	jq -cn --arg id "$(date +%s)000" \
+		'{from: "Android", id: $id, moduleType: 0,
+		  operateType: "latestQuotas", params: {}, version: "1.0"}'
+}
+
+# hex_to_bytes HEX - write the raw bytes of a hex string to stdout
+#
+# Pure bash on purpose: xxd is not everywhere, and this runs a handful of times.
+hex_to_bytes() {
+	local hex="$1" i
+	for ((i = 0; i < ${#hex}; i += 2)); do
+		printf '\x'"${hex:i:2}"
+	done
+}
+
+# stream_switch_frame SN SEQ - the message that turns on the fast stream
+#
+# Not derived from anyone's notes: captured off the wire on 22 September 2026 by
+# subscribing to .../set while operating the phone app (see "app-mqtt"). The
+# app repeats it every few seconds, and the device answers with an energy
+# stream every three seconds instead of every minute.
+#
+# Byte for byte, as measured:
+#
+#   field 1  pdata      08 01 10 01   two flags, both 1 - plain, not obfuscated
+#   field 2  src        32            the app
+#   field 3  dest       96            the energy management unit
+#   field 4  dSrc       1
+#   field 5  dDest      1
+#   field 7  (unknown)  3
+#   field 8  cmd_func   96
+#   field 9  cmd_id     97
+#   field 10 dataLen    4
+#   field 11 needAck    1
+#   field 14 seq        small counter, 1 upwards
+#   field 16 version    3
+#   field 17 payloadVer 1
+#   field 23 from       "ios" - what the captured app called itself
+#   field 25 sn         the serial number as ASCII
+#
+# Only the sequence number and the serial number vary, so the rest is a
+# constant. Guarding the two lengths keeps them single-byte varints, which is
+# what makes that possible.
+stream_switch_frame() {
+	local sn="$1" seq="$2"
+
+	[ "$seq" -ge 1 ] && [ "$seq" -le 127 ] || die "sequence out of range: $seq"
+
+	local sn_hex
+	sn_hex="$(printf '%s' "$sn" | od -An -tx1 | tr -d ' \n')"
+	local sn_len=$((${#sn_hex} / 2))
+	[ "$sn_len" -ge 1 ] && [ "$sn_len" -le 60 ] || die "serial number has an odd length: $sn"
+
+	local inner=''
+	inner+='0a0408011001' # 1  pdata = 08 01 10 01
+	inner+='1020'         # 2  src        32
+	inner+='1860'         # 3  dest       96
+	inner+='2001'         # 4  dSrc        1
+	inner+='2801'         # 5  dDest       1
+	inner+='3803'         # 7  unknown     3
+	inner+='4060'         # 8  cmd_func   96
+	inner+='4861'         # 9  cmd_id     97
+	inner+='5004'         # 10 dataLen     4
+	inner+='5801'         # 11 needAck     1
+	inner+="70$(printf '%02x' "$seq")" # 14 seq
+	inner+='800103'       # 16 version     3
+	inner+='880101'       # 17 payloadVer  1
+	inner+='ba0103696f73' # 23 from     "ios"
+	inner+="ca01$(printf '%02x' "$sn_len")${sn_hex}" # 25 sn
+
+	hex_to_bytes "$(printf '0a%02x%s' "$((${#inner} / 2))" "$inner")"
+}
+
+# app_client_id USERID - a client id the app's broker accepts
+#
+# Observed by others: ids that do not carry the app's prefix and the account's
+# user id are refused, and an id that has already connected is refused again
+# after a disconnect. So build a fresh random one each time. openssl is a
+# requirement of this script anyway; uuidgen would be a new one.
+app_client_id() {
+	printf 'ANDROID_%s_%s' "$(openssl rand -hex 16 | tr 'a-f' 'A-F')" "$1"
 }
 
 # Check the signature implementation against the official test vector from
@@ -786,6 +1193,35 @@ main() {
 		esac
 		body="$(portal_get "$1")" || exit $?
 		show_and_judge "$body"
+		;;
+	app-mqtt)
+		[ "$#" -ge 1 ] && [ "$#" -le 2 ] || die 'usage: ecoflow-api.sh app-mqtt <SN> [suffix]'
+		case "$1" in
+		*[!A-Za-z0-9_-]*) die "serial number looks wrong: $1" ;;
+		esac
+		app_watch "$@"
+		;;
+	app-cert)
+		[ "$#" -eq 0 ] || die 'app-cert takes no arguments'
+		[ -n "${ECOFLOW_USER_ID:-}" ] ||
+			die 'ECOFLOW_USER_ID is not set - "login" prints it (see --help)'
+		body="$(portal_get /iot-auth/app/certification \
+			"?userId=${ECOFLOW_USER_ID}" 'lang: en_US')" || exit $?
+		show_and_judge "$body"
+		;;
+	live)
+		[ "$#" -eq 1 ] || die 'usage: ecoflow-api.sh live <SN>'
+		case "$1" in
+		*[!A-Za-z0-9_-]*) die "serial number looks wrong: $1" ;;
+		esac
+		mqtt_live "$1"
+		;;
+	fast)
+		[ "$#" -eq 1 ] || die 'usage: ecoflow-api.sh fast <SN>'
+		case "$1" in
+		*[!A-Za-z0-9_-]*) die "serial number looks wrong: $1" ;;
+		esac
+		mqtt_live "$1" fast
 		;;
 	selftest)
 		selftest

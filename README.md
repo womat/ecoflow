@@ -16,6 +16,7 @@ Modbus TCP) für den EcoFlow PowerOcean DC Fit.
 | [`modbus-registers.md`](./modbus-registers.md)       | Register-Map (SOC, Batterie, PV, Netz, Energiezähler, Steuerregister) inkl. Decoding-Beispielen       |
 | [`cmd/modbusread`](./cmd/modbusread)                 | Kleines Go-CLI zum Nachmessen der Register am Gerät (s.u.)                                            |
 | [`scripts/ecoflow-api.sh`](./scripts/ecoflow-api.sh) | Shell-Skript für signierte Leseaufrufe gegen die EcoFlow Cloud-API (s.u.)                             |
+| [`scripts/ecoflow-frames.py`](./scripts/ecoflow-frames.py) | Packt die Live-Frames aus `ecoflow-api.sh live` aus – der Weg zu aktuellen Messwerten (s.u.)    |
 
 ## `modbusread`
 
@@ -146,6 +147,10 @@ export ECOFLOW_PORTAL_TOKEN="$(scripts/ecoflow-api.sh login)"   # Token per Logi
 scripts/ecoflow-api.sh portal <SN>                # Endkunden-Portal statt Developer-API
 scripts/ecoflow-api.sh status <SN>                # dieselben Daten als Kurzübersicht
 scripts/ecoflow-api.sh portal-get <pfad>          # beliebiger GET gegen die Portal-API
+scripts/ecoflow-api.sh app-cert                   # MQTT-Zugangsdaten des App-Kanals
+scripts/ecoflow-api.sh live <SN>                  # App-Kanal abonnieren und wachhalten
+scripts/ecoflow-api.sh fast <SN>                  # dasselbe mit schnellem Takt (schreibt!)
+scripts/ecoflow-api.sh app-mqtt <SN>              # mitlesen, was die App ans Geraet sendet
 scripts/ecoflow-api.sh selftest                   # Signatur gegen EcoFlows Testvektor
 ```
 
@@ -188,6 +193,11 @@ battery  : 599 W (charging)
 yield    : today 1.90 | month 282.67 | year 4548.79 | total 5236.71 kWh
 measured : 2026-09-17T08:39:26Z
 ```
+
+`measured` ist der Zeitstempel aus dem Energy-Stream-Block der Firmware – der
+**Messzeitpunkt, nicht der Abrufzeitpunkt**. Steht er bei mehreren Aufrufen still, ist die
+Anzeige ein Standbild: Der Endpunkt gibt heraus, was zuletzt in die Cloud gepusht wurde,
+und gepusht wird nur, solange ein Client nachfragt. Genau dafür gibt es `live`.
 
 Die vorangestellte Zuweisung **ohne `export`** gilt nur für dieses eine Kommando: Danach
 kennt die Shell die Variable nicht, der Token steht in keiner weiteren Prozessumgebung, und
@@ -236,10 +246,124 @@ Zur Abwägung: `login` benutzt den Login-Endpunkt der Endkunden-App, der das Pas
 geschützt ist allein der TLS-Kanal. Der Browser-Token ist das kleinere Geheimnis und läuft
 von selbst ab; das Passwort ist der bequemere Weg. Beides sind inoffizielle Schnittstellen.
 
-`request` ist das **einzige** Kommando, das publiziert: Es abonniert `.../get_reply`,
+### Den Kanal wachhalten: `live`
+
+`status` liefert nur dann frische Zahlen, wenn das Gerät kurz zuvor etwas in die Cloud
+geschoben hat – und das tut es offenbar nur, solange jemand nachfragt. Ohne offene App
+bleibt `measured` stehen, teils stundenlang. `live` übernimmt die Rolle der App:
+
+```bash
+export ECOFLOW_PORTAL_TOKEN="$(scripts/ecoflow-api.sh login)"
+export ECOFLOW_USER_ID=19701254481420        # gibt "login" fertig zum Exportieren aus
+scripts/ecoflow-api.sh live HC31XXXXXXXXXXXX
+```
+
+Es holt sich über `app-cert` die Zugangsdaten des App-MQTT-Kanals, abonniert die drei
+Topics des Geräts und schickt alle `ECOFLOW_LIVE_INTERVAL` Sekunden (Default 30) eine
+Anfrage hinterher, damit der Strom nicht versiegt. Läuft bis Ctrl-C. Braucht `jq`,
+`mosquitto_sub` und `mosquitto_pub`.
+
+Die Ausgabe von `live` ist **roh** – Zeitstempel, Topic, Länge und Nutzlast als Hex, weil
+der Push Protobuf ist und nicht JSON:
+
+```console
+2026-09-22T10:18:05+0200 /app/device/property/HC31... 74 0a480a26f6ddf1e70b98...
+```
+
+### Aktuelle Messwerte: `ecoflow-frames.py`
+
+Zum Lesen gibt es `scripts/ecoflow-frames.py`, das die Frames auspackt. Es braucht nur
+`python3`, keine weiteren Pakete:
+
+```console
+$ scripts/ecoflow-api.sh live HC31XXXXXXXXXXXX | python3 scripts/ecoflow-frames.py
+08:18:00Z  PV     969 W | house    352 W | battery    530 W (charging) | grid     87 W (export) | SoC 60 %
+08:19:00Z  PV     976 W | house    349 W | battery    540 W (charging) | grid     87 W (export) | SoC 61 %
+```
+
+Das ist der Weg zu aktuellen Werten – **nicht** `status`. Am Gerät gemessen (22. September
+2026): Während `live` lief und Frames mit `08:19Z` ankamen, meldete `status` unverändert
+`measured : 07:13:28Z`. Der Cloud-Umweg wird also auch von einem laufenden Zuhörer nicht
+aufgefrischt.
+
+Der Zeitstempel links ist der des Geräts (UTC). Das Gerät schickt manche Frames doppelt;
+identische Folgezeilen werden unterdrückt, zwei verschiedene Werte in derselben Sekunde
+dagegen nicht — die kommen vor. Wie die Frames aufgebaut sind, warum die Nutzlast
+XOR-verschleiert ist und woran die Feldzuordnung hängt, steht in `api-status.md`.
+
+### Schneller Takt: `fast`
+
+Statt minütlich alle paar Sekunden – dafür gibt es `fast` anstelle von `live`:
+
+```bash
+scripts/ecoflow-api.sh fast HC31XXXXXXXXXXXX | python3 scripts/ecoflow-frames.py
+```
+
+Es tut alles, was `live` tut, und schaltet zusätzlich den schnellen Datenstrom ein.
+
+**Das ist das einzige Kommando im Skript, das auf ein `.../set`-Topic schreibt** – also
+auf den Weg, über den sich das Gerät auch verstellen ließe. Deshalb ist es ein eigenes
+Kommando: Der Schreibzugriff passiert nie nebenbei, sondern nur, wenn man `fast` tippt.
+
+Was dabei gesendet wird, ist **nicht geraten**. Der Befehl wurde mitgelesen, indem das
+`set`-Topic abonniert und dabei die Handy-App bedient wurde (`app-mqtt`, s.u.); das Skript
+gibt diese Bytes unverändert wieder und ändert nur die laufende Nummer. Er trägt keine
+Parameter. Ein früherer Versuch, ihn aus Fremdquellen zusammenzusetzen, lag an vier
+Stellen daneben — siehe `api-status.md`.
+
+```console
+09:13:19Z  PV     970 W | house    415 W | battery    482 W (charging) | grid     72 W (export) | SoC 63 %
+09:13:20Z  PV     963 W | house    403 W | battery    476 W (charging) | grid     83 W (export) | SoC 63 %
+09:13:22Z  PV     967 W | house    403 W | battery    472 W (charging) | grid     92 W (export) | SoC 63 %
+```
+
+Gemessen: 62 Werte in 55 Sekunden statt zwei. Der Zeitstempel ist hier **sekundengenau**,
+beim Minutenbericht ist er auf die Minute gerundet.
+
+Solange der schnelle Strom läuft, wird der Minutenbericht **nicht** mit angezeigt: Er
+trägt denselben Zeitstempel wie ein Sekundenbericht, den es ohnehin gab, und sähe mit
+seiner gerundeten Uhrzeit wie ein Stillstand aus. Versiegt der schnelle Strom, erscheint
+er wieder.
+
+`ECOFLOW_FAST_INTERVAL` setzt die Wiederholrate, Default 3 Sekunden — der Rhythmus der
+App. **Länger ist nicht sparsamer, sondern wirkungslos:** Bei 10 Sekunden fiel das Gerät
+auf den Minutentakt zurück. Der Schalter hält nur wenige Sekunden vor.
+
+Dafür kostet es: Für jeden Schalter startet ein eigener `mosquitto_pub`, also alle drei
+Sekunden ein Verbindungsaufbau. Für eine Messung in Ordnung, für Dauerbetrieb nicht schön.
+
+### Mitlesen, was die App sendet: `app-mqtt`
+
+```bash
+scripts/ecoflow-api.sh app-mqtt HC31XXXXXXXXXXXX        # Default-Topic: set
+```
+
+Abonniert eines der App-Topics unter `/app/<userId>/<SN>/thing/property/` und zeigt, was
+dort ankommt. Voreingestellt ist `set` — das Topic, auf das das Skript sonst nichts
+schreibt. Wer die Handy-App bedient, während das läuft, sieht ihre Befehle im Original.
+Reines Abonnieren, kein Schreibzugriff.
+
+**Vorbehalt:** Die Feldnummern gelten für den **DC Fit**. Beim PowerOcean Plus liegen
+dieselben Größen auf anderen Nummern – dort lieferte das Skript plausible Zahlen an den
+falschen Namen. Belegt ist die Zuordnung hier über die Energiebilanz: In jedem Frame geht
+`PV = Batterie + Haus + Netz` auf zwei Nachkommastellen auf.
+
+**Warum Python und nicht Go:** Das ist eine Zwischenstufe zum Ausprobieren, keine
+Festlegung. Python3 liegt auf Mac und Raspberry Pi ohnehin bereit, und der
+Protobuf-Rahmen lässt sich mit der Standardbibliothek lesen – für acht Felder kostet eine
+Protobuf-Werkzeugkette mehr, als sie bringt. Bewährt sich das Auswerten im Alltag, gehört
+es als Go-Werkzeug ins Repo: dann läuft es in der CI mit, ist ohne Gerät testbar wie
+`internal/decode`, und die Binaries der Releases decken es mit ab.
+
+`request` und `live` sind die **einzigen** Kommandos, die publizieren, und beide nur auf
+ein `get`-Topic. `request` abonniert `.../get_reply`,
 schickt die Anfrage an `.../get` und wartet `ECOFLOW_WAIT` Sekunden (Default 15). Das
 Suffix ist fest verdrahtet – es gibt kein freies Topic-Argument, das `.../set`-Topic ist
 von hier aus also nicht erreichbar. Braucht zusätzlich `mosquitto_pub`.
+
+Die Ausnahme ist `fast` (s.o.): Es publiziert als einziges Kommando auf `.../set`, mit
+einem mitgelesenen, parameterlosen Befehl. Dass es ein eigenes Kommando ist und nicht ein
+Schalter an `live`, ist Absicht – wer Werte abfragt, soll dabei nicht unbemerkt schreiben.
 
 Exit-Code `0` heißt `code 0` von der API, `2` jeder andere Code. **`2` mit Code 1006**
 ist die interessante Antwort: Dann ist das Modell von der Developer-API ausgeschlossen (siehe `api-status.md`) und nur
@@ -269,8 +393,12 @@ eigene EcoFlow-Konto gebunden sein, sonst bleibt die Liste leer.
   „Modbus control"* in der Pro App läuft (Checkliste in `api-status.md`)
 - Welche Werte `product_category`/`product_number` (40002/40003) am DC Fit liefern –
   die Referenz-Integration kennt sie nicht
-- Ob der MQTT-Weg der Open API für den DC Fit Daten liefert oder dieselbe
-  1006-Sperre greift
+- Ob der Weckruf auf `.../get` überhaupt nötig ist oder das Abo allein genügt –
+  gemessen wurde bisher nur mit laufendem Weckruf
+- Was die übrigen Frame-Kennungen tragen (`cmd_id` 1, 108–111, 136); der
+  Energiestrom auf 34 ist ausgewertet, der Rest nicht
+- Ob sich der schnelle ~3-Sekunden-Takt lohnt, den die App über das
+  `.../set`-Topic freischaltet – bewusst nicht ausprobiert (kein Schreibpfad)
 
 ## Arbeiten an diesem Repo
 
