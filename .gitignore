@@ -8,6 +8,11 @@
 *.so
 *.dylib
 
+# The commands, when built into the working directory. They have no extension,
+# so the patterns above miss them, and "go build ./..." drops them right here.
+/modbusread
+/ecoflowd
+
 # Test binary, built with `go test -c`
 *.test
 
