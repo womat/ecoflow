@@ -50,6 +50,13 @@ Fehlermeldungen auf Englisch, weil das Tool universell einsetzbar sein soll.
 - `internal/decode/` – reine Funktionen über `[]uint16` (Typen, Word-/Byte-Order,
   Adress-Parsing). Hier liegt die Logik, die bei Fehlern *falsche Zahlen* statt
   Abstürze liefert – deshalb netzwerkfrei und vollständig testbar gehalten
+- `internal/frames/` – reine Funktionen über `[]byte`: die Protobuf-Frames des
+  App-MQTT-Kanals (Rahmen, XOR-Verschleierung, Energieberichte, Stundenhistorie,
+  Komponentenliste, Bau des Stream-Schalters). Aus demselben Grund netzwerkfrei wie
+  `internal/decode`. **Hier wohnt das EcoFlow-Wissen**, damit `modbusread` universell
+  bleibt. Die Tests laufen gegen anonymisierte Mitschnitte vom echten Gerät in
+  `testdata/`; die `.golden`-Dateien sind die Ausgabe von `scripts/ecoflow-frames.py`
+  über dieselben Mitschnitte und halten beide Fassungen zeilengleich
 - `README.md` – Einstieg, Disclaimer, Kurzüberblick, Quellenliste, offene Punkte
 - `api-status.md` – die *Entscheidungsebene*: Cloud-REST (EcoFlow Developer/Open API,
   HMAC-signiert, liefert für PowerOcean oft Fehler 1006) vs. lokales **Modbus TCP**
