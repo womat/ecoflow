@@ -238,6 +238,36 @@ Das ist **mehr, als Modbus exponiert** (siehe `modbus-registers.md`, „Bekannte
 und `DC303_ENERGY_STREAM_REPORT` trägt einen eigenen Zeitstempel – es taugt also auch zum
 Mitschreiben, nicht nur für einen Momentanwert.
 
+#### Der Zeitstempel steht still, wenn niemand hinsieht
+
+Genau dieser Zeitstempel ist es, den `scripts/ecoflow-api.sh status` als `measured`
+ausgibt – und er ist der **Messzeitpunkt der Firmware, nicht der Abrufzeitpunkt**. Am
+Gerät beobachtet (22. September 2026): Drei `status`-Aufrufe kurz hintereinander lieferten
+dreimal exakt dieselbe Antwort, `measured` blieb auf `2026-09-22T06:18:28Z` stehen, während
+die Anlage nachweislich lief. Nach dem Öffnen der App bzw. des Portals wanderte der Wert
+wieder.
+
+Die Erklärung, die dazu passt: **Der REST-Endpunkt pollt das Gerät nicht.** Er gibt
+heraus, was zuletzt in die Cloud gepusht wurde. Gepusht wird aber offenbar nur, solange
+ein Client aktiv nachfragt – ist keiner da, versiegt der Strom und der Cloud-Stand friert
+ein. Ein `status`-Aufruf sieht dann aus wie ein Live-Wert und ist ein Standbild.
+
+Fremdbelege für denselben Mechanismus bei anderen EcoFlow-Geräten:
+
+- `jensfr1/ha-ecoflow-ocean2` hält dafür ein eigenes Intervall von 60 s vor, mit dem
+  Kommentar „Ohne diesen regelmaessigen Weckruf sendet das Geraet keine Telemetrie,
+  solange keine EcoFlow-App geoeffnet ist."
+- `shuette42/ecoflow-energy-ha` schickt nach jedem Verbindungsaufbau und danach alle
+  20–30 s eine Anfrage nach; für den PowerOcean **Plus** ist dort zusätzlich vermerkt, dass
+  manche Geräte nur direkt nach einem Abo antworten.
+- Die openHAB-Anbindung berichtet dasselbe für den STREAM Micro über die offizielle API:
+  Updates nur bei geöffneter App, sonst alle 13–16 Minuten.
+
+**Einschränkung:** Das ist eine Beobachtung an einem Gerät plus Fremdbelege für andere
+Modelle, keine bewiesene Ursache. Ob die Drosselung im Gerät oder in der Cloud sitzt, ist
+von außen nicht zu unterscheiden. Nachmessbar ist es mit `scripts/ecoflow-api.sh live`
+(siehe unten) in einem Terminal und `status` in einem zweiten.
+
 #### Vorzeichen: gemessen, nicht angenommen
 
 Die Vorzeichen sind **nicht einheitlich**, und die Oberfläche des Portals zeigt ohnehin
@@ -275,12 +305,48 @@ Das Passwort wird dabei nur **base64-kodiert, nicht gehasht** übertragen – Ko
 Verschlüsselung. Wer das nicht will, nimmt den Browser-Token: kleineres Geheimnis, läuft von
 selbst ab. Quelle für den Ablauf: `shuette42/ecoflow-energy-ha`, `enhanced_auth.py`.
 
-Dort steht auch, wofür dieses Token sonst noch taugt: Der Endpunkt
-`/iot-auth/enterprise-development/user/certification` – den das Portal beim Laden selbst
-aufruft – liefert **AES-verschlüsselte MQTT-Zugangsdaten**; Schlüssel ist `SHA256(token)`,
-der IV eine Konstante aus dem Portal-JS. Das ist der MQTT-Kanal der App, auf dem im
-Unterschied zum Open-API-Kanal tatsächlich Daten fließen. Von diesem Repo nicht
-implementiert, aber dokumentiert, falls ein Live-Stream gebraucht wird.
+Dort steht auch, wofür dieses Token sonst noch taugt: Es öffnet den **MQTT-Kanal der
+App**, auf dem im Unterschied zum Open-API-Kanal tatsächlich Daten fließen. Dorthin
+führen zwei Türen.
+
+**Die einfache (von diesem Repo benutzt):**
+
+```
+GET /iot-auth/app/certification?userId=<userId>
+Authorization: Bearer <token>
+lang: en_US
+→ data.certificateAccount, data.certificatePassword, data.url, data.port, data.protocol
+```
+
+Klartext-JSON, keine Entschlüsselung nötig. Abrufbar mit
+`scripts/ecoflow-api.sh app-cert`, die `userId` kommt aus `ECOFLOW_USER_ID` (das
+`login`-Kommando gibt sie fertig zum Exportieren aus).
+
+**Die verschlüsselte:** `/iot-auth/enterprise-development/user/certification` – den das
+Portal beim Laden selbst aufruft – liefert dieselben Felder **AES-verschlüsselt**, dafür
+ohne `userId`. Genauer, als es hier bisher stand:
+
+| Parameter  | Wert                                                              |
+|------------|-------------------------------------------------------------------|
+| Verfahren  | AES-256 im Modus **CFB128** – *nicht* CBC                         |
+| Schlüssel  | `SHA256(token)` als **rohe 32 Byte** (nicht hex, nicht gekürzt)   |
+| IV         | ASCII-Konstante `ojsajkqjwk1w2dfg` aus dem Portal-JS               |
+| Kodierung  | `data` ist ein Base64-String, kein Objekt                         |
+| Padding    | PKCS7 – die Restbytes bleiben nach dem Entschlüsseln übrig         |
+
+Mit dem openssl-CLI nachvollziehbar:
+
+```bash
+KEY=$(printf %s "$TOKEN" | openssl dgst -sha256 -binary | xxd -p -c64)
+printf %s "$CIPHERTEXT_B64" |
+  openssl enc -d -aes-256-cfb -K "$KEY" -iv 6f6a73616a6b716a776b317732646667 -a -A -nopad
+```
+
+**Bewusst nicht implementiert.** Der Klartextweg liefert dieselben Zugangsdaten, und ein
+Krypto-Pfad in einem Shell-Skript ist Code, der schweigend falsche Bytes produzieren kann.
+Er steht hier, falls EcoFlow die einfache Tür schließt. Unbestätigt bleibt außerdem, ob
+der `enterprise-development`-Pfad mit einem reinen Endkunden-Token überhaupt antwortet –
+der Pfadname legt einen Pro-/Installateurskontext nahe.
 
 **Einordnung:** Das ist eine interne Schnittstelle der Weboberfläche, von EcoFlow weder
 dokumentiert noch zugesagt, und das Token läuft ab. Als dauerhafte Datenquelle taugt das
@@ -292,6 +358,64 @@ Laut `MaxGrmm/EF-PowerOcean-TcpModbus` liefert derselbe Endpunkt noch deutlich m
 das Dashboard zeigt – Zellspannungen, SOH, phasenweise Wirk-/Blind-/Scheinleistung, rund
 180 Netzschutzparameter. Es bleiben der lokale Modbus-Weg (Abschnitt 2) und – mit
 allen Nachteilen – die inoffizielle App-Cloud (Abschnitt 2b).
+
+### Der MQTT-Kanal der App
+
+Der Kanal, den die App benutzt – und der einzige Cloud-Kanal, auf dem für dieses Gerät
+tatsächlich Nachrichten ankommen. Abonnierbar mit `scripts/ecoflow-api.sh live <SN>`.
+
+**Broker:** `mqtt-e.ecoflow.com:8883` (MQTTS), Host und Port kommen aus der
+Certification-Antwort; Benutzername und Passwort sind `certificateAccount` und
+`certificatePassword` daraus – nicht die Kontodaten, nicht das Token.
+
+**Client-ID:** `ANDROID_<32 Hex-Zeichen, Großbuchstaben>_<userId>`. Das ist keine
+Kosmetik: Der Broker weist Client-IDs ab, die nicht so aussehen, und er weist eine bereits
+gesehene ID nach dem Verbindungsabbruch erneut ab. Deshalb baut `live` für **jede**
+Verbindung eine neue.
+
+**Topics** (Wildcards meiden – die ACL lehnt sie ab, siehe oben):
+
+| Topic                                           | Richtung  | Inhalt                          |
+|-------------------------------------------------|-----------|---------------------------------|
+| `/app/device/property/<SN>`                     | subscribe | Telemetrie-Push, **Protobuf**   |
+| `/app/<userId>/<SN>/thing/property/get`         | publish   | Anfrage/Weckruf                 |
+| `/app/<userId>/<SN>/thing/property/get_reply`   | subscribe | Antwort darauf                  |
+| `/app/device/status/<SN>`                       | subscribe | online/offline                  |
+| `/app/<userId>/<SN>/thing/property/set`         | publish   | **schreibend – hier tabu**      |
+
+**Der Weckruf**, den `live` alle `ECOFLOW_LIVE_INTERVAL` Sekunden (Default 30) auf das
+`get`-Topic schickt:
+
+```json
+{"from":"Android","id":"<Millisekunden>","moduleType":0,
+ "operateType":"latestQuotas","params":{},"version":"1.0"}
+```
+
+**Was `live` bewusst nicht tut:** Die App aktiviert ihren schnellen Stream (~3 s) über
+einen Protobuf-Frame `EnergyStreamSwitch` auf dem `.../set`-Topic. Das Skript publiziert
+grundsätzlich nur auf `get`-Topics, damit kein Schreibpfad existiert, der versehentlich
+das Gerät verstellen könnte – dieselbe Regel, nach der `modbusread` keine `Write*`-Methode
+aufruft. Der Preis: `live` bekommt vermutlich nur den Takt seiner eigenen Anfragen.
+
+**Format:** Der Push ist beim PowerOcean **Protobuf**, nicht JSON – `jq` hilft dort nicht.
+`live` gibt deshalb jede Nachricht als Hex aus und schreibt den Text nur dann zusätzlich
+hin, wenn die Nutzlast vollständig druckbar ist. Ob `get_reply` beim DC Fit JSON
+(`data.quotaMap`) oder Protobuf liefert, ist offen – das ist die erste Frage, die eine
+Messung beantworten muss.
+
+**Vorbehalt Plus vs. DC Fit.** Die Protobuf-Feldnummern unterscheiden sich zwischen den
+Modellen. Für den JT-S1-PowerOcean trägt `cmd_func 96 / cmd_id 33` die Reihenfolge
+`sys_load_pwr, sys_grid_pwr, mppt_pwr, bp_pwr, bp_soc`; die DC-Fit-Definition bei
+`foxthefox/ioBroker.ecoflow-mqtt` (Gerätetyp `poweroceanfit`) belegt dieselbe Kennung
+mit `grid_pwr, dcdc_pwr, bp_pwr, pv_pwr, timestamp, timezone, bp_soc, load_pwr, …`.
+Wer hier die falsche Tabelle nimmt, bekommt plausible Zahlen an den falschen Namen. Das
+ist derselbe Vorbehalt wie beim Register-Mapping.
+
+**Herkunft:** Endpunktpfad, Client-ID-Form, Topics und Weckruf-Payload sind
+**unbestätigte Übernahmen** aus fremdem Reverse-Engineering, nicht aus eigener Messung und
+erst recht nicht aus EcoFlow-Doku. Quellen: `shuette42/ecoflow-energy-ha`,
+`tolwi/hassio-ecoflow-cloud`, `jensfr1/ha-ecoflow-ocean2`,
+`foxthefox/ioBroker.ecoflow-mqtt`.
 
 ## 2. Lokales Modbus TCP
 
@@ -346,6 +470,10 @@ Genau das nutzen die Home-Assistant-Integrationen für die
 gesperrten Modelle. **Community-Weg ohne jede Zusage von EcoFlow**: kann jederzeit
 brechen, und die Kontozugangsdaten liegen im Klartext in der Konfiguration.
 (Quelle: https://github.com/shuette42/ecoflow-energy-ha)
+
+Dieses Repo geht genau diesen Weg, aber nur bis zur Hälfte: `scripts/ecoflow-api.sh live`
+abonniert den Kanal und hält ihn wach, dekodiert die Protobuf-Frames aber nicht. Der
+Aufbau ist oben unter „Der MQTT-Kanal der App" beschrieben.
 
 ## 2c. Checkliste für den Installateurstermin
 
@@ -445,7 +573,17 @@ REST-Interface – eine explizite Bestätigung dafür liegt aber nicht vor.
   Abo wird gewährt, Verbindung bleibt stehen, es wird nichts publiziert (kurze Beobachtung, September 2026)
 - [x] Hilft der dokumentierte Anfrage-Weg über `.../get`? → **Nein**, der Publish wird
   mit PUBACK 0x87 „Not authorized" abgelehnt, das Abo auf `.../get_reply` mit
-  SUBACK 0x80. Damit ist MQTT vollständig ausgemessen.
+  SUBACK 0x80. Damit ist der **Open-API**-MQTT-Kanal vollständig ausgemessen. Der
+  App-Kanal ist ein anderer und noch offen – siehe die nächsten drei Punkte.
+- [ ] Antwortet `/iot-auth/app/certification` mit dem Endkunden-Token, und lässt der
+  Broker die Client-ID-Form `ANDROID_<hex>_<userId>` zu? → `ecoflow-api.sh app-cert`,
+  dann `-v live <SN>` (CONNACK und SUBACKs stehen im Verbose-Mitschnitt)
+- [ ] Liefert `.../thing/property/get_reply` beim DC Fit JSON (`data.quotaMap`) oder
+  Protobuf? Davon hängt ab, ob sich die Werte ohne Protobuf-Decoder aufbereiten lassen
+- [ ] Wird `measured` im REST-Endpunkt wieder frisch, solange `live` läuft? Das ist die
+  Gegenprobe auf die Einfrier-Beobachtung: `live` in einem Terminal, `status` in einem
+  zweiten. Falls nicht, fehlt vermutlich der `EnergyStreamSwitch` auf `.../set` – und
+  dann steht die Entscheidung, das `set`-Topic tabu zu lassen, neu zur Debatte
 
 ## Quellenübersicht
 
@@ -457,7 +595,12 @@ REST-Interface – eine explizite Bestätigung dafür liegt aber nicht vor.
 - https://docs.evcc.io/en/meters/ecoflow-powerocean-modbus
 - https://www.photovoltaikforum.com/thread/247994-ecoflow-powerocean-modbus-protokoll/
 - https://www.photovoltaikforum.com/thread/218848-erfahrungen-mit-system-ecoflow-powerocean/?pageNo=17
-- https://github.com/shuette42/ecoflow-energy-ha
+- https://github.com/shuette42/ecoflow-energy-ha (Enhanced Mode: AES-Certification,
+  Client-ID-Bau, Keepalive-Intervalle)
+- https://github.com/tolwi/hassio-ecoflow-cloud (`app/certification`, Client-ID-Form)
+- https://github.com/jensfr1/ha-ecoflow-ocean2 (Weckruf-Intervall mit Begründung)
+- https://github.com/foxthefox/ioBroker.ecoflow-mqtt (Gerätetyp `poweroceanfit`:
+  abweichende Protobuf-Feldnummern für den DC Fit)
 - https://github.com/evcc-io/evcc – `templates/definition/meter/ecoflow-powerocean-modbus.yaml`
 - https://github.com/openhab/openhab-addons – `bundles/org.openhab.binding.ecoflow`
 - https://developer.ecoflow.com/us/document/introduction

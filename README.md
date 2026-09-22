@@ -146,6 +146,8 @@ export ECOFLOW_PORTAL_TOKEN="$(scripts/ecoflow-api.sh login)"   # Token per Logi
 scripts/ecoflow-api.sh portal <SN>                # Endkunden-Portal statt Developer-API
 scripts/ecoflow-api.sh status <SN>                # dieselben Daten als Kurzübersicht
 scripts/ecoflow-api.sh portal-get <pfad>          # beliebiger GET gegen die Portal-API
+scripts/ecoflow-api.sh app-cert                   # MQTT-Zugangsdaten des App-Kanals
+scripts/ecoflow-api.sh live <SN>                  # App-Kanal abonnieren und wachhalten
 scripts/ecoflow-api.sh selftest                   # Signatur gegen EcoFlows Testvektor
 ```
 
@@ -188,6 +190,11 @@ battery  : 599 W (charging)
 yield    : today 1.90 | month 282.67 | year 4548.79 | total 5236.71 kWh
 measured : 2026-09-17T08:39:26Z
 ```
+
+`measured` ist der Zeitstempel aus dem Energy-Stream-Block der Firmware – der
+**Messzeitpunkt, nicht der Abrufzeitpunkt**. Steht er bei mehreren Aufrufen still, ist die
+Anzeige ein Standbild: Der Endpunkt gibt heraus, was zuletzt in die Cloud gepusht wurde,
+und gepusht wird nur, solange ein Client nachfragt. Genau dafür gibt es `live`.
 
 Die vorangestellte Zuweisung **ohne `export`** gilt nur für dieses eine Kommando: Danach
 kennt die Shell die Variable nicht, der Token steht in keiner weiteren Prozessumgebung, und
@@ -236,10 +243,50 @@ Zur Abwägung: `login` benutzt den Login-Endpunkt der Endkunden-App, der das Pas
 geschützt ist allein der TLS-Kanal. Der Browser-Token ist das kleinere Geheimnis und läuft
 von selbst ab; das Passwort ist der bequemere Weg. Beides sind inoffizielle Schnittstellen.
 
-`request` ist das **einzige** Kommando, das publiziert: Es abonniert `.../get_reply`,
+### Den Kanal wachhalten: `live`
+
+`status` liefert nur dann frische Zahlen, wenn das Gerät kurz zuvor etwas in die Cloud
+geschoben hat – und das tut es offenbar nur, solange jemand nachfragt. Ohne offene App
+bleibt `measured` stehen, teils stundenlang. `live` übernimmt die Rolle der App:
+
+```bash
+export ECOFLOW_PORTAL_TOKEN="$(scripts/ecoflow-api.sh login)"
+export ECOFLOW_USER_ID=19701254481420        # gibt "login" fertig zum Exportieren aus
+scripts/ecoflow-api.sh live HC31XXXXXXXXXXXX
+```
+
+Es holt sich über `app-cert` die Zugangsdaten des App-MQTT-Kanals, abonniert die drei
+Topics des Geräts und schickt alle `ECOFLOW_LIVE_INTERVAL` Sekunden (Default 30) eine
+Anfrage hinterher, damit der Strom nicht versiegt. Läuft bis Ctrl-C. Braucht `jq`,
+`mosquitto_sub` und `mosquitto_pub`.
+
+Die Ausgabe ist **absichtlich roh** – Zeitstempel, Topic, Länge und Nutzlast als Hex, plus
+eine zweite Zeile mit dem Klartext, wenn die Nutzlast lesbar ist:
+
+```console
+2026-09-22T09:14:03+0200 /app/device/property/HC31... 20 7b22636f6465...
+    text: {"code":"ok","v":1}
+2026-09-22T09:14:06+0200 /app/device/property/HC31... 88 0a1b2c3d4e5f...
+```
+
+Der Grund: Der Push des PowerOcean ist **Protobuf**, nicht JSON, und die Feldnummern
+weichen zwischen PowerOcean Plus und DC Fit ab. Eine hübsche Anzeige würde hier Zahlen an
+falsche Namen hängen. Erst messen, dann deuten – Einzelheiten und Quellen in
+`api-status.md`.
+
+Die Gegenprobe auf das Ausgangsproblem läuft in zwei Terminals: `live` im einen, `status`
+im anderen. Wandert `measured` mit, war die fehlende Nachfrage die Ursache.
+
+`request` und `live` sind die **einzigen** Kommandos, die publizieren, und beide nur auf
+ein `get`-Topic. `request` abonniert `.../get_reply`,
 schickt die Anfrage an `.../get` und wartet `ECOFLOW_WAIT` Sekunden (Default 15). Das
 Suffix ist fest verdrahtet – es gibt kein freies Topic-Argument, das `.../set`-Topic ist
 von hier aus also nicht erreichbar. Braucht zusätzlich `mosquitto_pub`.
+
+Diese Grenze hat einen Preis: Die App schaltet ihren schnellen Stream über das
+`.../set`-Topic ein, also kann `live` das nicht und bleibt beim Takt seiner eigenen
+Anfragen. Das ist bewusst so – ein Werkzeug ohne Schreibpfad kann nichts verstellen,
+dieselbe Regel wie bei `modbusread`.
 
 Exit-Code `0` heißt `code 0` von der API, `2` jeder andere Code. **`2` mit Code 1006**
 ist die interessante Antwort: Dann ist das Modell von der Developer-API ausgeschlossen (siehe `api-status.md`) und nur
@@ -269,8 +316,10 @@ eigene EcoFlow-Konto gebunden sein, sonst bleibt die Liste leer.
   „Modbus control"* in der Pro App läuft (Checkliste in `api-status.md`)
 - Welche Werte `product_category`/`product_number` (40002/40003) am DC Fit liefern –
   die Referenz-Integration kennt sie nicht
-- Ob der MQTT-Weg der Open API für den DC Fit Daten liefert oder dieselbe
-  1006-Sperre greift
+- Ob der App-MQTT-Kanal (`live`) beim DC Fit trägt: ob der Broker die Client-ID
+  annimmt, ob `get_reply` lesbares JSON liefert und ob der Weckruf genügt, um
+  `measured` im Portal-Endpunkt wieder wandern zu lassen. Der MQTT-Weg der
+  *Open* API ist dagegen erledigt – er liefert nichts (`api-status.md`)
 
 ## Arbeiten an diesem Repo
 
