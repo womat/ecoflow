@@ -5,12 +5,18 @@ Stand der Recherche: September 2026.
 ## Kurzfassung
 
 Es gibt **keine** offiziell dokumentierte, spezifische REST-API für den DC Fit.
-Zwei Wege existieren, beide mit Einschränkungen:
+Vier Wege wurden untersucht; genau einer liefert heute laufend Messwerte:
 
-| Weg                        | Typ                          | Status                                                                                                                                                 |
-|----------------------------|------------------------------|--------------------------------------------------------------------------------------------------------------------------------------------------------|
-| EcoFlow Developer/Open API | Cloud, REST, HMAC-signiert   | Listet den DC Fit, verweigert aber die Messwerte: Fehler 1006 „not allowed" – **am Gerät bestätigt**, gilt ebenso für viele PowerOcean-/Plus-Varianten |
-| Lokales Modbus TCP         | Modbus (kein REST), Port 502 | Funktioniert, aber inoffiziell, muss vom Installateur freigeschaltet werden, kein offizielles Register-Mapping                                         |
+| Weg                            | Typ                        | Status                                                                                                                                             |
+|--------------------------------|----------------------------|-----------------------------------------------------------------------------------------------------------------------------------------------------|
+| EcoFlow Developer/Open API     | Cloud, REST, HMAC-signiert | **Unbrauchbar.** Listet den DC Fit, verweigert aber die Messwerte: Fehler 1006 „not allowed" – am Gerät bestätigt. Auch der MQTT-Kanal bleibt stumm |
+| Endkunden-Portal               | Cloud, REST, Session-Token | **Liefert Daten, aber keine aktuellen.** Gibt den zuletzt in die Cloud gepushten Stand heraus; der stand in einer Messung über eine Stunde still     |
+| MQTT-Kanal der App             | Cloud, MQTT, Protobuf      | **Der einzige Weg, auf dem laufend Messwerte fließen.** Minütlich von selbst, im Sekundentakt mit dem Stream-Schalter. Inoffiziell, rückentwickelt   |
+| Lokales Modbus TCP             | Modbus, Port 502           | **Am Gerät noch gesperrt** (`connection refused`). Wäre der stabile Weg, braucht aber die Freischaltung durch einen Installateur                     |
+
+Praktisch heißt das: Wer heute Werte will, nimmt den App-MQTT-Kanal — `scripts/ecoflow-api.sh`
+zum Messen, `cmd/ecoflowd` für den Dauerbetrieb. Wer Verlässlichkeit will, betreibt die
+Modbus-Freischaltung.
 
 ## 1. EcoFlow Developer/Open API (Cloud)
 
@@ -35,7 +41,7 @@ Zwei Wege existieren, beide mit Einschränkungen:
 - Der offizielle Demo-Client kennt insgesamt fünf Endpunkte: `certification`,
   `device/list`, `POST device/quota`, `PUT device/quota` (schreibend, hier
   bewusst nicht verwendet) und `GET device/quota/all`. Alle lesenden davon sind
-  oben durchgemessen – **es gibt keinen weiteren Cloud-Weg, der noch offen wäre.**
+  unten durchgemessen – **es gibt keinen weiteren Cloud-Weg, der noch offen wäre.**
 - Relevante Leseendpunkte: `/iot-open/sign/device/list` (Geräte des Kontos),
   `/iot-open/sign/device/quota/all?sn=…` (alle Werte eines Geräts),
   `/iot-open/sign/certification` (MQTT-Zugangsdaten: `certificateAccount`,
@@ -183,7 +189,7 @@ Die Anfrage hat den Broker nie verlassen.
 zum Auslesen von Messwerten nicht nutzbar – weder über REST (1006) noch über MQTT (zwei abonnierbare, aber stumme
 Topics; Anfragen per ACL verboten).
 
-### Der Weg, der trotzdem funktioniert: das Endkunden-Portal
+## 2. Das Endkunden-Portal (REST)
 
 `user-portal.ecoflow.com` zeigt für dasselbe Gerät ein vollständiges Dashboard – SOC,
 Solar-, Haus-, Netz- und Batterieleistung, Tages-/Monats-/Jahreserträge. Am eigenen Gerät
@@ -248,26 +254,29 @@ dreimal exakt dieselbe Antwort, `measured` blieb auf `2026-09-22T06:18:28Z` steh
 die Anlage nachweislich lief. Nach dem Öffnen der App bzw. des Portals wanderte der Wert
 wieder.
 
-Die Erklärung, die dazu passt: **Der REST-Endpunkt pollt das Gerät nicht.** Er gibt
-heraus, was zuletzt in die Cloud gepusht wurde. Gepusht wird aber offenbar nur, solange
-ein Client aktiv nachfragt – ist keiner da, versiegt der Strom und der Cloud-Stand friert
-ein. Ein `status`-Aufruf sieht dann aus wie ein Live-Wert und ist ein Standbild.
+Belegt ist daraus nur eines: **Der REST-Endpunkt pollt das Gerät nicht.** Er gibt heraus,
+was zuletzt in die Cloud gepusht wurde. Ein `status`-Aufruf sieht deshalb aus wie ein
+Live-Wert und ist ein Standbild.
 
-Fremdbelege für denselben Mechanismus bei anderen EcoFlow-Geräten:
+**Die naheliegende Erklärung war falsch.** Sie lautete: Gepusht werde nur, solange ein
+Client aktiv *nachfragt*; ohne Weckruf versiege der Strom. Dafür sprachen Fremdbelege —
+`jensfr1/ha-ecoflow-ocean2` hält ein 60-Sekunden-Intervall vor mit dem Kommentar „Ohne
+diesen regelmaessigen Weckruf sendet das Geraet keine Telemetrie, solange keine
+EcoFlow-App geoeffnet ist"; `shuette42/ecoflow-energy-ha` fragt alle 20–30 s nach; die
+openHAB-Anbindung berichtet für den STREAM Micro Updates nur bei geöffneter App.
 
-- `jensfr1/ha-ecoflow-ocean2` hält dafür ein eigenes Intervall von 60 s vor, mit dem
-  Kommentar „Ohne diesen regelmaessigen Weckruf sendet das Geraet keine Telemetrie,
-  solange keine EcoFlow-App geoeffnet ist."
-- `shuette42/ecoflow-energy-ha` schickt nach jedem Verbindungsaufbau und danach alle
-  20–30 s eine Anfrage nach; für den PowerOcean **Plus** ist dort zusätzlich vermerkt, dass
-  manche Geräte nur direkt nach einem Abo antworten.
-- Die openHAB-Anbindung berichtet dasselbe für den STREAM Micro über die offizielle API:
-  Updates nur bei geöffneter App, sonst alle 13–16 Minuten.
+Am eigenen Gerät nachgemessen gilt das hier **nicht**: 23 Minuten ohne einen einzigen
+Publish, durchgehend Minutenwerte (siehe „Am DC Fit gemessen"). Es genügt, **abonniert zu
+sein** — nachfragen muss niemand.
 
-**Einschränkung:** Das ist eine Beobachtung an einem Gerät plus Fremdbelege für andere
-Modelle, keine bewiesene Ursache. Ob die Drosselung im Gerät oder in der Cloud sitzt, ist
-von außen nicht zu unterscheiden. Nachmessbar ist es mit `scripts/ecoflow-api.sh live`
-(siehe unten) in einem Terminal und `status` in einem zweiten.
+Was das Einfrieren verursacht, bleibt damit offen. Denkbar ist, dass das Gerät nur pusht,
+solange *irgendein* Abo besteht, und die Portal-Sitzung eines ist; oder dass der
+REST-Endpunkt aus einem anderen Vorrat liest als der MQTT-Kanal. Von außen ist das nicht
+zu unterscheiden.
+
+**Für die Praxis ist es gleich:** Der REST-Endpunkt taugt nicht als Live-Quelle — auch
+nicht, während ein Abo läuft. Das wurde gegengeprüft: `measured` blieb stehen, während die
+MQTT-Frames bereits eine Stunde weiter waren.
 
 #### Vorzeichen: gemessen, nicht angenommen
 
@@ -357,10 +366,15 @@ Anzeige.
 
 Laut `MaxGrmm/EF-PowerOcean-TcpModbus` liefert derselbe Endpunkt noch deutlich mehr als
 das Dashboard zeigt – Zellspannungen, SOH, phasenweise Wirk-/Blind-/Scheinleistung, rund
-180 Netzschutzparameter. Es bleiben der lokale Modbus-Weg (Abschnitt 2) und – mit
-allen Nachteilen – die inoffizielle App-Cloud (Abschnitt 2b).
+180 Netzschutzparameter. **Ungeprüft:** Das genannte Projekt ist eine Modbus-Integration,
+und ob sich die Angabe auf diesen REST-Endpunkt oder auf Register bezieht, geht daraus
+nicht hervor.
 
-### Der MQTT-Kanal der App
+**Wofür dieser Weg taugt:** als Gegenprobe und für Zählerstände, nicht für laufende
+Messwerte – dafür der App-MQTT-Kanal (Kapitel 3). Der stabile Weg bliebe Modbus
+(Kapitel 4), sobald er freigeschaltet ist.
+
+## 3. Der MQTT-Kanal der App
 
 Der Kanal, den die App benutzt – und der einzige Cloud-Kanal, auf dem für dieses Gerät
 tatsächlich Nachrichten ankommen. Abonnierbar mit `scripts/ecoflow-api.sh live <SN>`.
@@ -374,7 +388,8 @@ Kosmetik: Der Broker weist Client-IDs ab, die nicht so aussehen, und er weist ei
 gesehene ID nach dem Verbindungsabbruch erneut ab. Deshalb baut `live` für **jede**
 Verbindung eine neue.
 
-**Topics** (Wildcards meiden – die ACL lehnt sie ab, siehe oben):
+**Topics** (Wildcards meiden – die ACL lehnt sie ab; zum Fehlschluss, der daraus
+entsteht, siehe Kapitel 1, „MQTT-Weg der Open API"):
 
 | Topic                                           | Richtung  | Inhalt                          |
 |-------------------------------------------------|-----------|---------------------------------|
@@ -403,11 +418,13 @@ Anfragen: Die sind, wie weiter unten gemessen, für den Datenfluss ohne Belang.
 
 **Format:** Der Push ist beim PowerOcean **Protobuf**, nicht JSON – `jq` hilft dort nicht.
 `live` gibt deshalb jede Nachricht als Hex aus und schreibt den Text nur dann zusätzlich
-hin, wenn die Nutzlast vollständig druckbar ist. Ob `get_reply` beim DC Fit JSON
-(`data.quotaMap`) oder Protobuf liefert, ist offen – das ist die erste Frage, die eine
-Messung beantworten muss.
+hin, wenn die Nutzlast vollständig druckbar ist. Auf `get_reply` kam am DC Fit
+**überhaupt nichts** an (siehe „Am DC Fit gemessen"), die Frage nach JSON oder Protobuf
+stellt sich dort also gar nicht.
 
-**Vorbehalt Plus vs. DC Fit.** Die Protobuf-Feldnummern unterscheiden sich zwischen den
+**Vorbehalt Plus vs. DC Fit.** (Zur Kennung: Den Energiestrom gibt es auf **33** *und*
+**34** – der schnelle und der minütliche Bericht, siehe „Am DC Fit gemessen". Fremdquellen
+nennen nur eine von beiden.) Die Protobuf-Feldnummern unterscheiden sich zwischen den
 Modellen. Für den JT-S1-PowerOcean trägt `cmd_func 96 / cmd_id 33` die Reihenfolge
 `sys_load_pwr, sys_grid_pwr, mppt_pwr, bp_pwr, bp_soc`; die DC-Fit-Definition bei
 `foxthefox/ioBroker.ecoflow-mqtt` (Gerätetyp `poweroceanfit`) belegt dieselbe Kennung
@@ -456,7 +473,8 @@ also keine Live-Quelle, auch nicht mit laufendem Zuhörer.** Wer aktuelle Werte 
 die Frames auswerten.
 
 **3. Die Nutzlast ist XOR-verschleiert.** Jedes Byte der Nutzlast ist mit dem niederwertigen
-Byte der Sequenznummer (Header-Feld 14) verodert. Aufgefallen ist das daran, dass zwei
+Byte der Sequenznummer (Header-Feld 14) **exklusiv-verodert** (XOR, nicht OR). Aufgefallen
+ist das daran, dass zwei
 Frames mit benachbarten Sequenznummern sich in *jedem* Byte um dasselbe Bitmuster
 unterscheiden. Ohne diesen Schritt ist die Nutzlast kein gültiges Protobuf.
 
@@ -469,7 +487,9 @@ unterscheiden. Ohne diesen Schritt ist die Nutzlast kein gültiges Protobuf.
 | 9    | `cmd_id` – unterscheidet die Berichte    |
 | 14   | Sequenznummer, zugleich der XOR-Schlüssel |
 
-**Beobachtete `cmd_id` bei `cmd_func 96`:** 1, **34**, 108, 109, 110, 111, 136.
+**Beobachtete `cmd_id` bei `cmd_func 96` im langsamen Betrieb:** 1, **34**, 108, 109, 110,
+111, 136. Mit aktivem Stream-Schalter kommen **33**, **3** und **137** dazu, und
+`cmd_func 254 / cmd_id 32` wird häufig — siehe die Abschnitte weiter unten.
 
 **Den Energiestrom gibt es zweimal, auf `cmd_id 34` und `cmd_id 33`** – mit derselben
 Feldbelegung, aber unterschiedlichem Takt und unterschiedlicher Verpackung:
@@ -570,15 +590,17 @@ Werteabfrage passiert.
   `set`-Topic des App-Kanals greift also keine ACL-Sperre – anders als auf dem `get`-Topic
   des Open-API-Kanals, wo derselbe Test `0x87` lieferte.
 - **Der Wiederholabstand entscheidet.** Mit 3 Sekunden (dem Rhythmus der App) läuft der
-  schnelle Strom: 62 Messwerte in 55 Sekunden. Mit 10 Sekunden fiel das Gerät auf den
-  Minutentakt zurück. Der Schalter hält also nur kurz vor; Default ist deshalb 3.
+  schnelle Strom: im Mitschnitt 131 Messwerte über 241 Sekunden, im Schnitt alle 1,9 s.
+  Mit 10 Sekunden fiel das Gerät auf den Minutentakt zurück; Default ist deshalb 3.
+  (Wie lange der Schalter nachwirkt, ist damit **nicht** gesagt – siehe die offene Frage
+  dazu am Dateiende.)
 - Nebenbei sichtbar wurde noch `cmd_func 254 / cmd_id 32` (rund zweimal pro Sekunde) sowie
   `96/3`, `96/1` und `96/137` im Sekundenbereich – alle nicht ausgewertet.
 
-**Preis:** Das Skript startet für jeden Schalter einen eigenen `mosquitto_pub`, also alle
-3 Sekunden einen Verbindungsaufbau. Für eine Messung ist das in Ordnung, für Dauerbetrieb
-wäre eine stehende Verbindung angebracht – die kann `mosquitto_pub` von der Kommandozeile
-aus nicht, das wäre ein Grund, diesen Teil in Go zu ziehen.
+**Preis beim Skript:** Es startet für jeden Schalter einen eigenen `mosquitto_pub`, also
+alle 3 Sekunden einen Verbindungsaufbau – rund 28.000 am Tag. Für eine Messung in Ordnung,
+für Dauerbetrieb nicht; eine stehende Verbindung kann `mosquitto_pub` von der
+Kommandozeile aus nicht. Genau deshalb gibt es `cmd/ecoflowd`, das eine hält.
 
 #### Die Stundenhistorie: `cmd_func 254 / cmd_id 32`
 
@@ -658,9 +680,26 @@ weiterhin nur im Portal.
 
 Ausgewertet wird das von `scripts/ecoflow-frames.py`, das die Ausgabe von `live` auf
 stdin nimmt. Der schnellere ~3-Sekunden-Takt, den die App über `.../set` freischaltet,
-ist damit weiterhin nicht erreicht – für einen Minutentakt braucht es ihn aber auch nicht.
+ist damit für `live` nicht erreicht – dafür gibt es `fast` bzw. `ecoflowd --fast`. Für
+einen Minutentakt braucht es ihn ohnehin nicht.
 
-## 2. Lokales Modbus TCP
+### Einordnung: der „Enhanced Mode" der Community
+
+Unter diesem Namen läuft derselbe Kanal in den Home-Assistant-Integrationen. Er umgeht die
+1006-Sperre, indem er sich mit den normalen EcoFlow-Kontozugangsdaten anmeldet statt mit
+API-Keys. Genau das tun die Home-Assistant-Integrationen für die
+gesperrten Modelle. **Community-Weg ohne jede Zusage von EcoFlow**: kann jederzeit
+brechen, und die Kontozugangsdaten liegen im Klartext in der Konfiguration.
+(Quelle: https://github.com/shuette42/ecoflow-energy-ha)
+
+Zum dort genannten Takt „~2–4 s": Der gilt nur mit aktivem Stream-Schalter. Ohne ihn
+meldet das Gerät **minütlich** — gemessen, siehe „Am DC Fit gemessen".
+
+Dieses Repo geht den Weg vollständig: `scripts/ecoflow-api.sh live` bzw. `fast` holt die
+Frames, `scripts/ecoflow-frames.py` packt sie aus, und `cmd/ecoflowd` tut beides in einem
+Dienst und reicht die Werte an einen lokalen MQTT-Broker weiter.
+
+## 4. Lokales Modbus TCP
 
 - Kein REST, sondern klassisches Modbus-TCP-Protokoll auf Port 502
 - Muss vom **EcoFlow-Installateur/-Partner** über die EcoFlow **Pro App**
@@ -673,7 +712,7 @@ ist damit weiterhin nicht erreicht – für einen Minutentakt braucht es ihn abe
     - evcc (Ladeinfrastruktur-Software) über eigenes Meter-Template
       `ecoflow-powerocean-modbus`
 
-## 2a. Zugang zur EcoFlow Pro App
+## 4a. Zugang zur EcoFlow Pro App
 
 Die **Pro App** (`com.ecoflow.pro`) ist die Installateur-App und nur für autorisierte
 Distributoren und Installateure freigeschaltet; Endkunden nutzen die normale EcoFlow-App.
@@ -705,23 +744,10 @@ mit SN und Kaufbeleg.
 **Wichtig:** Für die Modbus-Freischaltung ist keine Übertragung nötig – es genügt, dass *irgendein* Pro-Zugang den
 Schalter einmalig umlegt.
 
-## 2b. Inoffizielle App-Cloud ("Enhanced Mode")
-
-Dritter Weg, der die 1006-Sperre umgeht: Anmeldung mit den normalen
-EcoFlow-Kontozugangsdaten statt mit API-Keys, danach Push der Messwerte über WSS/MQTT (~2–4 s statt ~30 s Polling).
-Genau das nutzen die Home-Assistant-Integrationen für die
-gesperrten Modelle. **Community-Weg ohne jede Zusage von EcoFlow**: kann jederzeit
-brechen, und die Kontozugangsdaten liegen im Klartext in der Konfiguration.
-(Quelle: https://github.com/shuette42/ecoflow-energy-ha)
-
-Dieses Repo geht genau diesen Weg, aber nur bis zur Hälfte: `scripts/ecoflow-api.sh live`
-abonniert den Kanal und hält ihn wach, dekodiert die Protobuf-Frames aber nicht. Der
-Aufbau ist oben unter „Der MQTT-Kanal der App" beschrieben.
-
-## 2c. Checkliste für den Installateurstermin
+## 4b. Checkliste für den Installateurstermin
 
 Die Modbus-Freischaltung kann nur ein Installateur mit Pro-App-Zugang vornehmen (siehe
-2a). Ein solcher Termin wiederholt sich nicht schnell – deshalb hier abhakbar, was dabei
+4a). Ein solcher Termin wiederholt sich nicht schnell – deshalb hier abhakbar, was dabei
 zu klären ist.
 
 **Vorab-Test, ob überhaupt noch etwas fehlt**
@@ -744,7 +770,8 @@ Port 502 `connection refused` – also deaktiviert, wie dokumentiert.
   App auswählen und den **Control Mode auf „Modbus control"** stellen. So beschreibt
   es die Referenz-Integration; bitte bestätigen lassen, ob das Menü tatsächlich so
   heißt.
-- [ ] Ändert dieser Modus etwas am internen Scheduling der Anlage?
+- [ ] Ändert dieser Modus etwas am internen Scheduling der Anlage? (Dieselbe Frage steht
+  in „Offene Fragen" am Dateiende – dort beantworten, hier nur beim Termin erfragen)
 - [ ] Überlebt die Einstellung ein Firmware-Update?
 - [ ] **Register 40002 und 40003 auslesen** (`product_category`, `product_number`),
   sobald Modbus läuft: Die Referenz-Integration kann den DC Fit daran *nicht*
@@ -778,7 +805,7 @@ Port 502 `connection refused` – also deaktiviert, wie dokumentiert.
   Developer-API freigeschaltet werden kann. Für die PowerOcean-Familie wenig
   aussichtsreich, aber der einzige verbliebene Hebel auf der Cloud-Seite.
 
-## 2d. Was andere Integrationen können (und was nicht)
+## 5. Was andere Integrationen können (und was nicht)
 
 - **OpenHAB-Binding `org.openhab.binding.ecoflow`:** rein cloudbasiert über die
   Developer-API und unterstützt nur Delta 2, Delta 2 Max und PowerStream – **kein
@@ -792,7 +819,7 @@ Port 502 `connection refused` – also deaktiviert, wie dokumentiert.
   für diese Gerätefamilie nicht praktikabel ist. Die dort verwendeten Registeradressen
   bestätigen die aktuelle Karte in `modbus-registers.md`.
 
-## 3. "Offene API" in Shop-Beschreibungen
+## 6. "Offene API" in Shop-Beschreibungen
 
 Verkaufsseiten für das DC-Fit-Set werben mit einer "offenen API-Schnittstelle"
 zur Anbindung an EMS wie Solar Manager Connect 2 oder Loxone. Vermutlich ist
@@ -804,10 +831,10 @@ REST-Interface – eine explizite Bestätigung dafür liegt aber nicht vor.
 - [ ] Gilt das Modbus-Register-Mapping (PowerOcean Plus) 1:1 für DC Fit, oder
   gibt es ein eigenes `InverterModel`-Mapping mit abweichenden Adressen?
   → `models.py` im Repo `MaxGrmm/EF-PowerOcean-TcpModbus` noch nicht geprüft.
-- [x] Genauer Menüpfad zum Modbus-Schalter in der EcoFlow Pro App → laut
-  `MaxGrmm/EF-PowerOcean-TcpModbus`: Wechselrichter auswählen, Control Mode auf **„Modbus control"** umstellen. Also ein
-  Betriebsmodus-Wechsel, kein
-  versteckter Schalter. Am Gerät noch zu bestätigen (siehe 2c)
+- [ ] Genauer Menüpfad zum Modbus-Schalter in der EcoFlow Pro App. Aus fremder Quelle
+  (`MaxGrmm/EF-PowerOcean-TcpModbus`) bekannt: Wechselrichter auswählen, Control Mode auf
+  **„Modbus control"** umstellen – also ein Betriebsmodus-Wechsel, kein versteckter
+  Schalter. **Am Gerät unbestätigt**, deshalb kein Haken; steht als Aufgabe in 2c
 - [ ] Wirkt sich der Modus „Modbus control" auf das interne Scheduling aus? Bei rein
   lesendem Zugriff vermutlich folgenlos, belegt ist das nicht
 - [x] Liefert das Präfix `HC31` (DC Fit) Fehler 1006? → **Ja, bei `quota/all`**;
@@ -835,14 +862,14 @@ REST-Interface – eine explizite Bestätigung dafür liegt aber nicht vor.
   `set`-Topic, während die App lief (22.09.2026). Bytes und Feldbelegung siehe oben;
   umgesetzt als Kommando `fast`
 - [x] Hält der schnelle Takt durch? → **Ja, bei 3 s Wiederholung**; bei 10 s fällt das
-  Gerät auf den Minutentakt zurück. Nach dem *letzten* Schalter lief der schnelle Strom
-  aber noch rund **vier Minuten** weiter, bevor er versiegte – der Schalter hält also
-  länger vor, als der 10-Sekunden-Befund vermuten ließ. Warum beides zusammen gilt, ist
-  offen
-- [x] Schaltet das Gerät den schnellen Strom je von selbst ein? → **Nein.** In einem
-  beobachteten Fall tauchte er ohne unser Zutun wieder auf; die Kontrolle mit
-  geschlossener App und geschlossenem Portal zeigte über 23 Minuten **keinen einzigen**
-  `96/33`. Die Ursache war also ein anderer Client, nicht das Gerät
+  Gerät auf den Minutentakt zurück
+- [ ] Wie lange wirkt der Schalter nach? Zwei Messungen widersprechen sich: Bei 10 s
+  Wiederholabstand trägt er nicht, nach dem *letzten* Schalter lief der Strom aber noch
+  rund **vier Minuten** weiter. Beides ist gemessen, keines erklärt das andere
+- [x] Schaltet das Gerät den schnellen Strom je von selbst ein? → **Nein.** Die Kontrolle
+  mit geschlossener App und geschlossenem Portal zeigte über 23 Minuten **keinen einzigen**
+  `96/33`. In einem früheren Lauf war er ohne unser Zutun aufgetaucht; die Ursache war
+  demnach **vermutlich** ein anderer Client – belegt ist nur die Negativkontrolle
 - [x] Was trägt `cmd_func 254 / cmd_id 32`? → **Die Stundenhistorie des laufenden Tages**,
   sechs Flüsse à 24 Stundenwerte in Wh. Aufgeschlüsselt unten, abrufbar mit
   `ecoflow-frames.py --hours`
