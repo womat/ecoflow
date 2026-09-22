@@ -36,7 +36,16 @@ auf einem freien Port und lesen dagegen – kein Gerät nötig. `internal/frames
 `internal/frames/testdata/`; die `.golden`-Dateien dort sind die Ausgabe von
 `scripts/ecoflow-frames.py` über dieselben Mitschnitte und werden von
 `cmd/ecoflowd/ecoflowd_test.go` gelesen — sie halten die Go- und die Python-Fassung
-zeilengleich. Wer eine von beiden ändert, erzeugt sie neu:
+zeilengleich. **Beide Richtungen sind geprüft:** `go test` misst die Go-Fassung an den
+`.golden`-Dateien, ein CI-Schritt erzeugt sie mit dem Python-Decoder neu und vergleicht.
+
+`damaged.txt` ist kein Mitschnitt, sondern von Hand gebaut: vier absichtlich kaputte
+Frames, an denen der Python-Decoder früher mitten im Strom mit einem Traceback endete.
+Seine `.golden`-Datei ist **leer** und sagt damit zweierlei — keine der beiden Fassungen
+meldet daraus einen Messwert, und keine bleibt daran stehen. Beim Hinzufügen neuer
+Fehlerfälle gehört der Frame dorthin.
+
+Wer eine der beiden Fassungen ändert, erzeugt die `.golden`-Dateien neu:
 
 ```
 python3 scripts/ecoflow-frames.py < internal/frames/testdata/fast.txt \

@@ -79,6 +79,7 @@ ENERGY_STREAM = {(96, MINUTELY), (96, FAST)}
 
 # Field numbers inside the energy stream report, as measured on a DC Fit.
 GRID, DCDC, BATTERY, PV, TIMESTAMP, TIMEZONE, SOC, HOUSE = 1, 2, 3, 4, 5, 6, 7, 8
+POWER_FIELDS = (GRID, DCDC, BATTERY, PV, HOUSE)
 
 
 def varint(b, i):
@@ -93,7 +94,14 @@ def varint(b, i):
 
 
 def fields(b):
-    """Yield (number, wire type, value) for one protobuf message."""
+    """Yield (number, wire type, value) for one protobuf message.
+
+    A frame that ends mid-field simply stops here. Slicing past the end of a
+    bytes object does not raise, so the length has to be checked: a short slice
+    handed on as a value turns up later as a struct error or a bytes object
+    where a number was expected, and this runs over a live stream where one
+    damaged frame must not end the reading.
+    """
     i = 0
     while i < len(b):
         try:
@@ -101,13 +109,14 @@ def fields(b):
             number, wire = key >> 3, key & 7
             if wire == 0:
                 value, i = varint(b, i)
-            elif wire == 2:
-                length, i = varint(b, i)
+            elif wire in (1, 2, 5):
+                if wire == 2:
+                    length, i = varint(b, i)
+                else:
+                    length = 4 if wire == 5 else 8
+                if i + length > len(b):
+                    return
                 value, i = b[i:i + length], i + length
-            elif wire == 5:
-                value, i = b[i:i + 4], i + 4
-            elif wire == 1:
-                value, i = b[i:i + 8], i + 8
             else:
                 return
             yield number, wire, value
@@ -141,9 +150,18 @@ def energy_stream(frame):
                 body = value
             break
 
+        # A power value is a fixed32 and nothing else. Taking whatever arrives
+        # under that field number would put bytes where a float belongs, which
+        # only shows up when the line is rendered - and a frame that renders as
+        # zeros reads like a real measurement at night.
         out = {}
         for number, wire, value in fields(body):
-            out[number] = struct.unpack('<f', value)[0] if wire == 5 else value
+            if number in POWER_FIELDS:
+                if wire != 5:
+                    return None
+                out[number] = struct.unpack('<f', value)[0]
+            else:
+                out[number] = value
         return (out, cmd_id) if PV in out else None
     return None
 
@@ -168,11 +186,17 @@ def render(values):
 
 
 def packed_varints(b):
-    """Read a run of varints laid end to end, as the hourly parts store them."""
+    """Read a run of varints laid end to end, as the hourly parts store them.
+
+    Returns None if the run ends in the middle of one. That means the blob is
+    damaged, and a partial list of hours would be read as real numbers.
+    """
     out, i = [], 0
     while i < len(b):
         value = shift = 0
         while True:
+            if i >= len(b):
+                return None
             byte = b[i]
             i += 1
             value |= (byte & 0x7F) << shift
@@ -205,7 +229,8 @@ def hourly_part(frame):
         when, flow, blob = part.get(1), part.get(2), part.get(3)
         if when is None or flow not in HOURLY_FLOWS or not isinstance(blob, bytes):
             return None
-        return when, flow, packed_varints(blob)
+        hours = packed_varints(blob)
+        return None if hours is None else (when, flow, hours)
     return None
 
 

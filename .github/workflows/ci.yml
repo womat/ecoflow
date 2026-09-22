@@ -25,3 +25,19 @@ jobs:
       - run: go vet ./...
       - run: go build ./...
       - run: go test -race ./...
+
+      # The go test above compares the go output against these golden files.
+      # Nothing was checking the other half of the promise - that the python
+      # decoder still produces them - so a change there could quietly drift
+      # apart from the service until someone regenerated a golden by hand.
+      - name: the python decoder still produces the golden files
+        run: |
+          for capture in fast slow damaged; do
+            python3 scripts/ecoflow-frames.py \
+              < internal/frames/testdata/$capture.txt > /tmp/$capture.out
+            diff -u internal/frames/testdata/$capture.golden /tmp/$capture.out
+          done
+
+      # Checks the signature assembly against EcoFlow's published test vector
+      # and the stream switch frame against the captured bytes. No network.
+      - run: scripts/ecoflow-api.sh selftest
