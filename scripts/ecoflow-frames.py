@@ -29,6 +29,31 @@ import struct
 import sys
 import time
 
+# The hourly energy history, cmd_func 254 / cmd_id 32. It arrives about twice a
+# second in six parts that share a timestamp, one part per flow. Each part
+# carries 24 packed varints: one per hour of the current day, in Wh, with the
+# current hour still filling up.
+#
+# Established by measurement, not from any documentation. The part numbers were
+# matched to flows by regression - over four minutes each counter grew at the
+# rate of its power, PV at 1013 W against a measured 1029 W and so on - and the
+# reading is confirmed by the hourly energy balance, which closes to within one
+# watt-hour on every hour of the day:
+#
+#   PV + battery out + grid in  =  house + battery in + grid out
+#
+# Zeros land where they should: no PV before dawn, the battery discharging
+# overnight and charging once the sun carries the house.
+HOURLY = (254, 32)
+HOURLY_FLOWS = {
+    1: 'PV',
+    16: 'battery in',
+    32: 'battery out',
+    48: 'grid in',
+    64: 'grid out',
+    80: 'house',
+}
+
 # The two reports that carry power values, by cmd_id within cmd_func 96.
 MINUTELY, FAST = 34, 33
 ENERGY_STREAM = {(96, MINUTELY), (96, FAST)}
@@ -123,10 +148,114 @@ def render(values):
             f'grid {abs(grid):6.0f} W ({grid_dir}) | SoC {values.get(SOC, "?")} %')
 
 
+def packed_varints(b):
+    """Read a run of varints laid end to end, as the hourly parts store them."""
+    out, i = [], 0
+    while i < len(b):
+        value = shift = 0
+        while True:
+            byte = b[i]
+            i += 1
+            value |= (byte & 0x7F) << shift
+            if not byte & 0x80:
+                break
+            shift += 7
+        out.append(value)
+    return out
+
+
+def hourly_part(frame):
+    """Return (timestamp, flow, hourly Wh) of one part, or None."""
+    for number, wire, value in fields(frame):
+        if number != 1 or wire != 2:
+            continue
+        header = {n: v for n, w, v in fields(value) if w == 0}
+        if (header.get(8), header.get(9)) != HOURLY:
+            return None
+        payload = next((v for n, w, v in fields(value) if n == 1 and w == 2), None)
+        if payload is None:
+            return None
+
+        key = header.get(14, 0) & 0xFF
+        plain = bytes(c ^ key for c in payload)
+
+        body = next((v for n, w, v in fields(plain) if n == 2 and w == 2), None)
+        if body is None:
+            return None
+        part = {n: v for n, w, v in fields(body)}
+        when, flow, blob = part.get(1), part.get(2), part.get(3)
+        if when is None or flow not in HOURLY_FLOWS or not isinstance(blob, bytes):
+            return None
+        return when, flow, packed_varints(blob)
+    return None
+
+
+def render_hours(when, parts):
+    """The hourly table, one row per flow, plus the balance as a check."""
+    hour = time.gmtime(when).tm_hour
+    head = time.strftime('%Y-%m-%d %H:%M:%SZ', time.gmtime(when))
+
+    lines = [f'hourly energy in Wh, device day up to {head}', '']
+    lines.append('flow        ' + ''.join(f'{h:>6}' for h in range(hour + 1)) + '   total')
+    for flow, name in HOURLY_FLOWS.items():
+        row = parts.get(flow, [])
+        cells = ''.join(f'{row[h]:>6}' if h < len(row) else '     .' for h in range(hour + 1))
+        lines.append(f'{name:<12}{cells}{sum(row):>8}')
+
+    # In every hour the energy coming in equals the energy going out. Printing
+    # the difference makes a misread field obvious instead of plausible.
+    def at(flow, h):
+        row = parts.get(flow, [])
+        return row[h] if h < len(row) else 0
+
+    diff = ''.join(
+        f'{at(1, h) + at(32, h) + at(48, h) - at(80, h) - at(16, h) - at(64, h):>6}'
+        for h in range(hour + 1))
+    lines.append(f'{"balance":<12}{diff}')
+    lines.append('')
+    lines.append('the current hour is still filling up; balance should be near zero')
+    return '\n'.join(lines)
+
+
 # How long a fast report keeps the minutely one redundant. The fast stream
 # arrives every two to three seconds, so anything beyond a minute means it has
 # lapsed and the minutely report is the only source left.
 FAST_STILL_RUNNING = 90
+
+
+def main_hours():
+    """Print the hourly table as soon as one complete set has arrived, then stop.
+
+    The six parts repeat about twice a second, so waiting for more would only
+    reprint the same table. Exiting closes the pipe, which stops the producer.
+    """
+    parts = {}
+    current = None
+
+    for line in sys.stdin:
+        fields_ = line.split()
+        if len(fields_) < 4:
+            continue
+        try:
+            frame = bytes.fromhex(fields_[3])
+        except ValueError:
+            continue
+
+        part = hourly_part(frame)
+        if not part:
+            continue
+        when, flow, hours = part
+
+        if when != current:
+            current, parts = when, {}
+        parts[flow] = hours
+
+        if len(parts) == len(HOURLY_FLOWS):
+            print(render_hours(when, parts))
+            return 0
+
+    print('no hourly report seen - is the fast stream running?', file=sys.stderr)
+    return 1
 
 
 def main():
@@ -171,6 +300,8 @@ def main():
 
 if __name__ == '__main__':
     try:
+        if '--hours' in sys.argv[1:]:
+            sys.exit(main_hours())
         main()
     except (BrokenPipeError, KeyboardInterrupt):
         pass

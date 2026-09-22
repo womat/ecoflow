@@ -563,6 +563,50 @@ Werteabfrage passiert.
 wäre eine stehende Verbindung angebracht – die kann `mosquitto_pub` von der Kommandozeile
 aus nicht, das wäre ein Grund, diesen Teil in Go zu ziehen.
 
+#### Die Stundenhistorie: `cmd_func 254 / cmd_id 32`
+
+Der mit Abstand häufigste Frame im schnellen Betrieb – rund zweimal pro Sekunde. Er trägt
+**keine Momentanwerte, sondern die Energiebilanz des laufenden Tages, stundenweise.**
+
+Aufbau: Die Nutzlast (ebenfalls XOR-verschleiert) enthält in Feld 2 eine Nachricht mit
+
+| Feld | Inhalt                                                        |
+|------|---------------------------------------------------------------|
+| 1    | Zeitstempel, Unix-Sekunden                                    |
+| 2    | welcher Fluss – 1, 16, 32, 48, 64, 80                         |
+| 3    | **24 aneinandergereihte Varints**: ein Wert je Tagesstunde, Wh |
+
+Sechs Frames mit demselben Zeitstempel ergeben eine vollständige Meldung:
+
+| Feld 2 | Fluss                        |
+|--------|------------------------------|
+| 1      | PV-Erzeugung                 |
+| 16     | Batterie geladen             |
+| 32     | Batterie entladen            |
+| 48     | Netzbezug                    |
+| 64     | Netzeinspeisung              |
+| 80     | Hausverbrauch                |
+
+Die laufende Stunde füllt sich noch; alle späteren Stunden stehen auf 0.
+
+**Wie die Zuordnung belegt ist – zwei unabhängige Wege.** Erstens über die Steigung: Über
+vier Minuten wuchs jeder Zähler genau mit der Leistung seines Flusses (PV 1013 W gegen
+gemessene 1029 W, Batterie 529 gegen 544, Haus 454 gegen 449, Netz 30 gegen 39). Zweitens
+über die **Stundenbilanz**, die auf ±1 Wh aufgeht:
+
+```
+PV + Batterie raus + Netzbezug  =  Haus + Batterie rein + Netzeinspeisung
+```
+
+Beispiel vom 22. September 2026, Stunde 7 UTC: 1350 + 0 + 1 = 473 + 798 + 81 (±1 Wh
+Rundung). Auch die Nullen sitzen richtig: kein PV vor der Dämmerung, Batterie entlädt
+nachts und lädt, sobald die Sonne das Haus trägt.
+
+Abrufbar mit `scripts/ecoflow-api.sh fast <SN> | python3 scripts/ecoflow-frames.py --hours`.
+
+**Offen:** Die Tagessumme deckt sich nicht mit `todayElectricityGeneration` des Portals –
+siehe die Liste der offenen Fragen.
+
 Ausgewertet wird das von `scripts/ecoflow-frames.py`, das die Ausgabe von `live` auf
 stdin nimmt. Der schnellere ~3-Sekunden-Takt, den die App über `.../set` freischaltet,
 ist damit weiterhin nicht erreicht – für einen Minutentakt braucht es ihn aber auch nicht.
@@ -743,8 +787,15 @@ REST-Interface – eine explizite Bestätigung dafür liegt aber nicht vor.
   umgesetzt als Kommando `fast`
 - [x] Hält der schnelle Takt durch? → **Ja, bei 3 s Wiederholung**; bei 10 s fällt das
   Gerät auf den Minutentakt zurück. Der Schalter hält also nur wenige Sekunden vor
-- [ ] Was tragen `cmd_func 254 / cmd_id 32` (rund zweimal pro Sekunde) sowie `96/3`,
-  `96/137`? Im schnellen Betrieb die häufigsten Frames überhaupt, bisher nicht ausgewertet
+- [x] Was trägt `cmd_func 254 / cmd_id 32`? → **Die Stundenhistorie des laufenden Tages**,
+  sechs Flüsse à 24 Stundenwerte in Wh. Aufgeschlüsselt unten, abrufbar mit
+  `ecoflow-frames.py --hours`
+- [ ] Was tragen `96/3` und `96/137`? Im schnellen Betrieb ebenfalls im Sekundenbereich,
+  bisher nicht ausgewertet
+- [ ] Warum weicht die Tagessumme der Stundenhistorie vom `todayElectricityGeneration`
+  des Portals ab? Am 22.09.2026 stand dort um 07:13Z 1,74 kWh, während die Stundenwerte
+  bis dahin rund 1,25 kWh ergeben. Womöglich misst das Portal an anderer Stelle –
+  ungeklärt
 - [ ] Was tragen die übrigen `cmd_id` (1, 108, 109, 110, 111, 136)? Nach den Namen der
   Fremdquelle EMS-Heartbeat, Batterie- und DCDC-Berichte – ungeprüft
 
