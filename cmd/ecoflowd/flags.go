@@ -17,7 +17,6 @@ type options struct {
 	serial      string
 	name        string
 	host        string
-	state       string
 	broker      string
 	topic       string
 	mqttUser    string
@@ -35,7 +34,6 @@ type config struct {
 	email        string
 	password     string
 	host         string
-	state        string
 	broker       string
 	topic        string
 	mqttUser     string
@@ -70,7 +68,6 @@ func newFlagSet(o *options, stderr io.Writer) *flag.FlagSet {
 	fs.StringVar(&o.serial, "sn", "", "serial number of the device")
 	fs.StringVar(&o.name, "name", "", "name to use instead of the serial number")
 	fs.StringVar(&o.host, "host", "", "API host (default "+ecoflow.DefaultHost+")")
-	fs.StringVar(&o.state, "state", "", "directory for the cached session token")
 	fs.StringVar(&o.broker, "broker", "", "local MQTT broker, e.g. tcp://127.0.0.1:1883")
 	fs.StringVar(&o.topic, "topic", defaultTopic, "topic prefix on the local broker")
 	fs.StringVar(&o.mqttUser, "mqtt-user", "", "user for the local broker")
@@ -134,7 +131,6 @@ exit status:
 
 examples:
   ecoflowd --sn HC31XXXXXXXXXXXX --stdout
-  ecoflowd --sn HC31XXXXXXXXXXXX --name mathe --state /var/lib/ecoflowd
   ecoflowd --sn HC31XXXXXXXXXXXX --stdout --fast
   ecoflowd --sn HC31XXXXXXXXXXXX --name mathe --broker tcp://127.0.0.1:1883
 `)
@@ -165,7 +161,6 @@ func buildConfig(o *options, _ *flag.FlagSet) (*config, error) {
 		serial:      strings.TrimSpace(o.serial),
 		name:        strings.TrimSpace(o.name),
 		host:        o.host,
-		state:       o.state,
 		broker:      o.broker,
 		topic:       o.topic,
 		mqttUser:    o.mqttUser,

@@ -492,8 +492,8 @@ ECOFLOWD_OPTIONS=--broker tcp://127.0.0.1:1883 --name mathe
 und `0600` auf die Datei sind deshalb nicht übertrieben. Der Login-Endpunkt überträgt es
 base64-kodiert statt gehasht; geschützt ist allein der TLS-Kanal.
 
-Die Unit läuft unter `DynamicUser` mit `ProtectSystem=strict`; den Sitzungstoken legt sie
-in `/var/lib/ecoflowd` ab, das systemd selbst anlegt und wieder aufräumt.
+Die Unit läuft unter `DynamicUser` mit `ProtectSystem=strict` und schreibt nichts auf die
+Platte — der Sitzungstoken lebt im Speicher des Prozesses.
 
 `RestartPreventExitStatus=78` ist der Kern: Bei abgelehnten Zugangsdaten bleibt der Dienst
 stehen, statt einen Tippfehler stündlich gegen einen inoffiziellen Endpunkt zu fahren.
@@ -623,9 +623,11 @@ Passwort base64-kodiert statt gehasht, und es ist das **Kontopasswort**, kein
 Anwendungstoken — wer die Datei lesen kann, hat den vollen EcoFlow-Zugang. Auf einem
 Dauerläufer gehört es in eine Datei, die nur root lesen kann.
 
-Mit `--state <verzeichnis>` legt der Dienst den Sitzungstoken ab und benutzt ihn wieder.
-Ohne das meldet er sich bei jedem Neustart neu an; der Token hielt in der Beobachtung 30
-Tage.
+Der Sitzungstoken bleibt im Speicher, solange der Prozess läuft — und der läuft, bis ein
+Signal kommt oder die Zugangsdaten abgelehnt werden. Ein Netz, das kommt und geht, wird
+intern abgefangen und führt **nicht** zu einer neuen Anmeldung. Auf die Platte wird er
+nicht geschrieben: Das spart genau eine Anmeldung pro Neustart und wäre eine weitere Kopie
+eines Zugangs auf einem Dateisystem.
 
 Die Ausgabe ist **zeichengleich** zu `scripts/ecoflow-frames.py` — nicht aus Geschmack,
 sondern damit sich beide Fassungen nebeneinander laufen lassen und vergleichen; ein Test
