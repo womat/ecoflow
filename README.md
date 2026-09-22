@@ -310,8 +310,21 @@ gibt diese Bytes unverändert wieder und ändert nur die laufende Nummer. Er tr�
 Parameter. Ein früherer Versuch, ihn aus Fremdquellen zusammenzusetzen, lag an vier
 Stellen daneben — siehe `api-status.md`.
 
-`ECOFLOW_FAST_INTERVAL` setzt die Wiederholrate (Default 10 s); die App selbst wiederholt
-etwa alle drei Sekunden.
+```console
+09:13:19Z  PV     970 W | house    415 W | battery    482 W (charging) | grid     72 W (export) | SoC 63 %
+09:13:20Z  PV     963 W | house    403 W | battery    476 W (charging) | grid     83 W (export) | SoC 63 %
+09:13:22Z  PV     967 W | house    403 W | battery    472 W (charging) | grid     92 W (export) | SoC 63 %
+```
+
+Gemessen: 62 Werte in 55 Sekunden statt zwei. Der Zeitstempel ist hier **sekundengenau**,
+beim Minutenbericht ist er auf die Minute gerundet.
+
+`ECOFLOW_FAST_INTERVAL` setzt die Wiederholrate, Default 3 Sekunden — der Rhythmus der
+App. **Länger ist nicht sparsamer, sondern wirkungslos:** Bei 10 Sekunden fiel das Gerät
+auf den Minutentakt zurück. Der Schalter hält nur wenige Sekunden vor.
+
+Dafür kostet es: Für jeden Schalter startet ein eigener `mosquitto_pub`, also alle drei
+Sekunden ein Verbindungsaufbau. Für eine Messung in Ordnung, für Dauerbetrieb nicht schön.
 
 ### Mitlesen, was die App sendet: `app-mqtt`
 

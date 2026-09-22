@@ -114,6 +114,12 @@ environment:
                        seconds between the wake-up calls of "live", default 30.
                        Other integrations use 20 to 60; below that the device
                        gains nothing and the broker sees more traffic.
+  ECOFLOW_FAST_INTERVAL
+                       seconds between the stream switches of "fast", default 3,
+                       which is the rate the phone app uses. The fast stream
+                       lapses if it is renewed much slower: at 10 seconds the
+                       device fell back to one report a minute. Each switch
+                       opens its own connection, so this is not free.
   ECOFLOW_PORTAL_TOKEN required for the portal commands. It is the session token
                        of https://user-portal.ecoflow.com, not an API key: open
                        the portal while logged in, then read the S1_JWT entry
@@ -889,7 +895,7 @@ mqtt_live() {
 				# again when nothing renews it. The counter wraps at 127 so the
 				# sequence stays a single-byte varint, as the app's own does.
 				seq=$((seq % 127 + 1))
-				sleep "${ECOFLOW_FAST_INTERVAL:-10}"
+				sleep "${ECOFLOW_FAST_INTERVAL:-3}"
 			done
 		) &
 		switch_pid=$!

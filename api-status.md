@@ -454,8 +454,17 @@ unterscheiden. Ohne diesen Schritt ist die Nutzlast kein gültiges Protobuf.
 
 **Beobachtete `cmd_id` bei `cmd_func 96`:** 1, **34**, 108, 109, 110, 111, 136.
 
-**Der Energiestrom liegt auf `cmd_id 34`** – nicht auf 33, wie die Fremdquelle für den DC
-Fit angibt. Die Nutzlast enthält eine eingebettete Nachricht mit dieser Belegung:
+**Den Energiestrom gibt es zweimal, auf `cmd_id 34` und `cmd_id 33`** – mit derselben
+Feldbelegung, aber unterschiedlichem Takt und unterschiedlicher Verpackung:
+
+| Kennung | Takt          | Zeitstempel     | Nutzlast                        | Bedingung                    |
+|---------|---------------|-----------------|---------------------------------|------------------------------|
+| **34**  | genau minütlich | auf die Minute gerundet | Felder in eine Nachricht eingepackt | kommt immer                  |
+| **33**  | alle 2–3 s    | sekundengenau   | Felder direkt in der Nutzlast   | nur bei aktivem Stream-Schalter |
+
+Wer also nur mit `live` misst, sieht ausschließlich 34 und hält 33 für nicht vorhanden –
+und wer der Fremdquelle folgt, die nur 33 nennt, findet ohne den Schalter gar nichts. Die
+Feldbelegung ist in beiden Fällen dieselbe:
 
 | Feld | Typ     | Bedeutung                              |
 |------|---------|----------------------------------------|
@@ -521,10 +530,26 @@ Sequenznummer, dazu zwei erfundene und zwei fehlende Felder. Richtig geraten war
 gewesen – es gibt keinen Grund, so etwas zu raten, wenn man es messen kann.
 
 Umgesetzt in `scripts/ecoflow-api.sh fast <SN>`: dasselbe wie `live`, zusätzlich dieser
-eine Frame alle `ECOFLOW_FAST_INTERVAL` Sekunden (Default 10). Es ist das **einzige**
-Kommando des Skripts, das auf ein `set`-Topic publiziert, es trägt keine Parameter, und
-es ist absichtlich ein eigenes Kommando – damit der Schreibzugriff nie als Nebenwirkung
-einer Werteabfrage passiert.
+eine Frame alle `ECOFLOW_FAST_INTERVAL` Sekunden. Es ist das **einzige** Kommando des
+Skripts, das auf ein `set`-Topic publiziert, es trägt keine Parameter, und es ist
+absichtlich ein eigenes Kommando – damit der Schreibzugriff nie als Nebenwirkung einer
+Werteabfrage passiert.
+
+**Am Gerät gemessen (22. September 2026):**
+
+- Der Broker **nimmt den Publish an**: `PUBACK RC:0` unter MQTT v5 mit QoS 1. Auf dem
+  `set`-Topic des App-Kanals greift also keine ACL-Sperre – anders als auf dem `get`-Topic
+  des Open-API-Kanals, wo derselbe Test `0x87` lieferte.
+- **Der Wiederholabstand entscheidet.** Mit 3 Sekunden (dem Rhythmus der App) läuft der
+  schnelle Strom: 62 Messwerte in 55 Sekunden. Mit 10 Sekunden fiel das Gerät auf den
+  Minutentakt zurück. Der Schalter hält also nur kurz vor; Default ist deshalb 3.
+- Nebenbei sichtbar wurde noch `cmd_func 254 / cmd_id 32` (rund zweimal pro Sekunde) sowie
+  `96/3`, `96/1` und `96/137` im Sekundenbereich – alle nicht ausgewertet.
+
+**Preis:** Das Skript startet für jeden Schalter einen eigenen `mosquitto_pub`, also alle
+3 Sekunden einen Verbindungsaufbau. Für eine Messung ist das in Ordnung, für Dauerbetrieb
+wäre eine stehende Verbindung angebracht – die kann `mosquitto_pub` von der Kommandozeile
+aus nicht, das wäre ein Grund, diesen Teil in Go zu ziehen.
 
 Ausgewertet wird das von `scripts/ecoflow-frames.py`, das die Ausgabe von `live` auf
 stdin nimmt. Der schnellere ~3-Sekunden-Takt, den die App über `.../set` freischaltet,
@@ -704,9 +729,10 @@ REST-Interface – eine explizite Bestätigung dafür liegt aber nicht vor.
 - [x] Wie sieht der Befehl für den schnellen Takt wirklich aus? → **Mitgelesen** auf dem
   `set`-Topic, während die App lief (22.09.2026). Bytes und Feldbelegung siehe oben;
   umgesetzt als Kommando `fast`
-- [ ] Hält der schnelle Takt auch durch? Der Frame wird alle 10 s wiederholt, weil die
-  App das ebenso tut – ob das nötig ist und ob der Stream von selbst wieder ausgeht,
-  ist ungeprüft
+- [x] Hält der schnelle Takt durch? → **Ja, bei 3 s Wiederholung**; bei 10 s fällt das
+  Gerät auf den Minutentakt zurück. Der Schalter hält also nur wenige Sekunden vor
+- [ ] Was tragen `cmd_func 254 / cmd_id 32` (rund zweimal pro Sekunde) sowie `96/3`,
+  `96/137`? Im schnellen Betrieb die häufigsten Frames überhaupt, bisher nicht ausgewertet
 - [ ] Was tragen die übrigen `cmd_id` (1, 108, 109, 110, 111, 136)? Nach den Namen der
   Fremdquelle EMS-Heartbeat, Batterie- und DCDC-Berichte – ungeprüft
 
