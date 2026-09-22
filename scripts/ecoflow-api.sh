@@ -113,7 +113,10 @@ environment:
   ECOFLOW_LIVE_INTERVAL
                        seconds between the wake-up calls of "live", default 30.
                        Other integrations use 20 to 60; below that the device
-                       gains nothing and the broker sees more traffic.
+                       gains nothing and the broker sees more traffic. Set it
+                       to 0 to leave the wake-up calls out altogether and see
+                       whether subscribing alone keeps the device talking -
+                       every measurement so far was taken with them running.
   ECOFLOW_FAST_INTERVAL
                        seconds between the stream switches of "fast", default 3,
                        which is the rate the phone app uses. The fast stream
@@ -840,8 +843,12 @@ mqtt_live() {
 			printf 'subscribe: %s\n' "$push_topic"
 			printf 'subscribe: %s\n' "$reply_topic"
 			printf 'subscribe: %s\n' "$state_topic"
-			printf 'publish:   %s every %ss\n' "$get_topic" "$interval"
-			printf 'payload:   %s\n' "$(wake_payload)"
+			if [ "$interval" -gt 0 ]; then
+				printf 'publish:   %s every %ss\n' "$get_topic" "$interval"
+				printf 'payload:   %s\n' "$(wake_payload)"
+			else
+				printf 'publish:   nothing - wake-up calls disabled\n'
+			fi
 			printf 'broker:    %s:%s as %s with <password>\n' \
 				"$MQTT_URL" "$MQTT_PORT" "$MQTT_ACCOUNT"
 		} >&2
@@ -854,19 +861,29 @@ mqtt_live() {
 	# Every connection gets a fresh client id: the broker rejects ids that do
 	# not look like the app's own, and it refuses to reuse one it has already
 	# seen. Hence a random one per publish rather than a single shared id.
-	(
-		sleep 3
-		while :; do
-			mosquitto_pub -h "$MQTT_URL" -p "$MQTT_PORT" \
-				-u "$MQTT_ACCOUNT" -P "$MQTT_PASSWORD" "${MQTT_TLS[@]}" \
-				${debug[@]+"${debug[@]}"} \
-				-i "$(app_client_id "$user_id")" \
-				-t "$get_topic" -m "$(wake_payload)" >"$quiet" 2>&1 ||
-				printf 'wake-up call failed, retrying in %ss\n' "$interval" >&2
-			sleep "$interval"
-		done
-	) &
-	local pub_pid=$!
+	#
+	# An interval of 0 leaves them out entirely. That is not a convenience: it
+	# is the only way to answer whether the wake-up call does anything at all,
+	# since every measurement so far was taken with it running. Subscribing
+	# alone may well be what keeps the device talking.
+	local pub_pid=''
+	if [ "$interval" -gt 0 ]; then
+		(
+			sleep 3
+			while :; do
+				mosquitto_pub -h "$MQTT_URL" -p "$MQTT_PORT" \
+					-u "$MQTT_ACCOUNT" -P "$MQTT_PASSWORD" "${MQTT_TLS[@]}" \
+					${debug[@]+"${debug[@]}"} \
+					-i "$(app_client_id "$user_id")" \
+					-t "$get_topic" -m "$(wake_payload)" >"$quiet" 2>&1 ||
+					printf 'wake-up call failed, retrying in %ss\n' "$interval" >&2
+				sleep "$interval"
+			done
+		) &
+		pub_pid=$!
+	else
+		printf 'wake-up calls disabled - subscription only\n' >&2
+	fi
 
 	# The fast stream, and the only place in this script that publishes to a
 	# .../set topic. It sends exactly one message - the EnergyStreamSwitch as it
@@ -910,7 +927,9 @@ mqtt_live() {
 	# group, so the subscription ends at once and this trap runs right after. A
 	# signal sent to this process alone waits for the subscription to finish
 	# first, because bash defers traps until the foreground command returns.
-	trap 'for p in "$pub_pid" $switch_pid; do
+	# Unquoted on purpose: either may be empty when that loop was not started,
+	# and an empty argument would make kill complain. Process ids never split.
+	trap 'for p in $pub_pid $switch_pid; do
 		pkill -P "$p" 2>/dev/null || true
 		kill "$p" 2>/dev/null || true
 	done' INT TERM EXIT
