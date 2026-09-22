@@ -63,7 +63,7 @@ Modus umstellt.
 
 **Zur Adressierung:** Die Referenz-Integration übergibt die 4xxxx-Zahlen unverändert an
 pymodbus, sie gehen also genau so auf den Draht. `modbusread` tut dasselbe (siehe
-`CLAUDE.md`: Adressen werden nie umgerechnet) – die Tabellen unten sind damit **1:1
+[`README.md`](./README.md): Adressen werden nie umgerechnet) – die Tabellen unten sind damit **1:1
 verwendbar**. Die frühere Angabe „Register-Nummerierung 1-based" in diesen Notizen ist
 dadurch stark in Zweifel gezogen, aber erst am Gerät endgültig zu klären.
 
@@ -221,9 +221,16 @@ modbusread <ip> 40519 raw --count 100 --out hex    # Live-Block am Stück ansehe
 ```
 
 Die offiziellen Cloud-Feldnamen in [`api-status.md`](./api-status.md) (`bpSoc`, `bpPwr`,
-`mpptPwr`, `sysLoadPwr`, `sysGridPwr` samt Vorzeichenkonvention) sind dabei die
-Gegenprobe: Ein Register, dessen Wert nicht zur offiziellen Semantik passt, ist falsch
-gedeutet.
+`mpptPwr`, `sysLoadPwr`, `sysGridPwr`) sind dabei die Gegenprobe für den **Betrag**: Ein
+Register, dessen Wert nicht zur offiziellen Semantik passt, ist falsch gedeutet.
+
+**Bei den Vorzeichen taugt sie nicht.** Am DC Fit gilt für `sysGridPwr` das Gegenteil der
+Dokuangabe — positiv heißt dort **Einspeisung**, gemessen über die Energiebilanz
+`PV = Batterie + Haus + Netz`. Wer die offizielle Konvention ungeprüft als Maßstab nimmt,
+verwirft eine richtige Deutung. Was auf dem Cloud-Kanal gemessen ist: Batterie positiv =
+Laden, Netz positiv = Einspeisung, Haus wird negativ gemeldet. Ob die Modbus-Register
+dieselbe Richtung führen, ist damit **nicht** gesagt — es ist aber die Gegenprobe, die
+bereitliegt.
 
 ## Steuer-/Konfigurationsregister
 
@@ -249,8 +256,9 @@ gedeutet.
 - `self_use_mode_ena`, `intelligent_mode_ena`, `battery_saver_mode_ena` (Binärflags)
 
 ### Nicht kartierte Konfigurationsregister
-Der Bereich unterhalb 40574 enthält mehr Register, als die Integration liest; einige davon
-sind **vorzeichenbehaftete** 32-Bit-Werte, für die es dort bisher keinen Decoder gibt.
+Der Block 40519–40607 wird am Stück gelesen, aber nicht vollständig gedeutet: Unterhalb
+40574 liegen mehr Register, als die Integration **dekodiert**; einige davon sind
+**vorzeichenbehaftete** 32-Bit-Werte, für die es dort keinen Decoder gibt.
 `modbusread` kann sie mit `int32` lesen.
 
 ## Decoding-Snippet (pymodbus)
@@ -292,13 +300,25 @@ Strom), rund 180 Netzschutzparameter, Zeitpläne/Peak-Shaving/VPP, ausführliche
 sowie Monats- und Jahresenergien.
 
 Für dieses Gerät ist die **offizielle** Cloud-API gesperrt (siehe `api-status.md`).
-Erreichbar bleiben diese Werte laut Quelle über das Endkunden-Portal
-`user-portal.ecoflow.com`: im Netzwerk-Tab des Browsers der Request `detail?<seriennummer>`.
-Inoffiziell, jederzeit änderbar – aber es ist der einzige bekannte Weg an diese Daten.
+Erreichbar bleiben diese Werte über zwei inoffizielle Wege, beide inzwischen skriptiert
+statt aus dem Browser abgelesen:
+
+- **Endkunden-Portal**, `provider-service/user/device/detail?sn=<SN>` —
+  `scripts/ecoflow-api.sh portal|status`. **Keine Live-Quelle:** Der Endpunkt gibt den
+  zuletzt in die Cloud gepushten Stand heraus, der in einer Messung über eine Stunde
+  stillstand.
+- **App-MQTT-Kanal** — `scripts/ecoflow-api.sh live|fast`, ausgepackt von
+  `scripts/ecoflow-frames.py` oder von `cmd/ecoflowd`. Liefert laufend Messwerte, dazu
+  die Stundenbilanz des Tages und die Seriennummern der verbauten Komponenten.
+
+Beides ist inoffiziell und jederzeit änderbar.
 
 ## Vorsicht bei Schreibzugriffen
 
-`modbusread` schreibt grundsätzlich nicht (siehe `CLAUDE.md`). Wer es anderweitig tut:
+`modbusread` schreibt grundsätzlich nicht – es gibt in diesem Programm keinen Codepfad,
+der einen Modbus-Schreibbefehl absetzt. (Das zweite Binary des Repos, `ecoflowd`, hat
+einen Schreibpfad, aber in die Cloud und nur hinter dem Flag `--fast`; Modbus fasst es
+nicht an.) Wer es anderweitig tut:
 
 - Das Mapping ist reverse-engineert und von EcoFlow nicht bestätigt; Firmware-Updates
   können Adressen und Verhalten ändern.
