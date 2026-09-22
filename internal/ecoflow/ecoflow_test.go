@@ -37,7 +37,7 @@ func TestLogin(t *testing.T) {
 		if err := json.Unmarshal(body, &gotBody); err != nil {
 			t.Errorf("request body was not JSON: %v", err)
 		}
-		io.WriteString(w, `{"code":"0","data":{"token":"tok","user":{"userId":1970125448142065666}}}`)
+		io.WriteString(w, `{"code":"0","data":{"token":"tok","user":{"userId":1000000000000000001}}}`)
 	})
 
 	s, err := c.Login(context.Background(), "someone@example.com", "hunter2")
@@ -48,10 +48,11 @@ func TestLogin(t *testing.T) {
 	if s.Token != "tok" {
 		t.Errorf("got token %q, want %q", s.Token, "tok")
 	}
-	// The user id arrives as a JSON number past what a float64 holds exactly,
-	// so it has to survive as digits rather than go through float.
-	if s.UserID != "1970125448142065666" {
-		t.Errorf("got user id %q, want %q", s.UserID, "1970125448142065666")
+	// The user id arrives as a JSON number past what a float64 holds exactly
+	// (2^53), so it has to survive as digits rather than go through float. The
+	// value here is synthetic but of the same magnitude as a real one.
+	if s.UserID != "1000000000000000001" {
+		t.Errorf("got user id %q, want %q", s.UserID, "1000000000000000001")
 	}
 
 	if got := gotBody["password"]; got != base64.StdEncoding.EncodeToString([]byte("hunter2")) {
