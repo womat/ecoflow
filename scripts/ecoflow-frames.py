@@ -44,6 +44,25 @@ import time
 #
 # Zeros land where they should: no PV before dawn, the battery discharging
 # overnight and charging once the sun carries the house.
+# The module list, cmd_func 96 / cmd_id 3: the serial numbers of the parts the
+# system is made of, as ASCII, one protobuf field each. Byte for byte identical
+# across a whole capture, so it is an inventory rather than a measurement.
+#
+# Like the bare acknowledgement on cmd_id 137, it shows up only while the fast
+# stream is being switched on - neither appeared at all in a capture taken
+# without it. The switch asks for an acknowledgement (needAck = 1), and the
+# device answers with both.
+#
+# The field numbers were matched against the portal's own "Component
+# information" table, which lists the same serials with their types, so these
+# names are read off EcoFlow's interface rather than guessed from prefixes.
+MODULES = (96, 3)
+MODULE_KINDS = {
+    1: 'system',
+    2: 'converter',
+    3: 'battery',
+}
+
 HOURLY = (254, 32)
 HOURLY_FLOWS = {
     1: 'PV',
@@ -190,6 +209,44 @@ def hourly_part(frame):
     return None
 
 
+def modules(frame):
+    """Return [(field number, serial)] of a module list frame, or None."""
+    for number, wire, value in fields(frame):
+        if number != 1 or wire != 2:
+            continue
+        header = {n: v for n, w, v in fields(value) if w == 0}
+        if (header.get(8), header.get(9)) != MODULES:
+            return None
+        payload = next((v for n, w, v in fields(value) if n == 1 and w == 2), None)
+        if payload is None:
+            return None
+
+        key = header.get(14, 0) & 0xFF
+        plain = bytes(c ^ key for c in payload)
+
+        found = []
+        for slot, wire, entry in fields(plain):
+            if wire != 2:
+                continue
+            serial = next((v for n, w, v in fields(entry) if n == 1 and w == 2), None)
+            if serial is None:
+                continue
+            try:
+                found.append((slot, serial.decode('ascii')))
+            except UnicodeDecodeError:
+                return None
+        return found or None
+    return None
+
+
+def render_modules(found):
+    """The module list, with the types the portal gives for the same serials."""
+    lines = ['modules reported by the system', '']
+    for slot, serial in found:
+        lines.append(f'  {MODULE_KINDS.get(slot, f"field {slot}"):<10} {serial}')
+    return '\n'.join(lines)
+
+
 def render_hours(when, parts):
     """The hourly table, one row per flow, plus the balance as a check."""
     hour = time.gmtime(when).tm_hour
@@ -221,6 +278,26 @@ def render_hours(when, parts):
 # arrives every two to three seconds, so anything beyond a minute means it has
 # lapsed and the minutely report is the only source left.
 FAST_STILL_RUNNING = 90
+
+
+def main_modules():
+    """Print the module list on the first one seen, then stop."""
+    for line in sys.stdin:
+        parts = line.split()
+        if len(parts) < 4:
+            continue
+        try:
+            frame = bytes.fromhex(parts[3])
+        except ValueError:
+            continue
+
+        found = modules(frame)
+        if found:
+            print(render_modules(found))
+            return 0
+
+    print('no module list seen - is the fast stream running?', file=sys.stderr)
+    return 1
 
 
 def main_hours():
@@ -302,6 +379,8 @@ if __name__ == '__main__':
     try:
         if '--hours' in sys.argv[1:]:
             sys.exit(main_hours())
+        if '--modules' in sys.argv[1:]:
+            sys.exit(main_modules())
         main()
     except (BrokenPipeError, KeyboardInterrupt):
         pass

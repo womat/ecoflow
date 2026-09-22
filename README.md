@@ -360,6 +360,26 @@ dort etwas anderes als eine Rundungsdifferenz, stimmt die Feldzuordnung nicht me
 weil eine Firmware die Nummern verschoben hat. Genau daran wurde sie ursprünglich belegt;
 Einzelheiten in `api-status.md`.
 
+### Welche Komponenten die Anlage meldet: `--modules`
+
+```console
+$ scripts/ecoflow-api.sh fast HC31XXXXXXXXXXXX | python3 scripts/ecoflow-frames.py --modules
+modules reported by the system
+
+  system     HC31Z1H4ZG150145
+  converter  HC312103BFCP0504
+  battery    HJ3AZD1AZH6C0814
+  battery    HJ3AZD1B2HAA0025
+```
+
+Seriennummern und Bestückung ohne App und ohne Portal — hier also ein 5-kW-Konverter mit
+zwei Batteriemodulen. Wie `--hours` wartet es auf die erste Meldung und endet dann.
+
+Die Bezeichnungen sind **nicht aus den Präfixen geraten**, sondern gegen die Anzeige des
+Portals geprüft: `user-portal.ecoflow.com` führt unter *System information → Component
+information* dieselben Seriennummern mit Typ und Modell. Firmware-Stände und
+Aktivierungsdatum stehen allerdings nur dort, nicht im Frame.
+
 ### Mitlesen, was die App sendet: `app-mqtt`
 
 ```bash
