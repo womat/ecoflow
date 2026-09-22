@@ -49,12 +49,15 @@ func (f Frame) Energy() (Energy, bool) {
 		body = parse(first.bytes)
 	}
 
+	// seen tracks a PV field that really is a fixed32, not merely a field with
+	// that number. float32At hands back a zero for anything else, and a frame
+	// rendered as all zeros reads like a genuine measurement at night.
 	var e Energy
 	var seen bool
 	for _, fl := range body {
 		switch fl.number {
 		case energyPV:
-			e.PV, seen = fl.float32At(), true
+			e.PV, seen = fl.float32At(), fl.wire == wireFixed32 && len(fl.fixed) == 4
 		case energyHouse:
 			e.House = fl.float32At()
 		case energyBattery:

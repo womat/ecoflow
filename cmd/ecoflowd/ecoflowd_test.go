@@ -130,7 +130,11 @@ func TestTopicsCarryTheSerial(t *testing.T) {
 // they are also used to test the decoding itself. Reading them from here
 // rather than copying keeps one set of recordings for both.
 func TestOutputMatchesPythonDecoder(t *testing.T) {
-	for _, capture := range []string{"fast", "slow"} {
+	// "damaged" holds frames that are deliberately broken. Its golden file is
+	// empty, so it states two things at once: neither implementation reports a
+	// reading from them, and neither stops on them. Each of those frames used
+	// to end the python decoder with a traceback mid-stream.
+	for _, capture := range []string{"fast", "slow", "damaged"} {
 		t.Run(capture, func(t *testing.T) {
 			want, err := os.ReadFile(captureDir + capture + ".golden")
 			if err != nil {
