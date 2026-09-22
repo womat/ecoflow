@@ -366,10 +366,10 @@ Einzelheiten in `api-status.md`.
 $ scripts/ecoflow-api.sh fast HC31XXXXXXXXXXXX | python3 scripts/ecoflow-frames.py --modules
 modules reported by the system
 
-  system     HC31Z1H4ZG150145
-  converter  HC312103BFCP0504
-  battery    HJ3AZD1AZH6C0814
-  battery    HJ3AZD1B2HAA0025
+  system     HC31XXXXXXXXXXXX
+  converter  HC31YYYYYYYYYYYY
+  battery    HJ3AXXXXXXXXXXXX
+  battery    HJ3AYYYYYYYYYYYY
 ```
 
 Seriennummern und Bestückung ohne App und ohne Portal — hier also ein 5-kW-Konverter mit
