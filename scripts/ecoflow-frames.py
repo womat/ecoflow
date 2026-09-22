@@ -29,8 +29,9 @@ import struct
 import sys
 import time
 
-# (cmd_func, cmd_id) of the two reports that carry power values.
-ENERGY_STREAM = {(96, 34), (96, 33)}
+# The two reports that carry power values, by cmd_id within cmd_func 96.
+MINUTELY, FAST = 34, 33
+ENERGY_STREAM = {(96, MINUTELY), (96, FAST)}
 
 # Field numbers inside the energy stream report, as measured on a DC Fit.
 GRID, DCDC, BATTERY, PV, TIMESTAMP, TIMEZONE, SOC, HOUSE = 1, 2, 3, 4, 5, 6, 7, 8
@@ -71,13 +72,14 @@ def fields(b):
 
 
 def energy_stream(frame):
-    """Return the decoded power values of a frame, or None for anything else."""
+    """Return (values, cmd_id) of a power report, or None for anything else."""
     for number, wire, value in fields(frame):
         if number != 1 or wire != 2:
             continue
         header = {n: v for n, w, v in fields(value) if w == 0}
         if (header.get(8), header.get(9)) not in ENERGY_STREAM:
             return None
+        cmd_id = header.get(9)
         payload = next((v for n, w, v in fields(value) if n == 1 and w == 2), None)
         if payload is None:
             return None
@@ -98,7 +100,7 @@ def energy_stream(frame):
         out = {}
         for number, wire, value in fields(body):
             out[number] = struct.unpack('<f', value)[0] if wire == 5 else value
-        return out if PV in out else None
+        return (out, cmd_id) if PV in out else None
     return None
 
 
@@ -121,7 +123,16 @@ def render(values):
             f'grid {abs(grid):6.0f} W ({grid_dir}) | SoC {values.get(SOC, "?")} %')
 
 
+# How long a fast report keeps the minutely one redundant. The fast stream
+# arrives every two to three seconds, so anything beyond a minute means it has
+# lapsed and the minutely report is the only source left.
+FAST_STILL_RUNNING = 90
+
+
 def main():
+    previous = None
+    last_fast = None
+
     for line in sys.stdin:
         parts = line.split()
         # "<time> <topic> <length> <hex>" - anything else is a status line.
@@ -132,9 +143,30 @@ def main():
         except ValueError:
             continue
 
-        values = energy_stream(frame)
-        if values:
-            print(render(values), flush=True)
+        report = energy_stream(frame)
+        if not report:
+            continue
+        values, cmd_id = report
+        when = values.get(TIMESTAMP)
+
+        if cmd_id == FAST:
+            last_fast = when
+        elif last_fast is not None and when is not None \
+                and when - last_fast <= FAST_STILL_RUNNING:
+            # Every minutely report shares its timestamp with a fast one, so
+            # while the fast stream runs it is a second copy of a reading
+            # already printed - only rounded to the minute, which makes it look
+            # like the clock stopped.
+            continue
+
+        line = render(values)
+        if line == previous:
+            # The device sends some frames twice. Two identical readings are
+            # one reading, and printing both suggests a change that did not
+            # happen.
+            continue
+        previous = line
+        print(line, flush=True)
 
 
 if __name__ == '__main__':

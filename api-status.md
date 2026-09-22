@@ -463,8 +463,20 @@ Feldbelegung, aber unterschiedlichem Takt und unterschiedlicher Verpackung:
 | **33**  | alle 2–3 s    | sekundengenau   | Felder direkt in der Nutzlast   | nur bei aktivem Stream-Schalter |
 
 Wer also nur mit `live` misst, sieht ausschließlich 34 und hält 33 für nicht vorhanden –
-und wer der Fremdquelle folgt, die nur 33 nennt, findet ohne den Schalter gar nichts. Die
-Feldbelegung ist in beiden Fällen dieselbe:
+und wer der Fremdquelle folgt, die nur 33 nennt, findet ohne den Schalter gar nichts.
+
+**Bei laufendem schnellen Strom ist 34 überflüssig:** Über eine Messreihe hinweg hatte
+*jeder* Minutenbericht einen Sekundenbericht mit demselben Zeitstempel. Er trägt also
+nichts bei, sieht aber wie ein Stillstand aus, weil sein Zeitstempel auf die Minute
+gerundet ist. `ecoflow-frames.py` unterdrückt ihn deshalb, solange innerhalb der letzten
+90 Sekunden ein 33er kam – und zeigt ihn wieder, sobald der schnelle Strom versiegt.
+
+Unabhängig davon schickt das Gerät manche Frames **zweimal**, bei beiden Kennungen. Zwei
+gleiche Messwerte sind ein Messwert, deshalb wird eine Zeile unterdrückt, die mit der
+vorigen identisch ist. Zwei *verschiedene* Werte in derselben Sekunde bleiben stehen – die
+kommen vor und sind keine Wiederholung.
+
+Die Feldbelegung ist in beiden Fällen dieselbe:
 
 | Feld | Typ     | Bedeutung                              |
 |------|---------|----------------------------------------|

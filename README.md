@@ -286,9 +286,10 @@ Das ist der Weg zu aktuellen Werten – **nicht** `status`. Am Gerät gemessen (
 `measured : 07:13:28Z`. Der Cloud-Umweg wird also auch von einem laufenden Zuhörer nicht
 aufgefrischt.
 
-Der Zeitstempel links ist der des Geräts (UTC), das Gerät meldet minütlich und schickt
-jeden Frame doppelt. Wie die Frames aufgebaut sind, warum die Nutzlast XOR-verschleiert
-ist und woran die Feldzuordnung hängt, steht in `api-status.md`.
+Der Zeitstempel links ist der des Geräts (UTC). Das Gerät schickt manche Frames doppelt;
+identische Folgezeilen werden unterdrückt, zwei verschiedene Werte in derselben Sekunde
+dagegen nicht — die kommen vor. Wie die Frames aufgebaut sind, warum die Nutzlast
+XOR-verschleiert ist und woran die Feldzuordnung hängt, steht in `api-status.md`.
 
 ### Schneller Takt: `fast`
 
@@ -318,6 +319,11 @@ Stellen daneben — siehe `api-status.md`.
 
 Gemessen: 62 Werte in 55 Sekunden statt zwei. Der Zeitstempel ist hier **sekundengenau**,
 beim Minutenbericht ist er auf die Minute gerundet.
+
+Solange der schnelle Strom läuft, wird der Minutenbericht **nicht** mit angezeigt: Er
+trägt denselben Zeitstempel wie ein Sekundenbericht, den es ohnehin gab, und sähe mit
+seiner gerundeten Uhrzeit wie ein Stillstand aus. Versiegt der schnelle Strom, erscheint
+er wieder.
 
 `ECOFLOW_FAST_INTERVAL` setzt die Wiederholrate, Default 3 Sekunden — der Rhythmus der
 App. **Länger ist nicht sparsamer, sondern wirkungslos:** Bei 10 Sekunden fiel das Gerät
