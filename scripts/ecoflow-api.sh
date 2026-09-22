@@ -102,7 +102,8 @@ commands:
                        minute. This is the one command that publishes to a
                        .../set topic - see the note below before using it.
                        Needs jq, mosquitto_sub and mosquitto_pub.
-  selftest             check the signature assembly, no keys and no network
+  selftest             check the signature assembly and the stream switch frame,
+                       no keys and no network
   help                 show this message
 
 environment:
@@ -1038,8 +1039,11 @@ stream_switch_frame() {
 
 	[ "$seq" -ge 1 ] && [ "$seq" -le 127 ] || die "sequence out of range: $seq"
 
+	# -v matters: without it od replaces a 16-byte line that repeats the one
+	# before with a single "*", which would silently shorten the frame on the
+	# one topic that can change the device.
 	local sn_hex
-	sn_hex="$(printf '%s' "$sn" | od -An -tx1 | tr -d ' \n')"
+	sn_hex="$(printf '%s' "$sn" | od -v -An -tx1 | tr -d ' \n')"
 	local sn_len=$((${#sn_hex} / 2))
 	[ "$sn_len" -ge 1 ] && [ "$sn_len" -le 60 ] || die "serial number has an odd length: $sn"
 
@@ -1121,8 +1125,20 @@ selftest() {
 		failed=1
 	}
 
+	# Vector 3: the stream switch frame, against the bytes the Go
+	# implementation builds from the same captured original. The serial here
+	# repeats its first sixteen bytes on purpose - that is exactly what od
+	# collapses to a "*" unless it is called with -v, which once shortened this
+	# frame by thirteen bytes on the one topic that can change the device.
+	got="$(stream_switch_frame 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA' 7 | od -v -An -tx1 | tr -d ' \n')"
+	want='0a490a04080110011020186020012801380340604861500458017007800103880101ba0103696f73ca01204141414141414141414141414141414141414141414141414141414141414141'
+	[ "$got" = "$want" ] || {
+		printf 'selftest: stream switch frame is %s, want %s\n' "$got" "$want" >&2
+		failed=1
+	}
+
 	[ "$failed" -eq 0 ] || die 'selftest FAILED'
-	printf 'selftest OK (matches the official test vector)\n'
+	printf 'selftest OK (signature matches the official test vector)\n'
 }
 
 # main - parse the global options, then dispatch on the command

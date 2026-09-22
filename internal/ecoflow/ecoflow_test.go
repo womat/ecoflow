@@ -168,15 +168,19 @@ func TestCertificationRetriesWithBearer(t *testing.T) {
 }
 
 func TestCertificationRefused(t *testing.T) {
+	// rejected says whether the cloud turned the token down, as opposed to
+	// merely not answering properly. Only the first is a reason to discard it
+	// and log in again, so the difference is worth stating case by case.
 	tests := []struct {
-		name   string
-		status int
-		body   string
+		name     string
+		status   int
+		body     string
+		rejected bool
 	}{
-		{"expired token", http.StatusUnauthorized, ``},
-		{"non-zero code", http.StatusOK, `{"code":"1006","message":"not allowed"}`},
-		{"code 0 but no data", http.StatusOK, `{"code":"0"}`},
-		{"not json at all", http.StatusOK, `<html>gateway</html>`},
+		{"expired token", http.StatusUnauthorized, ``, true},
+		{"non-zero code", http.StatusOK, `{"code":"1006","message":"not allowed"}`, true},
+		{"code 0 but no data", http.StatusOK, `{"code":"0"}`, false},
+		{"not json at all", http.StatusOK, `<html>gateway</html>`, false},
 	}
 
 	for _, tc := range tests {
@@ -186,9 +190,13 @@ func TestCertificationRefused(t *testing.T) {
 				io.WriteString(w, tc.body)
 			})
 
-			if _, err := c.Certification(context.Background(),
-				Session{Token: "tok", UserID: "42"}); err == nil {
-				t.Error("got no error, want one")
+			_, err := c.Certification(context.Background(), Session{Token: "tok", UserID: "42"})
+			if err == nil {
+				t.Fatal("got no error, want one")
+			}
+			if got := errors.Is(err, ErrTokenRejected); got != tc.rejected {
+				t.Errorf("errors.Is(err, ErrTokenRejected) = %v, want %v (err: %v)",
+					got, tc.rejected, err)
 			}
 		})
 	}

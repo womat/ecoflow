@@ -15,7 +15,8 @@ import (
 type cloud struct {
 	logins int
 	certs  int
-	fail   bool // make certification fail, as an expired token would
+	fail   bool // make certification refuse, as an expired token would
+	hangup bool // make certification drop the connection, as a bad line does
 }
 
 func (c *cloud) start(t *testing.T) *config {
@@ -28,6 +29,9 @@ func (c *cloud) start(t *testing.T) *config {
 			io.WriteString(w, `{"code":"0","data":{"token":"tok","user":{"userId":42}}}`)
 		case strings.Contains(r.URL.Path, "certification"):
 			c.certs++
+			if c.hangup {
+				panic(http.ErrAbortHandler) // closes the connection, no reply
+			}
 			if c.fail {
 				io.WriteString(w, `{"code":"1006","message":"not allowed"}`)
 				return
@@ -103,6 +107,30 @@ func TestExpiredTokenIsForgotten(t *testing.T) {
 
 	if c.logins != 3 {
 		t.Errorf("logged in %d times, want one per attempt after the token was dropped", c.logins)
+	}
+}
+
+// TestATokenSurvivesABadLine is the counterpart to the test above, and the
+// distinction the whole thing turns on. Certification failing because nothing
+// answered says nothing about the token; throwing it away there would make
+// every hiccup on the line cost another login - and the login is the one
+// request that carries the account password.
+func TestATokenSurvivesABadLine(t *testing.T) {
+	c := &cloud{hangup: true}
+	cfg := c.start(t)
+
+	var s ecoflow.Session
+	for range 3 {
+		if _, err := session(context.Background(), cfg, &s, nil, io.Discard, io.Discard); err == nil {
+			t.Fatal("expected certification to fail")
+		}
+		if s.Token == "" {
+			t.Fatal("the token was discarded although the cloud never turned it down")
+		}
+	}
+
+	if c.logins != 1 {
+		t.Errorf("logged in %d times over three unreachable attempts, want exactly 1", c.logins)
 	}
 }
 

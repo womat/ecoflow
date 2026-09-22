@@ -43,6 +43,15 @@ const DefaultProductType = "85"
 // them alike retries a typo against an undocumented endpoint forever.
 var ErrCredentials = errors.New("the account credentials were rejected")
 
+// ErrTokenRejected reports a session token the cloud would not accept.
+//
+// It is what tells "this token is done" apart from "the cloud was not
+// reachable just now", and only the first is a reason to throw the token away
+// and log in again. Without the distinction a flaky line turns every retry
+// into another login, which is the one request that carries the account
+// password.
+var ErrTokenRejected = errors.New("the session token was rejected")
+
 // Client reaches the consumer cloud.
 type Client struct {
 	Host        string       // defaults to DefaultHost
@@ -190,8 +199,8 @@ func (c *Client) Certification(ctx context.Context, s Session) (Broker, error) {
 		return Broker{}, fmt.Errorf("certification answered with something other than JSON: %w", err)
 	}
 	if answer.code() != "0" {
-		return Broker{}, fmt.Errorf("certification refused: %s (code %s)",
-			message(answer.Message), answer.code())
+		return Broker{}, fmt.Errorf("%w: certification refused: %s (code %s)",
+			ErrTokenRejected, message(answer.Message), answer.code())
 	}
 	if answer.Data.Account == "" || answer.Data.URL == "" {
 		return Broker{}, errors.New("certification succeeded but carried no credentials")
@@ -222,7 +231,7 @@ func (c *Client) authorized(ctx context.Context, url, token string) ([]byte, err
 		}
 	}
 	if status == http.StatusUnauthorized || status == http.StatusForbidden {
-		return nil, fmt.Errorf("HTTP %d - the portal token is missing, wrong or expired", status)
+		return nil, fmt.Errorf("%w: HTTP %d - it is missing, wrong or expired", ErrTokenRejected, status)
 	}
 	return raw, nil
 }
