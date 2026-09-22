@@ -16,7 +16,7 @@ Modbus TCP) für den EcoFlow PowerOcean DC Fit.
 | [`modbus-registers.md`](./modbus-registers.md)       | Register-Map (SOC, Batterie, PV, Netz, Energiezähler, Steuerregister) inkl. Decoding-Beispielen       |
 | [`cmd/modbusread`](./cmd/modbusread)                 | Kleines Go-CLI zum Nachmessen der Register am Gerät (s.u.)                                            |
 | [`scripts/ecoflow-api.sh`](./scripts/ecoflow-api.sh) | Shell-Skript für signierte Leseaufrufe gegen die EcoFlow Cloud-API (s.u.)                             |
-| [`scripts/ecoflow-frames.py`](./scripts/ecoflow-frames.py) | Packt die Live-Frames aus `ecoflow-api.sh live` aus – der Weg zu aktuellen Messwerten (s.u.)    |
+| [`scripts/ecoflow-frames.py`](./scripts/ecoflow-frames.py) | Packt die Live-Frames aus `ecoflow-api.sh live` aus – aktuelle Messwerte und Stundenbilanz (s.u.) |
 
 ## `modbusread`
 
@@ -331,6 +331,34 @@ auf den Minutentakt zurück. Der Schalter hält nur wenige Sekunden vor.
 
 Dafür kostet es: Für jeden Schalter startet ein eigener `mosquitto_pub`, also alle drei
 Sekunden ein Verbindungsaufbau. Für eine Messung in Ordnung, für Dauerbetrieb nicht schön.
+
+### Stundenwerte des Tages: `--hours`
+
+Das Gerät schickt nebenbei die **Energiebilanz des laufenden Tages, stundenweise**. Sie
+steht im häufigsten Frame überhaupt, kommt aber nur im schnellen Betrieb:
+
+```console
+$ scripts/ecoflow-api.sh fast HC31XXXXXXXXXXXX | python3 scripts/ecoflow-frames.py --hours
+hourly energy in Wh, device day up to 2026-09-22 09:13:18Z
+
+flow             0     1     2     3     4     5     6     7     8     9   total
+PV               0     0     0     0    43   183   738  1350   793   194    3301
+battery in       0     0     0     0     0     0   288   798   357   102    1545
+battery out    261   245   248   297   353   158     0     0     0     0    1562
+grid in          1     0     0    11    32    13     1     1     3     0      62
+grid out         0     0     0     0     0     2    68    81    24     0     175
+house          262   246   249   308   427   352   383   473   415    91    3206
+balance          0    -1    -1     0     1     0     0    -1     0     1
+```
+
+Es wartet auf eine vollständige Meldung, gibt die Tabelle aus und **endet dann** — der
+Datenstrom stoppt von selbst mit. Die Stunden sind UTC, die laufende füllt sich noch.
+
+Die `balance`-Zeile ist die Probe und gehört zur Ausgabe: In jeder Stunde muss
+`PV + Batterie raus + Netzbezug` gleich `Haus + Batterie rein + Einspeisung` sein. Steht
+dort etwas anderes als eine Rundungsdifferenz, stimmt die Feldzuordnung nicht mehr — etwa
+weil eine Firmware die Nummern verschoben hat. Genau daran wurde sie ursprünglich belegt;
+Einzelheiten in `api-status.md`.
 
 ### Mitlesen, was die App sendet: `app-mqtt`
 
