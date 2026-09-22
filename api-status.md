@@ -189,7 +189,7 @@ Die Anfrage hat den Broker nie verlassen.
 zum Auslesen von Messwerten nicht nutzbar – weder über REST (1006) noch über MQTT (zwei abonnierbare, aber stumme
 Topics; Anfragen per ACL verboten).
 
-### Der Weg, der trotzdem funktioniert: das Endkunden-Portal
+## 2. Das Endkunden-Portal (REST)
 
 `user-portal.ecoflow.com` zeigt für dasselbe Gerät ein vollständiges Dashboard – SOC,
 Solar-, Haus-, Netz- und Batterieleistung, Tages-/Monats-/Jahreserträge. Am eigenen Gerät
@@ -366,10 +366,15 @@ Anzeige.
 
 Laut `MaxGrmm/EF-PowerOcean-TcpModbus` liefert derselbe Endpunkt noch deutlich mehr als
 das Dashboard zeigt – Zellspannungen, SOH, phasenweise Wirk-/Blind-/Scheinleistung, rund
-180 Netzschutzparameter. Es bleiben der lokale Modbus-Weg (Abschnitt 2) und – mit
-allen Nachteilen – die inoffizielle App-Cloud (Abschnitt 2b).
+180 Netzschutzparameter. **Ungeprüft:** Das genannte Projekt ist eine Modbus-Integration,
+und ob sich die Angabe auf diesen REST-Endpunkt oder auf Register bezieht, geht daraus
+nicht hervor.
 
-### Der MQTT-Kanal der App
+**Wofür dieser Weg taugt:** als Gegenprobe und für Zählerstände, nicht für laufende
+Messwerte – dafür der App-MQTT-Kanal (Kapitel 3). Der stabile Weg bliebe Modbus
+(Kapitel 4), sobald er freigeschaltet ist.
+
+## 3. Der MQTT-Kanal der App
 
 Der Kanal, den die App benutzt – und der einzige Cloud-Kanal, auf dem für dieses Gerät
 tatsächlich Nachrichten ankommen. Abonnierbar mit `scripts/ecoflow-api.sh live <SN>`.
@@ -383,7 +388,8 @@ Kosmetik: Der Broker weist Client-IDs ab, die nicht so aussehen, und er weist ei
 gesehene ID nach dem Verbindungsabbruch erneut ab. Deshalb baut `live` für **jede**
 Verbindung eine neue.
 
-**Topics** (Wildcards meiden – die ACL lehnt sie ab, siehe oben):
+**Topics** (Wildcards meiden – die ACL lehnt sie ab; zum Fehlschluss, der daraus
+entsteht, siehe Kapitel 1, „MQTT-Weg der Open API"):
 
 | Topic                                           | Richtung  | Inhalt                          |
 |-------------------------------------------------|-----------|---------------------------------|
@@ -677,7 +683,23 @@ stdin nimmt. Der schnellere ~3-Sekunden-Takt, den die App über `.../set` freisc
 ist damit für `live` nicht erreicht – dafür gibt es `fast` bzw. `ecoflowd --fast`. Für
 einen Minutentakt braucht es ihn ohnehin nicht.
 
-## 2. Lokales Modbus TCP
+### Einordnung: der „Enhanced Mode" der Community
+
+Unter diesem Namen läuft derselbe Kanal in den Home-Assistant-Integrationen. Er umgeht die
+1006-Sperre, indem er sich mit den normalen EcoFlow-Kontozugangsdaten anmeldet statt mit
+API-Keys. Genau das tun die Home-Assistant-Integrationen für die
+gesperrten Modelle. **Community-Weg ohne jede Zusage von EcoFlow**: kann jederzeit
+brechen, und die Kontozugangsdaten liegen im Klartext in der Konfiguration.
+(Quelle: https://github.com/shuette42/ecoflow-energy-ha)
+
+Zum dort genannten Takt „~2–4 s": Der gilt nur mit aktivem Stream-Schalter. Ohne ihn
+meldet das Gerät **minütlich** — gemessen, siehe „Am DC Fit gemessen".
+
+Dieses Repo geht den Weg vollständig: `scripts/ecoflow-api.sh live` bzw. `fast` holt die
+Frames, `scripts/ecoflow-frames.py` packt sie aus, und `cmd/ecoflowd` tut beides in einem
+Dienst und reicht die Werte an einen lokalen MQTT-Broker weiter.
+
+## 4. Lokales Modbus TCP
 
 - Kein REST, sondern klassisches Modbus-TCP-Protokoll auf Port 502
 - Muss vom **EcoFlow-Installateur/-Partner** über die EcoFlow **Pro App**
@@ -690,7 +712,7 @@ einen Minutentakt braucht es ihn ohnehin nicht.
     - evcc (Ladeinfrastruktur-Software) über eigenes Meter-Template
       `ecoflow-powerocean-modbus`
 
-## 2a. Zugang zur EcoFlow Pro App
+## 4a. Zugang zur EcoFlow Pro App
 
 Die **Pro App** (`com.ecoflow.pro`) ist die Installateur-App und nur für autorisierte
 Distributoren und Installateure freigeschaltet; Endkunden nutzen die normale EcoFlow-App.
@@ -722,28 +744,10 @@ mit SN und Kaufbeleg.
 **Wichtig:** Für die Modbus-Freischaltung ist keine Übertragung nötig – es genügt, dass *irgendein* Pro-Zugang den
 Schalter einmalig umlegt.
 
-## 2b. Inoffizielle App-Cloud ("Enhanced Mode")
-
-Das ist derselbe Kanal, der oben unter „Der MQTT-Kanal der App" ausführlich beschrieben
-und am Gerät durchgemessen ist — hier nur die Einordnung, warum es ihn gibt.
-
-Er umgeht die 1006-Sperre, indem er sich mit den normalen EcoFlow-Kontozugangsdaten
-anmeldet statt mit API-Keys. Genau das tun die Home-Assistant-Integrationen für die
-gesperrten Modelle. **Community-Weg ohne jede Zusage von EcoFlow**: kann jederzeit
-brechen, und die Kontozugangsdaten liegen im Klartext in der Konfiguration.
-(Quelle: https://github.com/shuette42/ecoflow-energy-ha)
-
-Zum dort genannten Takt „~2–4 s": Der gilt nur mit aktivem Stream-Schalter. Ohne ihn
-meldet das Gerät **minütlich** — gemessen, siehe „Am DC Fit gemessen".
-
-Dieses Repo geht den Weg vollständig: `scripts/ecoflow-api.sh live` bzw. `fast` holt die
-Frames, `scripts/ecoflow-frames.py` packt sie aus, und `cmd/ecoflowd` tut beides in einem
-Dienst und reicht die Werte an einen lokalen MQTT-Broker weiter.
-
-## 2c. Checkliste für den Installateurstermin
+## 4b. Checkliste für den Installateurstermin
 
 Die Modbus-Freischaltung kann nur ein Installateur mit Pro-App-Zugang vornehmen (siehe
-2a). Ein solcher Termin wiederholt sich nicht schnell – deshalb hier abhakbar, was dabei
+4a). Ein solcher Termin wiederholt sich nicht schnell – deshalb hier abhakbar, was dabei
 zu klären ist.
 
 **Vorab-Test, ob überhaupt noch etwas fehlt**
@@ -801,7 +805,7 @@ Port 502 `connection refused` – also deaktiviert, wie dokumentiert.
   Developer-API freigeschaltet werden kann. Für die PowerOcean-Familie wenig
   aussichtsreich, aber der einzige verbliebene Hebel auf der Cloud-Seite.
 
-## 2d. Was andere Integrationen können (und was nicht)
+## 5. Was andere Integrationen können (und was nicht)
 
 - **OpenHAB-Binding `org.openhab.binding.ecoflow`:** rein cloudbasiert über die
   Developer-API und unterstützt nur Delta 2, Delta 2 Max und PowerStream – **kein
@@ -815,7 +819,7 @@ Port 502 `connection refused` – also deaktiviert, wie dokumentiert.
   für diese Gerätefamilie nicht praktikabel ist. Die dort verwendeten Registeradressen
   bestätigen die aktuelle Karte in `modbus-registers.md`.
 
-## 3. "Offene API" in Shop-Beschreibungen
+## 6. "Offene API" in Shop-Beschreibungen
 
 Verkaufsseiten für das DC-Fit-Set werben mit einer "offenen API-Schnittstelle"
 zur Anbindung an EMS wie Solar Manager Connect 2 oder Loxone. Vermutlich ist
