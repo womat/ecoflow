@@ -80,7 +80,6 @@ func serve(ctx context.Context, cfg *config, stdout, stderr io.Writer) int {
 	}
 }
 
-// session runs one connection from start to finish.
 // session runs one connection from start to finish. The bool reports whether
 // the subscription ever stood, which is what tells a failed attempt apart from
 // a connection that worked and later dropped.
@@ -100,10 +99,14 @@ func session(ctx context.Context, cfg *config, s *ecoflow.Session,
 
 	broker, err := client.Certification(ctx, *s)
 	if err != nil {
-		// The token may simply have expired - they last about a month. Forget
-		// it so the next pass logs in again instead of retrying a dead one
-		// until someone notices.
-		*s = ecoflow.Session{}
+		// Only throw the token away when the cloud actually turned it down -
+		// they last about a month and do expire, so a dead one has to be
+		// noticed. A line that was briefly gone is not that: discarding the
+		// token there would turn every hiccup into another login, and the
+		// login is the one request carrying the account password.
+		if errors.Is(err, ecoflow.ErrTokenRejected) {
+			*s = ecoflow.Session{}
+		}
 		return false, fmt.Errorf("fetch broker credentials: %w", err)
 	}
 
@@ -318,6 +321,9 @@ func (f *fastStream) deadline() <-chan time.Time {
 func (f *fastStream) arrived() { f.satisfied = true }
 
 func (f *fastStream) complain(stderr io.Writer) {
+	// Both guards earn their keep. Clearing the timer stops the select from
+	// firing again; warned keeps the promise local, so the single complaint
+	// does not depend on how the one caller happens to be shaped.
 	f.timer = nil
 	if f.satisfied || f.warned {
 		return

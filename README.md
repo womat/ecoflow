@@ -168,7 +168,7 @@ scripts/ecoflow-api.sh app-cert                   # MQTT-Zugangsdaten des App-Ka
 scripts/ecoflow-api.sh live <SN>                  # App-Kanal abonnieren und wachhalten
 scripts/ecoflow-api.sh fast <SN>                  # dasselbe mit schnellem Takt (schreibt!)
 scripts/ecoflow-api.sh app-mqtt <SN>              # mitlesen, was die App ans Geraet sendet
-scripts/ecoflow-api.sh selftest                   # Signatur gegen EcoFlows Testvektor
+scripts/ecoflow-api.sh selftest                   # Signatur und Stream-Schalter-Frame
 ```
 
 `values` nutzt `POST /iot-open/sign/device/quota`, den in EcoFlows PowerOcean-Doku
@@ -693,8 +693,13 @@ Dauerläufer gehört es in eine Datei, die nur root lesen kann.
 
 Der Sitzungstoken bleibt im Speicher, solange der Prozess läuft — und der läuft, bis ein
 Signal kommt oder die Zugangsdaten abgelehnt werden. Ein Netz, das kommt und geht, wird
-intern abgefangen und führt **nicht** zu einer neuen Anmeldung. Auf die Platte wird er
-nicht geschrieben: Das spart genau eine Anmeldung pro Neustart und wäre eine weitere Kopie
+intern abgefangen und führt **nicht** zu einer neuen Anmeldung: Der Token wird nur dann
+weggeworfen, wenn die Cloud ihn selbst ablehnt (HTTP 401/403 oder ein `code` ungleich `0`
+auf `certification`) — ein Verbindungsabbruch, ein Timeout oder eine HTML-Fehlerseite vom
+Gateway sagen über den Token nichts aus. Der Unterschied ist nicht kosmetisch: Die
+Anmeldung ist die eine Anfrage, die das Kontopasswort trägt, und eine wackelige Leitung
+hat sie vorher bei jedem Versuch ausgelöst. Auf die Platte wird der Token nicht
+geschrieben: Das spart genau eine Anmeldung pro Neustart und wäre eine weitere Kopie
 eines Zugangs auf einem Dateisystem.
 
 Die Ausgabe ist **zeichengleich** zu `scripts/ecoflow-frames.py` — nicht aus Geschmack,

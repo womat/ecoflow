@@ -22,7 +22,7 @@ go test ./...                  # alles, läuft ohne Hardware
 go test -run TestParseAddr ./internal/decode/   # einzelner Test
 go vet ./...
 gofmt -l ./cmd ./internal      # keine Ausgabe = in Ordnung; die CI scheitert daran
-scripts/ecoflow-api.sh selftest # Signatur gegen EcoFlows Testvektor, ohne Netz
+scripts/ecoflow-api.sh selftest # Signatur und Stream-Schalter-Frame, ohne Netz
 ```
 
 Die Integrationstests starten den Modbus-Server aus `github.com/simonvetter/modbus`
