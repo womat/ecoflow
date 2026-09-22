@@ -42,7 +42,17 @@ func serve(ctx context.Context, cfg *config, stdout, stderr io.Writer) int {
 	wait := backoffStart
 
 	for {
-		err := session(ctx, cfg, &s, out, stdout, stderr)
+		connected, err := session(ctx, cfg, &s, out, stdout, stderr)
+
+		// A connection that actually stood is not something to back off from.
+		// Without this the wait only ever grows: a service that reconnects
+		// once an hour reaches the quarter-hour ceiling after half a day, and
+		// from then on every brief interruption costs fifteen minutes of
+		// silence - however healthy the network is by then.
+		if connected {
+			wait = backoffStart
+		}
+
 		switch {
 		case ctx.Err() != nil:
 			fmt.Fprintln(stderr, "stopping")
@@ -71,15 +81,18 @@ func serve(ctx context.Context, cfg *config, stdout, stderr io.Writer) int {
 }
 
 // session runs one connection from start to finish.
+// session runs one connection from start to finish. The bool reports whether
+// the subscription ever stood, which is what tells a failed attempt apart from
+// a connection that worked and later dropped.
 func session(ctx context.Context, cfg *config, s *ecoflow.Session,
-	out *publisher, stdout, stderr io.Writer) error {
+	out *publisher, stdout, stderr io.Writer) (bool, error) {
 
 	client := &ecoflow.Client{Host: cfg.host}
 
 	if s.Token == "" {
 		got, err := client.Login(ctx, cfg.email, cfg.password)
 		if err != nil {
-			return err
+			return false, err
 		}
 		fmt.Fprintf(stderr, "logged in as user %s\n", got.UserID)
 		*s = got
@@ -91,7 +104,7 @@ func session(ctx context.Context, cfg *config, s *ecoflow.Session,
 		// it so the next pass logs in again instead of retrying a dead one
 		// until someone notices.
 		*s = ecoflow.Session{}
-		return fmt.Errorf("fetch broker credentials: %w", err)
+		return false, fmt.Errorf("fetch broker credentials: %w", err)
 	}
 
 	topics := ecoflow.TopicsFor(s.UserID, cfg.serial)
@@ -101,11 +114,11 @@ func session(ctx context.Context, cfg *config, s *ecoflow.Session,
 // listen subscribes and reports what arrives, until the connection or the
 // context ends.
 func listen(ctx context.Context, cfg *config, out *publisher, broker ecoflow.Broker,
-	s ecoflow.Session, topics ecoflow.Topics, stdout, stderr io.Writer) error {
+	s ecoflow.Session, topics ecoflow.Topics, stdout, stderr io.Writer) (bool, error) {
 
 	id, err := ecoflow.ClientID(s.UserID)
 	if err != nil {
-		return err
+		return false, err
 	}
 
 	// Paho's own reconnect is deliberately off: it would reconnect with the
@@ -139,14 +152,19 @@ func listen(ctx context.Context, cfg *config, out *publisher, broker ecoflow.Bro
 	})
 
 	c := mqtt.NewClient(opts)
-	if token := c.Connect(); !token.WaitTimeout(30*time.Second) || token.Error() != nil {
-		return fmt.Errorf("connect to %s: %w", broker.Address(), tokenErr(token))
-	}
+	// Registered before the check on purpose: if Connect times out here while
+	// paho completes the handshake a moment later, the client would otherwise
+	// be left connected with nobody holding a reference - and its client id
+	// burnt, since the broker refuses one it has already seen.
 	defer c.Disconnect(250)
+
+	if token := c.Connect(); !token.WaitTimeout(30*time.Second) || token.Error() != nil {
+		return false, fmt.Errorf("connect to %s: %w", broker.Address(), tokenErr(token))
+	}
 
 	for _, topic := range topics.Subscribe() {
 		if token := c.Subscribe(topic, 0, nil); !token.WaitTimeout(30*time.Second) || token.Error() != nil {
-			return fmt.Errorf("subscribe to %s: %w", topic, tokenErr(token))
+			return false, fmt.Errorf("subscribe to %s: %w", topic, tokenErr(token))
 		}
 	}
 	fmt.Fprintf(stderr, "connected to %s, subscribed to %d topics\n",
@@ -177,9 +195,9 @@ func listen(ctx context.Context, cfg *config, out *publisher, broker ecoflow.Bro
 	for {
 		select {
 		case <-ctx.Done():
-			return nil
+			return true, nil
 		case err := <-lost:
-			return fmt.Errorf("connection lost: %w", err)
+			return true, fmt.Errorf("connection lost: %w", err)
 		case <-fast.deadline():
 			fast.complain(stderr)
 		case now := <-stale.C:
