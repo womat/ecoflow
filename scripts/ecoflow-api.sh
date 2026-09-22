@@ -26,9 +26,10 @@
 #                        "portal" commands only - see usage()
 #   ECOFLOW_USER_ID      numeric account id, for "app-cert", "app-mqtt" and "live"
 #
-# Requires: bash, curl, openssl. jq is used for pretty-printing when present and
-# is mandatory for the mqtt, request, app-mqtt and live commands; the mqtt and
-# app-mqtt commands need mosquitto_sub, request and live need mosquitto_pub too.
+# Requires: bash, curl, openssl. jq only pretty-prints for devices, quota, get,
+# cert, portal, portal-get and selftest; the other nine commands need it and
+# stop without it. mqtt and app-mqtt also need mosquitto_sub; request, live and
+# fast need mosquitto_pub as well.
 
 set -euo pipefail
 
@@ -1249,6 +1250,7 @@ main() {
 		;;
 	app-cert)
 		[ "$#" -eq 0 ] || die 'app-cert takes no arguments'
+		command -v jq >/dev/null 2>&1 || die 'app-cert needs jq'
 		[ -n "${ECOFLOW_USER_ID:-}" ] ||
 			die 'ECOFLOW_USER_ID is not set - "login" prints it (see --help)'
 		body="$(portal_get /iot-auth/app/certification \

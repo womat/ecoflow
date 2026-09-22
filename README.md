@@ -15,9 +15,9 @@ Modbus TCP) für den EcoFlow PowerOcean DC Fit.
 | [`api-status.md`](./api-status.md)                   | Überblick: Cloud-REST-API vs. lokales Modbus TCP, bekannte Probleme (z.B. Fehler 1006), Freischaltung |
 | [`modbus-registers.md`](./modbus-registers.md)       | Register-Map (SOC, Batterie, PV, Netz, Energiezähler, Steuerregister) inkl. Decoding-Beispielen       |
 | [`cmd/modbusread`](./cmd/modbusread)                 | Kleines Go-CLI zum Nachmessen der Register am Gerät (s.u.)                                            |
-| [`scripts/ecoflow-api.sh`](./scripts/ecoflow-api.sh) | Shell-Skript für signierte Leseaufrufe gegen die EcoFlow Cloud-API (s.u.)                             |
+| [`scripts/ecoflow-api.sh`](./scripts/ecoflow-api.sh) | Shell-Skript für alle vier Cloud-Wege: Developer-API, Portal, App-MQTT, Stream-Schalter (s.u.)        |
 | [`scripts/ecoflow-frames.py`](./scripts/ecoflow-frames.py) | Packt die Live-Frames aus `ecoflow-api.sh live` aus – aktuelle Messwerte und Stundenbilanz (s.u.) |
-| [`cmd/ecoflowd`](./cmd/ecoflowd)                     | Go-Dienst, der denselben Kanal dauerhaft liest – im Entstehen (s.u.)                                  |
+| [`cmd/ecoflowd`](./cmd/ecoflowd)                     | Go-Dienst, der denselben Kanal dauerhaft liest und auf einen MQTT-Broker publiziert (s.u.)             |
 
 ## `modbusread`
 
@@ -138,8 +138,9 @@ HMAC-Signatur der EcoFlow Developer/Open API baut und die Antwort roh ausgibt.
 umstellen (s.u.). `values` und `login` benutzen POST — das sind trotzdem Lesezugriffe, die
 Endpunkte wollen es nur so; das schreibende PUT-Gegenstück kennt das Skript nicht.
 
-Braucht `bash`, `curl` und `openssl`. **`jq` ist für die meisten Kommandos Pflicht** — nur
-`devices`, `quota`, `get` und `cert` kommen ohne aus, dort verschönert es die Ausgabe.
+Braucht `bash`, `curl` und `openssl`. **`jq` ist für die meisten Kommandos Pflicht** — ohne
+es kommen nur `devices`, `quota`, `get`, `cert`, `portal`, `portal-get` und `selftest` aus,
+dort verschönert es die Ausgabe. Die übrigen neun brechen ohne `jq` ab.
 
 Zugangsdaten kommen aus der Umgebung, nie aus dem Repo. **Es gibt zwei Sorten, und die
 meisten Kommandos brauchen die zweite:** Das API-Schlüsselpaar gilt nur für die
@@ -720,14 +721,22 @@ hält sie gegen dieselben Mitschnitte zusammen.
 ## Kurzüberblick
 
 - Eine spezifische, offiziell dokumentierte REST-API für den DC Fit existiert nicht.
+- Vier Wege wurden untersucht; **genau einer liefert heute laufend Messwerte**, und das
+  ist der inoffizielle MQTT-Kanal der Endkunden-App.
 - Die generische EcoFlow Developer/Open API (Cloud) liefert für die PowerOcean-Familie
   Fehler 1006 "not allowed" – eine Modell-Sperrliste, kein Bug. Der **DC Fit (SN-Präfix `HC31`) ist betroffen, am Gerät
   bestätigt**: `device/list` listet ihn zwar
   mit Code 0, `device/quota/all` verweigert aber die Messwerte mit 1006.
-- Praktikabler Weg: **lokales Modbus TCP** (Port 502) – muss vom Installateur über
-  die EcoFlow Pro App freigeschaltet werden, Registerbelegung ist nicht offiziell
-  dokumentiert, sondern community-ermittelt.
-- Details siehe die beiden verlinkten Dateien.
+- Das **Endkunden-Portal** (REST, Session-Token) antwortet, gibt aber nur den zuletzt in
+  die Cloud gepushten Stand heraus – in einer Messung stand der über eine Stunde still.
+- Der **MQTT-Kanal der App** (Protobuf, rückentwickelt) liefert von selbst Minutenwerte
+  und mit dem Stream-Schalter Sekundenwerte. Darauf laufen `scripts/ecoflow-api.sh` und
+  der Dienst `cmd/ecoflowd`.
+- **Lokales Modbus TCP** (Port 502) wäre der stabile Weg, ist am Gerät aber noch
+  gesperrt (`connection refused`): Es muss vom Installateur über die EcoFlow Pro App
+  freigeschaltet werden, und die Registerbelegung ist nicht offiziell dokumentiert,
+  sondern community-ermittelt.
+- Details siehe die verlinkten Dateien, die Gegenüberstellung in `api-status.md`.
 
 ## Offene Punkte
 

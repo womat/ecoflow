@@ -46,7 +46,7 @@ lesendem Zugriff sollte er folgenlos sein, belegt ist das nicht.
 
 Der Zugang zur Pro App selbst (Installateur-Rolle, Anlagen- vs. Besitzer-Bindung,
 Entbindung von einem fremden Konto) steht in [`api-status.md`](./api-status.md),
-Abschnitt „Zugang zur EcoFlow Pro App"; die Fragen für den Termin in Abschnitt 2c. Für die
+Abschnitt 4a „Zugang zur EcoFlow Pro App"; die Fragen für den Termin in Abschnitt 4b. Für die
 Freischaltung ist keine Übertragung der Anlage nötig – es genügt, dass ein Pro-Zugang den
 Modus umstellt.
 

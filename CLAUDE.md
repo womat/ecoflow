@@ -4,11 +4,16 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Was dieses Repo ist
 
-Zwei Dinge, die zusammengehören:
+Recherche-Notizen und die Werkzeuge, mit denen sie entstanden sind:
 
 1. **Recherche-Notizen** (Markdown, Deutsch) zu den Integrationsmöglichkeiten des
-   **EcoFlow PowerOcean DC Fit** – Cloud-API vs. lokales Modbus TCP, Register-Map.
-2. **`modbusread`** – ein Go-CLI, mit dem die Angaben aus diesen Notizen am Gerät
+   **EcoFlow PowerOcean DC Fit** – Cloud-Wege vs. lokales Modbus TCP, Register-Map.
+2. **`scripts/ecoflow-api.sh`** und **`scripts/ecoflow-frames.py`** – das Messwerkzeug am
+   Cloud-Kanal und der Frame-Dekoder. Damit sind praktisch alle Befunde dieser Notizen
+   entstanden.
+3. **`cmd/ecoflowd`** – der Dienst für den Dauerbetrieb auf demselben Kanal: liest die
+   Messwerte und publiziert sie auf einen lokalen MQTT-Broker.
+4. **`modbusread`** – ein Go-CLI, mit dem die Angaben aus diesen Notizen am Gerät
    überprüft werden. Bewusst **universell**: es enthält kein EcoFlow-Wissen, keine
    eingebaute Register-Map und keine gerätespezifischen Meldungen. Spricht Modbus TCP
    und Modbus RTU (seriell); der Transport ergibt sich aus dem Ziel-Argument
