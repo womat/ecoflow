@@ -129,6 +129,20 @@ func listen(ctx context.Context, cfg *config, broker ecoflow.Broker,
 	fmt.Fprintf(stderr, "connected to %s, subscribed to %d topics\n",
 		broker.Address(), len(topics.Subscribe()))
 
+	// The connection lives only as long as this function, and so must the
+	// switch loop: a goroutine publishing onto a client that has been
+	// disconnected would fail quietly forever.
+	connCtx, done := context.WithCancel(ctx)
+	defer done()
+
+	var fast fastStream
+	if cfg.fast {
+		fmt.Fprintf(stderr, "switching on the fast stream every %s (publishes to %s)\n",
+			cfg.switchEvery, topics.Set)
+		go keepFastStream(connCtx, c, cfg, topics.Set, stderr)
+		fast.start(cfg.switchEvery)
+	}
+
 	var seen readings
 	for {
 		select {
@@ -136,6 +150,8 @@ func listen(ctx context.Context, cfg *config, broker ecoflow.Broker,
 			return nil
 		case err := <-lost:
 			return fmt.Errorf("connection lost: %w", err)
+		case <-fast.deadline():
+			fast.complain(stderr)
 		case payload := <-incoming:
 			f, err := frames.Parse(payload)
 			if err != nil {
@@ -144,11 +160,82 @@ func listen(ctx context.Context, cfg *config, broker ecoflow.Broker,
 			if cfg.verbose {
 				fmt.Fprintf(stderr, "frame %v, %d bytes\n", f.Command, len(f.Payload))
 			}
+			if f.Command == frames.Fast {
+				fast.arrived()
+			}
 			if line, _, ok := seen.add(f); ok && cfg.stdout {
 				fmt.Fprintln(stdout, line)
 			}
 		}
 	}
+}
+
+// keepFastStream renews the device's fast stream until the connection ends.
+//
+// The switch only holds for a short while, so it has to be repeated; ten
+// seconds was already too slow when measured, and the app itself sends it
+// every three. The sequence number wraps at 127 to stay a single-byte varint,
+// which is what the captured frames do.
+func keepFastStream(ctx context.Context, c mqtt.Client, cfg *config, topic string, stderr io.Writer) {
+	seq := 1
+	for {
+		frame, err := frames.BuildStreamSwitch(cfg.serial, seq)
+		if err != nil {
+			fmt.Fprintln(stderr, "error: building the stream switch:", err)
+			return
+		}
+
+		token := c.Publish(topic, 1, false, frame)
+		if !token.WaitTimeout(10*time.Second) || token.Error() != nil {
+			fmt.Fprintln(stderr, "warning: the stream switch was not accepted:", tokenErr(token))
+		}
+
+		seq = seq%frames.MaxSwitchSeq + 1
+
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(cfg.switchEvery):
+		}
+	}
+}
+
+// fastStream watches whether asking for the fast stream actually achieved
+// anything.
+//
+// The broker accepts the switch either way - it answered PUBACK RC:0 when this
+// was measured - so acceptance proves nothing. What proves it is whether fast
+// reports turn up. If they do not, saying so once is the difference between a
+// coarse graph and a mystery; saying it every three seconds would be noise.
+type fastStream struct {
+	timer     *time.Timer
+	satisfied bool
+	warned    bool
+}
+
+func (f *fastStream) start(every time.Duration) {
+	// Generous on purpose: the first switch and the device's answer both take
+	// a moment, and a false alarm here would be worse than a late one.
+	f.timer = time.NewTimer(max(20*every, 60*time.Second))
+}
+
+func (f *fastStream) deadline() <-chan time.Time {
+	if f.timer == nil {
+		return nil
+	}
+	return f.timer.C
+}
+
+func (f *fastStream) arrived() { f.satisfied = true }
+
+func (f *fastStream) complain(stderr io.Writer) {
+	f.timer = nil
+	if f.satisfied || f.warned {
+		return
+	}
+	f.warned = true
+	fmt.Fprintln(stderr,
+		"warning: --fast is on but no fast reports arrived; continuing at the minute cadence")
 }
 
 func tokenErr(t mqtt.Token) error {
