@@ -127,8 +127,14 @@ hängt sie samt Checksummen an das GitHub-Release.
 
 Gegenstück zu `modbusread` für den Cloud-Weg: ein kleines Shell-Skript, das die
 HMAC-Signatur der EcoFlow Developer/Open API baut und die Antwort roh ausgibt.
-Ebenfalls **rein lesend** – es kennt nur GET-Endpunkte. Braucht `bash`, `curl` und
-`openssl`; `jq` wird benutzt, wenn es da ist.
+
+**Bis auf eine Ausnahme liest es nur.** Die Ausnahme gehört benannt statt verschwiegen:
+`fast` publiziert auf ein `.../set`-Topic und kann damit als einziges Kommando das Gerät
+umstellen (s.u.). `values` und `login` benutzen POST — das sind trotzdem Lesezugriffe, die
+Endpunkte wollen es nur so; das schreibende PUT-Gegenstück kennt das Skript nicht.
+
+Braucht `bash`, `curl` und `openssl`. **`jq` ist für die meisten Kommandos Pflicht** — nur
+`devices`, `quota`, `get` und `cert` kommen ohne aus, dort verschönert es die Ausgabe.
 
 Zugangsdaten kommen aus der Umgebung, nie aus dem Repo:
 
@@ -413,15 +419,17 @@ Protobuf-Werkzeugkette mehr, als sie bringt. Bewährt sich das Auswerten im Allt
 es als Go-Werkzeug ins Repo: dann läuft es in der CI mit, ist ohne Gerät testbar wie
 `internal/decode`, und die Binaries der Releases decken es mit ab.
 
-`request` und `live` sind die **einzigen** Kommandos, die publizieren, und beide nur auf
-ein `get`-Topic. `request` abonniert `.../get_reply`,
-schickt die Anfrage an `.../get` und wartet `ECOFLOW_WAIT` Sekunden (Default 15). Das
-Suffix ist fest verdrahtet – es gibt kein freies Topic-Argument, das `.../set`-Topic ist
-von hier aus also nicht erreichbar. Braucht zusätzlich `mosquitto_pub`.
+**Drei Kommandos publizieren, alle übrigen abonnieren nur.** Zwei davon auf ein
+`get`-Topic, also Leseanfragen: `request` und `live`. Das dritte, `fast`, publiziert auf
+`.../set` — der einzige Weg im Skript, über den sich das Gerät umstellen ließe. Dass es
+ein eigenes Kommando ist und kein Schalter an `live`, ist Absicht: Wer Werte abfragt, soll
+dabei nicht unbemerkt schreiben.
 
-Die Ausnahme ist `fast` (s.o.): Es publiziert als einziges Kommando auf `.../set`, mit
-einem mitgelesenen, parameterlosen Befehl. Dass es ein eigenes Kommando ist und nicht ein
-Schalter an `live`, ist Absicht – wer Werte abfragt, soll dabei nicht unbemerkt schreiben.
+`request` abonniert **zwei** Topics — `.../get_reply` und `.../quota` —, schickt die
+Anfrage an `.../get` und wartet `ECOFLOW_WAIT` Sekunden (Default 15). Auf beiden zu
+lauschen ist kein Übereifer: Die ACL verweigert an manchen Konten `.../get_reply`, während
+sie `.../quota` gewährt. Das Suffix ist fest verdrahtet, es gibt kein freies
+Topic-Argument. Braucht zusätzlich `mosquitto_pub`.
 
 Exit-Code `0` heißt `code 0` von der API, `2` jeder andere Code. **`2` mit Code 1006**
 ist die interessante Antwort: Dann ist das Modell von der Developer-API ausgeschlossen (siehe `api-status.md`) und nur
@@ -450,9 +458,10 @@ connected to mqtt-e.ecoflow.com:8883, subscribed to 3 topics
 10:30:00Z  PV    1544 W | house    618 W | battery    926 W (charging) | grid      0 W (idle) | SoC 74 %
 ```
 
-**Ohne `--fast` publiziert er nichts.** Das ist keine Vorsicht, sondern das, was das Gerät
-braucht: Das Abo allein hält es am Reden, gemessen über 23 Minuten ohne eine einzige
-gesendete Nachricht. Der Takt ist dann eine Minute.
+**Ohne `--fast` sendet er nichts an das Gerät.** Das ist keine Vorsicht, sondern das, was
+das Gerät braucht: Das Abo allein hält es am Reden, gemessen über 23 Minuten ohne eine
+einzige an die Cloud gesendete Nachricht. An deinen lokalen Broker gehen die Messwerte
+trotzdem — nur im Minutentakt statt alle zwei bis drei Sekunden.
 
 ### Auf dem Raspberry Pi
 

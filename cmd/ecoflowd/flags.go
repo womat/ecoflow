@@ -80,7 +80,7 @@ func newFlagSet(o *options, stderr io.Writer) *flag.FlagSet {
 		fmt.Fprint(stderr, `usage: ecoflowd --sn <serial> [options]
 
 Reads an EcoFlow PowerOcean over the consumer app's cloud channel and keeps
-reading it. Subscribing is all it does there, unless --fast is given.
+reading it. Nothing is ever sent to the device unless --fast is given.
 
 With --broker the readings go to a local MQTT broker, one topic per value:
 <topic>/<SN>/pv, /house, /battery, /grid, /dcdc, /soc, /measured, the day's
@@ -103,8 +103,10 @@ options:
 		fs.PrintDefaults()
 		fmt.Fprint(stderr, `
 note on --fast:
-  Without it the device reports once a minute and this program never publishes
-  anything - measured at the device, the subscription alone is enough.
+  Without it the device reports once a minute and nothing is sent to it at all -
+  measured at the device, the subscription alone is enough to keep it talking.
+  Readings still reach the local broker, just once a minute rather than every
+  few seconds.
 
   With it, the message that switches on the device's fast stream goes to the
   .../set topic every --switch-every seconds, and readings arrive every two to

@@ -11,9 +11,11 @@
 // and can stop working without notice. A service invites the assumption that
 // it will keep running, so failures are reported loudly rather than swallowed.
 //
-// In its normal mode it never publishes. That is not caution, it is what the
-// device turned out to need: subscribing alone keeps it reporting once a
-// minute, measured over 23 minutes without sending a single message.
+// In its normal mode it sends nothing to the device. That is not caution, it
+// is what the device turned out to need: subscribing alone keeps it reporting
+// once a minute, measured over 23 minutes without a single message to the
+// cloud. Readings still go to the local broker - that is what the program is
+// for; only --fast writes anything back to the device.
 package main
 
 import (

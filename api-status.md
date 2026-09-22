@@ -41,10 +41,11 @@ Zwei Wege existieren, beide mit Einschränkungen:
   `/iot-open/sign/certification` (MQTT-Zugangsdaten: `certificateAccount`,
   `certificatePassword`, `url` = `mqtt-e.ecoflow.com`, `port` = 8883, MQTTS).
 - MQTT-Topics je Gerät: `/open/<certificateAccount>/<SN>/quota` und `.../status`
-  (Gerät → App) sowie `.../get`, `.../set` mit ihren `_reply`-Gegenstücken (App → Gerät). `.../set` bleibt bewusst
-  außerhalb von `scripts/ecoflow-api.sh`;
+  (Gerät → App) sowie `.../get`, `.../set` mit ihren `_reply`-Gegenstücken (App → Gerät).
+  Auf **diesem** Kanal bleibt `.../set` außerhalb von `scripts/ecoflow-api.sh`;
   `.../get` ist über das Kommando `request` erreichbar, dessen Topic-Suffix fest
-  verdrahtet ist.
+  verdrahtet ist. (Auf dem *App*-Kanal publiziert `fast` sehr wohl auf `set` – siehe
+  „Der Befehl für den schnellen Takt".)
 - Fertig signiert aufrufbar mit [`scripts/ecoflow-api.sh`](./scripts/ecoflow-api.sh).
 
 ### Fehler 1006 ist eine Modell-Sperrliste
@@ -381,7 +382,7 @@ Verbindung eine neue.
 | `/app/<userId>/<SN>/thing/property/get`         | publish   | Anfrage/Weckruf                 |
 | `/app/<userId>/<SN>/thing/property/get_reply`   | subscribe | Antwort darauf                  |
 | `/app/device/status/<SN>`                       | subscribe | online/offline                  |
-| `/app/<userId>/<SN>/thing/property/set`         | publish   | **schreibend – hier tabu**      |
+| `/app/<userId>/<SN>/thing/property/set`         | publish   | **schreibend** – nur `fast`     |
 
 **Der Weckruf**, den `live` alle `ECOFLOW_LIVE_INTERVAL` Sekunden (Default 30) auf das
 `get`-Topic schickt:
@@ -391,11 +392,14 @@ Verbindung eine neue.
  "operateType":"latestQuotas","params":{},"version":"1.0"}
 ```
 
-**Was `live` bewusst nicht tut:** Die App aktiviert ihren schnellen Stream (~3 s) über
-einen Protobuf-Frame `EnergyStreamSwitch` auf dem `.../set`-Topic. Das Skript publiziert
-grundsätzlich nur auf `get`-Topics, damit kein Schreibpfad existiert, der versehentlich
-das Gerät verstellen könnte – dieselbe Regel, nach der `modbusread` keine `Write*`-Methode
-aufruft. Der Preis: `live` bekommt vermutlich nur den Takt seiner eigenen Anfragen.
+**Was `live` bewusst nicht tut:** Die App aktiviert ihren schnellen Stream (~2–3 s) über
+einen Protobuf-Frame `EnergyStreamSwitch` auf dem `.../set`-Topic. `live` publiziert nur
+auf `get`-Topics – wer Werte abfragt, soll dabei nicht unbemerkt schreiben. Den Schalter
+schickt allein das Kommando `fast` (siehe „Der Befehl für den schnellen Takt"), und der
+Go-Dienst `cmd/ecoflowd` nur mit dem Flag `--fast`.
+
+Der Preis für `live` ist der Minutentakt des Geräts – **nicht** der Takt seiner eigenen
+Anfragen: Die sind, wie weiter unten gemessen, für den Datenfluss ohne Belang.
 
 **Format:** Der Push ist beim PowerOcean **Protobuf**, nicht JSON – `jq` hilft dort nicht.
 `live` gibt deshalb jede Nachricht als Hex aus und schreibt den Text nur dann zusätzlich
