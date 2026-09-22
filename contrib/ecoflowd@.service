@@ -46,7 +46,9 @@ Restart=on-failure
 RestartSec=30
 
 # 78 means the cloud rejected the credentials. Waiting fixes a network, never a
-# typo, so restarting on it would only repeat a failed login for ever.
+# typo, so restarting on it would only repeat a failed login for ever. It is
+# kept narrow for that reason: a login that got no answer, or a 429 or 5xx, is
+# an ordinary failure and restarts like any other.
 RestartPreventExitStatus=78
 
 DynamicUser=yes
