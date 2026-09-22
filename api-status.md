@@ -815,9 +815,11 @@ Port 502 `connection refused` – also deaktiviert, wie dokumentiert.
   `scripts/ecoflow-api.sh` neben einer anderen Integration laufen lässt, sollte das
   wissen.
 - **evcc** nutzt für den PowerOcean ausschließlich den **lokalen Modbus-Weg**
-  (Meter-Template `ecoflow-powerocean-modbus`) – ein weiteres Indiz, dass der Cloud-Weg
-  für diese Gerätefamilie nicht praktikabel ist. Die dort verwendeten Registeradressen
-  bestätigen die aktuelle Karte in `modbus-registers.md`.
+  (Meter-Template `ecoflow-powerocean-modbus`) – ein weiteres Indiz, dass der
+  *dokumentierte* Cloud-Weg für diese Gerätefamilie nicht praktikabel ist. Für den
+  App-MQTT-Kanal aus Abschnitt 3 sagt das nichts: Der trägt, ist aber inoffiziell und
+  rückentwickelt, also nichts, worauf eine Integration bauen würde. Die dort verwendeten
+  Registeradressen bestätigen die aktuelle Karte in `modbus-registers.md`.
 
 ## 6. "Offene API" in Shop-Beschreibungen
 
@@ -834,7 +836,7 @@ REST-Interface – eine explizite Bestätigung dafür liegt aber nicht vor.
 - [ ] Genauer Menüpfad zum Modbus-Schalter in der EcoFlow Pro App. Aus fremder Quelle
   (`MaxGrmm/EF-PowerOcean-TcpModbus`) bekannt: Wechselrichter auswählen, Control Mode auf
   **„Modbus control"** umstellen – also ein Betriebsmodus-Wechsel, kein versteckter
-  Schalter. **Am Gerät unbestätigt**, deshalb kein Haken; steht als Aufgabe in 2c
+  Schalter. **Am Gerät unbestätigt**, deshalb kein Haken; steht als Aufgabe in 4b
 - [ ] Wirkt sich der Modus „Modbus control" auf das interne Scheduling aus? Bei rein
   lesendem Zugriff vermutlich folgenlos, belegt ist das nicht
 - [x] Liefert das Präfix `HC31` (DC Fit) Fehler 1006? → **Ja, bei `quota/all`**;
@@ -857,7 +859,7 @@ REST-Interface – eine explizite Bestätigung dafür liegt aber nicht vor.
   `ECOFLOW_LIVE_INTERVAL=5` kam der Energiestrom weiterhin genau minütlich. Der Takt
   gehört dem Gerät, nicht dem Frager
 - [x] Ist der Weckruf überhaupt nötig, oder genügt das Abo allein? → **Das Abo genügt.**
-  23 Minuten ohne einen einzigen Publish, durchgehend Minutenwerte. Siehe unten
+  23 Minuten ohne einen einzigen Publish, durchgehend Minutenwerte. Siehe Abschnitt 3
 - [x] Wie sieht der Befehl für den schnellen Takt wirklich aus? → **Mitgelesen** auf dem
   `set`-Topic, während die App lief (22.09.2026). Bytes und Feldbelegung siehe oben;
   umgesetzt als Kommando `fast`
@@ -871,11 +873,11 @@ REST-Interface – eine explizite Bestätigung dafür liegt aber nicht vor.
   `96/33`. In einem früheren Lauf war er ohne unser Zutun aufgetaucht; die Ursache war
   demnach **vermutlich** ein anderer Client – belegt ist nur die Negativkontrolle
 - [x] Was trägt `cmd_func 254 / cmd_id 32`? → **Die Stundenhistorie des laufenden Tages**,
-  sechs Flüsse à 24 Stundenwerte in Wh. Aufgeschlüsselt unten, abrufbar mit
+  sechs Flüsse à 24 Stundenwerte in Wh. Aufgeschlüsselt in Abschnitt 3, abrufbar mit
   `ecoflow-frames.py --hours`
 - [x] Was tragen `96/3` und `96/137`? → `96/3` ist eine **Komponentenliste** mit vier
   Seriennummern, `96/137` hat eine **leere Nutzlast** und ist die Bestätigung auf den
-  Stream-Schalter. Beide erscheinen nur bei aktivem Schalter. Siehe unten
+  Stream-Schalter. Beide erscheinen nur bei aktivem Schalter. Siehe Abschnitt 3
 - [x] Welche Rolle haben die Komponenten ab Feld 2 der Liste? → Über
   *System information → Component information* im Portal aufgelöst: Feld 2 ist der
   PV Storage Converter, die `HJ3A`-Einträge sind die Batteriemodule
