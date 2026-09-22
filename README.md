@@ -260,8 +260,17 @@ scripts/ecoflow-api.sh live HC31XXXXXXXXXXXX
 
 Es holt sich über `app-cert` die Zugangsdaten des App-MQTT-Kanals, abonniert die drei
 Topics des Geräts und schickt alle `ECOFLOW_LIVE_INTERVAL` Sekunden (Default 30) eine
-Anfrage hinterher, damit der Strom nicht versiegt. Läuft bis Ctrl-C. Braucht `jq`,
-`mosquitto_sub` und `mosquitto_pub`.
+Anfrage hinterher. Läuft bis Ctrl-C. Braucht `jq`, `mosquitto_sub` und `mosquitto_pub`.
+
+**Diese Anfrage ist allerdings überflüssig** — am Gerät nachgemessen: Mit
+`ECOFLOW_LIVE_INTERVAL=0`, also ganz ohne Publish, kamen 23 Minuten lang lückenlos
+Minutenwerte. Das Abo allein hält das Gerät am Reden. Der Default 30 bleibt vorerst
+stehen, weil andere Modelle ihn womöglich brauchen; wer rein lesend arbeiten will, setzt
+`ECOFLOW_LIVE_INTERVAL=0` — dann publiziert `live` überhaupt nichts mehr:
+
+```bash
+ECOFLOW_LIVE_INTERVAL=0 scripts/ecoflow-api.sh live HC31XXXXXXXXXXXX
+```
 
 Die Ausgabe von `live` ist **roh** – Zeitstempel, Topic, Länge und Nutzlast als Hex, weil
 der Push Protobuf ist und nicht JSON:
@@ -441,8 +450,8 @@ eigene EcoFlow-Konto gebunden sein, sonst bleibt die Liste leer.
   „Modbus control"* in der Pro App läuft (Checkliste in `api-status.md`)
 - Welche Werte `product_category`/`product_number` (40002/40003) am DC Fit liefern –
   die Referenz-Integration kennt sie nicht
-- Ob der Weckruf auf `.../get` überhaupt nötig ist oder das Abo allein genügt –
-  gemessen wurde bisher nur mit laufendem Weckruf
+- Warum der Stream-Schalter einerseits nach vier Minuten noch nachwirkt, andererseits
+  bei zehn Sekunden Wiederholabstand nicht trägt
 - Was die übrigen Frame-Kennungen tragen (`cmd_id` 1, 108–111, 136); der
   Energiestrom auf 34 ist ausgewertet, der Rest nicht
 - Ob sich der schnelle ~3-Sekunden-Takt lohnt, den die App über das
