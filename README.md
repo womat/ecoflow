@@ -506,6 +506,16 @@ Vier Exit-Codes, und einer davon ist für den Dauerbetrieb entscheidend:
 Die systemd-Unit führt die `78` in `RestartPreventExitStatus`, damit ein Tippfehler in der
 Zugangsdatei nicht endlos Anmeldeversuche gegen einen inoffiziellen Endpunkt fährt.
 
+Was als Ablehnung zählt, ist bewusst eng gefasst, weil die `78` den Dienst endgültig
+anhält: Nur eine Antwort, die die Cloud selbst gebildet hat und die einen `code` ungleich
+`0` trägt. Eine Anfrage ohne Antwort, eine Antwort, die kein JSON ist, und ein `429` oder
+`5xx` sind es **nicht** — die werden wie jeder andere Fehlschlag wiederholt.
+
+**Die bekannte Lücke:** EcoFlow dokumentiert diese Codes nirgends. Ein `code`, der etwas
+anderes bedeutet als „Passwort falsch" — ein gesperrtes Konto etwa —, käme mit `HTTP 200`
+und landete trotzdem auf der `78`. Der Dienst gibt die Meldung der Cloud im Klartext aus;
+wenn E-Mail und Passwort stimmen, ist ein `systemctl start` der Weg zurück.
+
 ```console
 connected to mqtt-e.ecoflow.com:8883, subscribed to 3 topics
 10:29:00Z  PV    1511 W | house    480 W | battery    980 W (charging) | grid     52 W (export) | SoC 73 %
@@ -559,7 +569,8 @@ Die Unit läuft unter `DynamicUser` mit `ProtectSystem=strict` und schreibt nich
 Platte — der Sitzungstoken lebt im Speicher des Prozesses.
 
 `RestartPreventExitStatus=78` ist der Kern: Bei abgelehnten Zugangsdaten bleibt der Dienst
-stehen, statt einen Tippfehler stündlich gegen einen inoffiziellen Endpunkt zu fahren.
+stehen, statt einen Tippfehler stündlich gegen einen inoffiziellen Endpunkt zu fahren —
+zur engen Fassung von „abgelehnt" siehe die Tabelle der Abbruchcodes oben.
 Jeder *andere* Fehlschlag startet nach 30 Sekunden neu — ein sauberer Halt über Signal
 dagegen nicht, denn die Unit steht auf `Restart=on-failure`.
 
