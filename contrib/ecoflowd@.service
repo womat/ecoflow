@@ -1,0 +1,69 @@
+# systemd unit for ecoflowd, one instance per device.
+#
+#   sudo cp ecoflowd /usr/local/bin/
+#   sudo cp contrib/ecoflowd@.service /etc/systemd/system/
+#   sudo install -d -m 0700 /etc/ecoflowd
+#   sudo install -m 0600 /dev/null /etc/ecoflowd/env
+#   sudo systemctl enable --now ecoflowd@HC31XXXXXXXXXXXX
+#
+# The instance name after the @ is the serial number, so a second device is a
+# second instance rather than a second unit file.
+#
+# /etc/ecoflowd/env holds the credentials and the options, and must be readable
+# by root alone:
+#
+#   ECOFLOW_EMAIL=someone@example.com
+#   ECOFLOW_PASSWORD=...
+#   MQTT_PASSWORD=...
+#   ECOFLOWD_OPTIONS=--broker tcp://127.0.0.1:1883 --name mathe
+#
+# The password there is the EcoFlow account password, not an application token,
+# and the login endpoint carries it base64-encoded rather than hashed. Anyone
+# who can read that file has the account.
+
+[Unit]
+Description=EcoFlow PowerOcean %i to local MQTT
+Documentation=https://github.com/womat/ecoflow
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=exec
+
+# $ECOFLOWD_OPTIONS is unbraced on purpose: systemd splits it into separate
+# arguments that way, which ${...} would not do.
+ExecStart=/usr/local/bin/ecoflowd --sn %i --state ${STATE_DIRECTORY} $ECOFLOWD_OPTIONS
+
+EnvironmentFile=/etc/ecoflowd/env
+EnvironmentFile=-/etc/ecoflowd/%i.env
+
+# systemd creates /var/lib/ecoflowd and hands it to the dynamic user, which is
+# where the session token is cached. Without it the service would log in again
+# on every restart; the token lasts about a month.
+StateDirectory=ecoflowd
+
+Restart=on-failure
+RestartSec=30
+
+# 78 means the cloud rejected the credentials. Waiting fixes a network, never a
+# typo, so restarting on it would only repeat a failed login for ever.
+RestartPreventExitStatus=78
+
+DynamicUser=yes
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_INET AF_INET6
+RestrictNamespaces=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+
+[Install]
+WantedBy=multi-user.target

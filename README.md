@@ -433,9 +433,8 @@ eigene EcoFlow-Konto gebunden sein, sonst bleibt die Liste leer.
 Das Gegenstück zu `modbusread` für den Dauerbetrieb: ein Go-Dienst, der den App-MQTT-Kanal
 liest, statt ihn für eine Messung zu öffnen. Gedacht für einen Raspberry Pi unter systemd.
 
-**Im Entstehen.** Er verbindet sich, verbindet sich bei Abbruch neu, gibt die Messwerte
-auf stdout aus und reicht sie an einen lokalen MQTT-Broker weiter. Was noch fehlt, ist der
-Feinschliff: systemd-Unit und Release-Binaries.
+Er verbindet sich, verbindet sich bei Abbruch neu, gibt die Messwerte auf stdout aus und
+reicht sie an einen lokalen MQTT-Broker weiter.
 
 ```bash
 export ECOFLOW_EMAIL='vorname.nachname@example.com'
@@ -454,6 +453,56 @@ connected to mqtt-e.ecoflow.com:8883, subscribed to 3 topics
 **Ohne `--fast` publiziert er nichts.** Das ist keine Vorsicht, sondern das, was das Gerät
 braucht: Das Abo allein hält es am Reden, gemessen über 23 Minuten ohne eine einzige
 gesendete Nachricht. Der Takt ist dann eine Minute.
+
+### Auf dem Raspberry Pi
+
+Binary aus den [Releases](https://github.com/womat/ecoflow/releases) holen — dieselben
+Plattformen wie bei `modbusread`, statisch gelinkt, nichts zu installieren:
+
+```bash
+VERSION=v0.4.0
+ARCH=linux-arm64
+
+curl -LO "https://github.com/womat/ecoflow/releases/download/$VERSION/ecoflowd-$VERSION-$ARCH.tar.gz"
+tar -xzf "ecoflowd-$VERSION-$ARCH.tar.gz"
+sudo install -m 0755 ecoflowd /usr/local/bin/
+```
+
+Die Unit liegt als Vorlage bei — eine Instanz je Gerät, die Seriennummer steht hinter dem
+`@`:
+
+```bash
+sudo cp contrib/ecoflowd@.service /etc/systemd/system/
+sudo install -d -m 0700 /etc/ecoflowd
+sudo install -m 0600 /dev/null /etc/ecoflowd/env
+sudo nano /etc/ecoflowd/env
+sudo systemctl enable --now ecoflowd@HC31XXXXXXXXXXXX
+```
+
+`/etc/ecoflowd/env`:
+
+```ini
+ECOFLOW_EMAIL=vorname.nachname@example.com
+ECOFLOW_PASSWORD=…
+MQTT_PASSWORD=…
+ECOFLOWD_OPTIONS=--broker tcp://127.0.0.1:1883 --name mathe
+```
+
+**Diese Datei ist das Kontopasswort**, kein Anwendungstoken — `0700` auf das Verzeichnis
+und `0600` auf die Datei sind deshalb nicht übertrieben. Der Login-Endpunkt überträgt es
+base64-kodiert statt gehasht; geschützt ist allein der TLS-Kanal.
+
+Die Unit läuft unter `DynamicUser` mit `ProtectSystem=strict`; den Sitzungstoken legt sie
+in `/var/lib/ecoflowd` ab, das systemd selbst anlegt und wieder aufräumt.
+
+`RestartPreventExitStatus=78` ist der Kern: Bei abgelehnten Zugangsdaten bleibt der Dienst
+stehen, statt einen Tippfehler stündlich gegen einen inoffiziellen Endpunkt zu fahren.
+Alles andere startet nach 30 Sekunden neu.
+
+```bash
+systemctl status ecoflowd@HC31XXXXXXXXXXXX
+journalctl -fu ecoflowd@HC31XXXXXXXXXXXX
+```
 
 ### An den lokalen Broker: `--broker`
 

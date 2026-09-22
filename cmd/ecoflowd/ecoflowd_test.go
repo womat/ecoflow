@@ -88,6 +88,12 @@ func TestVersion(t *testing.T) {
 	if strings.TrimSpace(stdout) == "" {
 		t.Error("--version printed nothing")
 	}
+	// This file began as a copy of modbusread's, which named itself in the
+	// version string. A binary that reports the wrong program is the sort of
+	// thing nobody notices until a bug report is filed against the wrong tool.
+	if !strings.HasPrefix(stdout, "ecoflowd ") {
+		t.Errorf("got %q, want it to start with the program's own name", stdout)
+	}
 }
 
 func TestHelp(t *testing.T) {
