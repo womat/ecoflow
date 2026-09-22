@@ -756,10 +756,10 @@ hält sie gegen dieselben Mitschnitte zusammen.
   an der Betriebslage: Bei vollem, stillstehendem Akku laufen PV und Netz proportional
   und sind nicht zu trennen. Nötig ist ein Mitschnitt am Abend, wenn die Batterie
   übernimmt. 1, 108, 109, 111 und 136 sind aufgeschlüsselt
-- Ob die Stundensumme und der Tagesertrag des Portals je zusammenfinden. Das Vorzeichen
-  der Abweichung **dreht sich im Lauf eines Tages**, ein Nachlauf oder ein fester
-  Wandlungsverlust scheiden damit aus. Auf der Geräteseite stimmen zwei unabhängige
-  Quellen auf wenige Wh überein
+- Warum das Portal den Tagesertrag **tagsüber** in beide Richtungen danebenliegen lässt.
+  Nach Sonnenuntergang stimmen Portal und Gerät auf 0,058 % überein, es wird also
+  dasselbe gemessen; das Portal schreibt nur sprunghaft fort. Praktisch heißt das:
+  Tageswerte vom Gerät nehmen, nicht vom Portal
 
 ## Arbeiten an diesem Repo
 

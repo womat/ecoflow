@@ -643,9 +643,10 @@ nachts und lädt, sobald die Sonne das Haus trägt.
 
 Abrufbar mit `scripts/ecoflow-api.sh fast <SN> | python3 scripts/ecoflow-frames.py --hours`.
 
-**Offen:** Die Tagessumme deckt sich nicht mit `todayElectricityGeneration` des Portals –
-siehe die Liste der offenen Fragen. Mit dem Gerät selbst deckt sie sich dagegen: Feld 23
-in `96/1` trägt dieselbe Summe als Float, im selben Sekundenfenster auf 5,5 Wh genau.
+Die Summe deckt sich mit dem Gerät selbst – Feld 23 in `96/1` trägt dieselbe Summe als
+Float, im selben Sekundenfenster auf 5,5 Wh genau – und **nach Sonnenuntergang auch mit
+`todayElectricityGeneration` des Portals**, auf 0,058 %. Tagsüber laufen die beiden
+auseinander, weil das Portal sprunghaft fortschreibt; siehe die Liste der offenen Fragen.
 
 #### Die Antwort auf den Schalter: `96/3` und `96/137`
 
@@ -979,28 +980,34 @@ REST-Interface – eine explizite Bestätigung dafür liegt aber nicht vor.
 - [x] Welche Rolle haben die Komponenten ab Feld 2 der Liste? → Über
   *System information → Component information* im Portal aufgelöst: Feld 2 ist der
   PV Storage Converter, die `HJ3A`-Einträge sind die Batteriemodule
-- [ ] Warum weicht die Tagessumme der Stundenhistorie vom `todayElectricityGeneration`
-  des Portals ab? **Ungeklärt, aber eingegrenzt.** Zwei Messungen am 22.09.2026:
+- [x] Warum weicht die Tagessumme der Stundenhistorie vom `todayElectricityGeneration`
+  des Portals ab? → **Sie weicht nicht ab. Es ist eine Frage des Zeitpunkts.**
 
-  | Zeitpunkt | Portal | Gerät | Portal ist |
-  |-----------|--------|-------|------------|
-  | 07:13Z    | 1,74 kWh | 1,26 kWh | **höher** |
-  | 14:21Z    | 14,00 kWh | 15,96 kWh | **niedriger** |
+  Nach Sonnenuntergang am 22.09.2026, als der Tageswert feststand, stimmten drei
+  unabhängige Quellen überein:
 
-  Das Vorzeichen dreht sich im Lauf desselben Tages. Damit scheiden zwei naheliegende
-  Erklärungen aus: **Nachlauf** kann einen steigenden Zähler nie zu hoch ablesen lassen,
-  und ein **fester Wandlungsverlust** (14,00/15,96 = 88 %, für DC→AC plausibel) müsste
-  in dieselbe Richtung wirken.
+  | Quelle                  | Tagesertrag  |
+  |-------------------------|--------------|
+  | Portal `yield today`    | 17140 Wh     |
+  | Stundenhistorie `254/32`| 17143 Wh     |
+  | `96/1` Feld 23          | 17149,90 Wh  |
 
-  Auf der Geräteseite ist der Wert dagegen doppelt belegt: Die Stundenhistorie
-  (`254/32`) und das Summenfeld 23 in `96/1` stimmen im selben Sekundenfenster auf
-  5,5 Wh überein. Der Unterschied liegt also nicht am Auspacken.
+  Spanne 9,9 Wh = **0,058 %** – und das Portal rundet auf 0,01 kWh, also auf 10 Wh.
+  Die Spanne ist damit eine Rundungsstelle. Beide Zeitstempel lagen vier Sekunden
+  auseinander (Portal `20:13:05Z`, Mitschnitt ab `20:13:09Z`), das Portal war also
+  **nicht** eingefroren. Zur Kontrolle schließt die Tagesbilanz aus `96/1` auf
+  0,04 Wh: PV + Batterie heraus + Netzbezug = Haus + Batterie hinein + Einspeisung.
 
-  Was als Nächstes weiterhilft: **nicht** zwei Stichproben, sondern dieselbe Größe über
-  einen Tag mehrfach parallel abgefragt. Vorsicht bei der Zeitachse – im Mitschnitt vom
-  Vormittag lag der Portal-Zeitstempel (`07:13:28Z`) genau zwei Stunden hinter der
-  Gerätezeit derselben Aufnahme (`09:13:18Z`); das ist der bekannte Einfrier-Effekt,
-  keine Zeitzone: Am Nachmittag stimmten Gerätezeit und UTC auf die Sekunde
+  Tagsüber dagegen klafften sie auseinander, und zwar **in beide Richtungen** –
+  morgens las das Portal zu hoch (1,74 gegen 1,26 kWh), nachmittags zu niedrig
+  (14,00 gegen 15,96 kWh). Das Portal misst also dasselbe, gibt es aber
+  **sprunghaft und mit eigenem Takt** heraus.
+
+  **Was daran noch offen ist** (deshalb nur beinahe erledigt): Reiner Nachlauf erklärt
+  das Zuhoch am Vormittag nicht. Eine Vermutung, nicht belegt: Der Zeitstempel
+  `measured` gehört zum Leistungswert; wann der Energiezähler zuletzt fortgeschrieben
+  wurde, sagt er womöglich gar nicht. **Für die Praxis heißt das: Wer Tageswerte will,
+  nimmt die vom Gerät** (`254/32` oder `96/1`), nicht die des Portals
 - [x] Was tragen die übrigen `cmd_id` (1, 108, 109, 110, 111, 136)? → **Aufgeschlüsselt**,
   siehe Abschnitt 3. Kurz: `96/1` ist der Systembericht und trägt die Tagessummen als
   Float (gegen die Stundenhistorie auf wenige Wh belegt), `96/108` den Bericht je
