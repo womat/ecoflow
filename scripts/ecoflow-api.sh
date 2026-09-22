@@ -14,11 +14,11 @@
 #                        use https://api-a.ecoflow.com for US accounts
 #   ECOFLOW_PORTAL_TOKEN session token of the consumer web portal, for the
 #                        "portal" commands only - see usage()
-#   ECOFLOW_USER_ID      numeric account id, for "app-cert" and "live"
+#   ECOFLOW_USER_ID      numeric account id, for "app-cert", "app-mqtt" and "live"
 #
 # Requires: bash, curl, openssl. jq is used for pretty-printing when present and
-# is mandatory for the mqtt, request and live commands; mqtt needs mosquitto_sub,
-# request and live need mosquitto_pub as well.
+# is mandatory for the mqtt, request, app-mqtt and live commands; the mqtt and
+# app-mqtt commands need mosquitto_sub, request and live need mosquitto_pub too.
 
 set -euo pipefail
 
@@ -72,6 +72,13 @@ commands:
   app-cert             fetch the MQTT credentials of the consumer app channel
                        GET /iot-auth/app/certification?userId=<ECOFLOW_USER_ID>
                        Uses the portal token, not the API keys. Needs jq.
+  app-mqtt <SN> [suffix]
+                       subscribe to one of the app's own topics under
+                       /app/<userId>/<SN>/thing/property/; suffix defaults to
+                       "set", the topic this script never publishes to - so
+                       operating the phone app while this runs shows what it
+                       actually sends. Subscribing only. Runs until Ctrl-C.
+                       Needs jq and mosquitto_sub.
   live <SN>            watch the consumer app's MQTT channel and keep it awake:
                        subscribe to the device's push, reply and status topics
                        and publish a wake-up call every ECOFLOW_LIVE_INTERVAL
@@ -94,7 +101,8 @@ environment:
                        (PowerOcean). It is the productKey the portal itself puts
                        in its URL; without a matching value the endpoint answers
                        with no data at all.
-  ECOFLOW_USER_ID      numeric account id, required for "app-cert" and "live".
+  ECOFLOW_USER_ID      numeric account id, required for "app-cert", "app-mqtt"
+                       and "live".
                        "login" prints it ready to export; in the browser it is
                        the userId the portal sends with its own requests.
   ECOFLOW_LIVE_INTERVAL
@@ -131,6 +139,7 @@ examples:
   ECOFLOW_PORTAL_TOKEN=... ecoflow-api.sh status HC31XXXXXXXXXXXX
   ECOFLOW_USER_ID=... ecoflow-api.sh app-cert
   ECOFLOW_USER_ID=... ecoflow-api.sh live HC31XXXXXXXXXXXX
+  ECOFLOW_USER_ID=... ecoflow-api.sh app-mqtt HC31XXXXXXXXXXXX set
 
 note on "login":
   This is the consumer app's login endpoint, not a documented API. It takes the
@@ -152,6 +161,11 @@ note:
   That boundary has a price worth knowing: the app switches on its fast stream
   by publishing to .../set, so "live" cannot do that and has to settle for the
   pace of its own wake-up calls.
+
+  "app-mqtt" does subscribe to .../set by default, which is the opposite of
+  writing to it: it shows what the phone app sends there. Reading a topic the
+  script refuses to publish on is how one finds out what such a message even
+  looks like, instead of guessing it from someone else's notes.
 
   The MQTT password is passed to the mosquitto clients on the command line, so
   it is briefly visible to other users of this machine via the process list.
@@ -858,6 +872,37 @@ mqtt_live() {
 		-F '%I %t %l %x' | hex_lines
 }
 
+# app_watch SN [SUFFIX] - subscribe to one of the app's own device topics
+#
+# The point is to watch what the app does rather than guess it. The interesting
+# one is "set": that is where the app publishes the commands this script will
+# not send, so subscribing to it while operating the app on the phone captures
+# the real bytes. Hence the default.
+#
+# Subscribing only - this adds no write path.
+app_watch() {
+	local sn="$1" suffix="${2:-set}"
+
+	command -v jq >/dev/null 2>&1 || die 'app-mqtt needs jq'
+	command -v mosquitto_sub >/dev/null 2>&1 ||
+		die 'app-mqtt needs mosquitto_sub (brew install mosquitto, apt install mosquitto-clients)'
+
+	app_credentials
+	local topic="/app/${ECOFLOW_USER_ID}/${sn}/thing/property/${suffix}"
+
+	local -a debug=()
+	if [ "$VERBOSE" -eq 1 ]; then
+		debug=(-d)
+		printf 'mosquitto_sub -h %s -p %s -u %s -P <password> -t %s\n' \
+			"$MQTT_URL" "$MQTT_PORT" "$MQTT_ACCOUNT" "$topic" >&2
+	fi
+
+	printf 'subscribing to %s (Ctrl-C to stop)\n' "$topic" >&2
+	mosquitto_sub -h "$MQTT_URL" -p "$MQTT_PORT" -u "$MQTT_ACCOUNT" -P "$MQTT_PASSWORD" \
+		"${MQTT_TLS[@]}" ${debug[@]+"${debug[@]}"} -i "$(app_client_id "$ECOFLOW_USER_ID")" \
+		-t "$topic" -F '%I %t %l %x' | hex_lines
+}
+
 # wake_payload - the request that keeps the device talking
 #
 # Transcribed from other projects' captures, not from EcoFlow documentation. A
@@ -1029,6 +1074,13 @@ main() {
 		esac
 		body="$(portal_get "$1")" || exit $?
 		show_and_judge "$body"
+		;;
+	app-mqtt)
+		[ "$#" -ge 1 ] && [ "$#" -le 2 ] || die 'usage: ecoflow-api.sh app-mqtt <SN> [suffix]'
+		case "$1" in
+		*[!A-Za-z0-9_-]*) die "serial number looks wrong: $1" ;;
+		esac
+		app_watch "$@"
 		;;
 	app-cert)
 		[ "$#" -eq 0 ] || die 'app-cert takes no arguments'
