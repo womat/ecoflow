@@ -729,11 +729,46 @@ Seriennummer als ASCII (`HJ3A…`), Feld 9 die Modulspannung (53,43 V), Feld 14 
 **16 Zellspannungen in mV** (3342–3344) – ihre Summe, 53,495 V, ergibt die Modulspannung
 zurück. Feld 5 sind neun Temperaturen (26–27 °C).
 
-**`96/109` und `96/110`** liegen beim DC-Zwischenkreis: In `96/109` stehen mehrere
-Spannungen um 429 V nebeneinander, dazu Ströme um 2,9 A und vier Temperaturen (35, 29,
-29, 29 °C); `96/110` trägt dieselbe Spannungsebene, dazu Grenzwerte wie 120000 und 105000.
-**Keine Feldzuordnung belegt** – hier fehlt die Gegenprobe, die bei `96/1` die Sache
-entschieden hat.
+**`96/109` ist der PV-Strangbericht.** Zwei Stränge nebeneinander: Feld 2 und 3 sind
+Spannung und Strom des einen, Feld 10 und 11 die des anderen. Belegt über dieselbe
+Gegenprobe wie `96/1` – hier über die Zeit statt über eine zweite Quelle:
+
+| PV laut Energiebericht | `f2·f3 + f10·f11` | Verhältnis |
+|------------------------|-------------------|------------|
+| 2526 W                 | 2476 W            | 0,980      |
+| 2414 W                 | 2424 W            | 1,004      |
+| 2266 W                 | 2294 W            | 1,012      |
+| 839 W                  | 795 W             | 0,947      |
+| 897 W                  | 875 W             | 0,976      |
+
+**Mittel 1,0004 bei einer Streuung von 0,033**, über eine Verdreifachung der Leistung.
+Die Felder 4, 5, 7 bzw. 12, 13, 15 liegen auf derselben Spannungsebene (weitere
+Messpunkte am selben Strang, nicht zugeordnet), Feld 22–25 sind Temperaturen.
+
+Die Spannung verhält sich dabei wie erwartet: Sie **steigt**, wenn die Leistung fällt
+(428 V bei 2526 W, 556 V bei 897 W) – der Arbeitspunkt wandert bei wenig Licht Richtung
+Leerlaufspannung. Das ist eine unabhängige Plausibilitätsprobe für die Deutung als
+Strangspannung.
+
+**`96/110` liegt auf derselben Ebene und ist nicht zugeordnet.** Die Felder 2, 3 und 5
+tragen dieselben Strangspannungen; 15, 18, 19, 24, 30 und 42 stehen über den ganzen
+Mitschnitt **konstant** und sind damit Einstellungen, keine Messwerte. Feld 48 läuft mit
+der Leistung mit, lässt sich aber nicht festnageln – und zwar aus einem Grund, der
+festgehalten gehört:
+
+> Im Mitschnitt stand die Batterie still (SoC 100 %). Dann gilt Netz = PV − Haus bei
+> nahezu konstantem Haus, PV und Netz laufen also proportional. `f48/Netz` ≈ 1,00 und
+> `f48/PV` ≈ 0,82 sind beide konstant – **die beiden Größen sind in dieser Betriebslage
+> nicht trennbar.** Mehr Proben derselben Lage ändern daran nichts.
+
+**Was hier weiterhilft**, ist deshalb nicht ein längerer, sondern ein *anders gelegter*
+Mitschnitt: einer, in dem PV, Netz, Haus und Batterie sich unabhängig bewegen. Am
+einfachsten am Abend, wenn die PV-Leistung fällt, das Haus weiter zieht und die Batterie
+übernimmt. Dazu passt ein gemessener Nebenbefund: **`96/109` und `96/110` kommen ohne
+Stream-Schalter sechsmal häufiger** (29 Frames in 348 s gegen 5 in 300 s) – der schnelle
+Energiestrom verdrängt sie. Für diese Frage ist `live` also die bessere Quelle als `fast`,
+und schreibt obendrein nichts ans Gerät. Nur zum Paaren mit einem Energiebericht auf die
+Sekunde genau ist eine kurze `fast`-Phase nützlich.
 
 **`96/136` ist eine Konstante.** Über alle Proben dieselben zwei Byte: `08 0b`, also
 Feld 1 = 11. Kein Messwert.
@@ -970,8 +1005,8 @@ REST-Interface – eine explizite Bestätigung dafür liegt aber nicht vor.
   siehe Abschnitt 3. Kurz: `96/1` ist der Systembericht und trägt die Tagessummen als
   Float (gegen die Stundenhistorie auf wenige Wh belegt), `96/108` den Bericht je
   Batteriemodul, `96/111` ein Modul im Detail samt Seriennummer und 16 Zellspannungen,
-  `96/136` eine Konstante. Bei `96/109` und `96/110` ist nur die Ebene klar
-  (DC-Zwischenkreis, rund 429 V) – **keine Feldzuordnung belegt**
+  `96/136` eine Konstante, `96/109` den PV-Strangbericht (zwei Stränge, Spannung mal
+  Strom ergibt die PV-Leistung auf 3 % genau). Offen bleibt allein `96/110`
 
 ## Quellenübersicht
 
