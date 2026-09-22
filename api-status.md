@@ -427,10 +427,23 @@ einzige Cloud-Weg, auf dem für dieses Modell tatsächlich Messwerte fließen.
 
 Drei Befunde aus derselben Messung:
 
-**1. Der Weckruf wird nicht beantwortet.** In zweieinhalb Minuten kam auf
-`.../thing/property/get_reply` keine einzige Nachricht. Der Push läuft trotzdem – das Abo
-allein scheint zu genügen. Ob der Weckruf überflüssig ist oder ob er den Push erst
-auslöst, ist damit nicht entschieden.
+**1. Der Weckruf wird nicht beantwortet – und er ist überflüssig.** In zweieinhalb Minuten
+kam auf `.../thing/property/get_reply` keine einzige Nachricht, der Push lief trotzdem.
+Nachgemessen am 22. September 2026 mit `ECOFLOW_LIVE_INTERVAL=0`, also **ohne einen
+einzigen Publish**, bei geschlossener App und geschlossenem Portal:
+
+| | |
+|---|---|
+| Dauer | 22,8 Minuten (10:28–10:51 UTC) |
+| `96/34` Minutenbericht | 47 Frames, lückenlos jede Minute, Abstand 58–61 s |
+| dekodierte Messwerte | 23, einer je Minute, ohne Aussetzer |
+| `254/32` Stundenhistorie | kam weiter, rund alle 10 Minuten |
+| `96/33`, `96/3`, `96/137` | **null** |
+
+**Das Abo allein hält das Gerät am Reden.** Für den Minutentakt braucht es keinen
+Weckruf, keinen Stream-Schalter, überhaupt keinen Publish – ein rein lesender Client
+genügt. Die Schleife, die `live` mitbringt, ist damit von fremden Projekten übernommen und
+für dieses Modell ohne Wirkung; `ECOFLOW_LIVE_INTERVAL=0` schaltet sie ab.
 
 **2. Der REST-Endpunkt wird davon nicht frisch.** `status` lieferte während der ganzen
 Zeit unverändert `measured : 2026-09-22T07:13:28Z`, während die MQTT-Frames bereits
@@ -812,13 +825,20 @@ REST-Interface – eine explizite Bestätigung dafür liegt aber nicht vor.
 - [x] Ändert ein häufigerer Weckruf den Meldetakt? → **Nein.** Mit
   `ECOFLOW_LIVE_INTERVAL=5` kam der Energiestrom weiterhin genau minütlich. Der Takt
   gehört dem Gerät, nicht dem Frager
-- [ ] Ist der Weckruf damit überhaupt nötig, oder genügt das Abo allein? Naheliegend nach
-  dem Befund oben, aber ungeprüft – dafür bräuchte es einen Lauf ganz ohne Weckruf
+- [x] Ist der Weckruf überhaupt nötig, oder genügt das Abo allein? → **Das Abo genügt.**
+  23 Minuten ohne einen einzigen Publish, durchgehend Minutenwerte. Siehe unten
 - [x] Wie sieht der Befehl für den schnellen Takt wirklich aus? → **Mitgelesen** auf dem
   `set`-Topic, während die App lief (22.09.2026). Bytes und Feldbelegung siehe oben;
   umgesetzt als Kommando `fast`
 - [x] Hält der schnelle Takt durch? → **Ja, bei 3 s Wiederholung**; bei 10 s fällt das
-  Gerät auf den Minutentakt zurück. Der Schalter hält also nur wenige Sekunden vor
+  Gerät auf den Minutentakt zurück. Nach dem *letzten* Schalter lief der schnelle Strom
+  aber noch rund **vier Minuten** weiter, bevor er versiegte – der Schalter hält also
+  länger vor, als der 10-Sekunden-Befund vermuten ließ. Warum beides zusammen gilt, ist
+  offen
+- [x] Schaltet das Gerät den schnellen Strom je von selbst ein? → **Nein.** In einem
+  beobachteten Fall tauchte er ohne unser Zutun wieder auf; die Kontrolle mit
+  geschlossener App und geschlossenem Portal zeigte über 23 Minuten **keinen einzigen**
+  `96/33`. Die Ursache war also ein anderer Client, nicht das Gerät
 - [x] Was trägt `cmd_func 254 / cmd_id 32`? → **Die Stundenhistorie des laufenden Tages**,
   sechs Flüsse à 24 Stundenwerte in Wh. Aufgeschlüsselt unten, abrufbar mit
   `ecoflow-frames.py --hours`
