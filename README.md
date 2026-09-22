@@ -752,9 +752,10 @@ hält sie gegen dieselben Mitschnitte zusammen.
 - Ob der schnelle Strom nach dem letzten Schalter aus Zeitgründen endet oder weil die
   MQTT-Verbindung abriss. Gemessen sind **rund 25 Sekunden** Nachlauf; in derselben
   Messung wurde aber auch neu verbunden, das trennt sie also nicht
-- Die Feldzuordnung von `cmd_id` 109 und 110. Die Ebene ist klar (DC-Zwischenkreis,
-  rund 429 V), die einzelnen Felder sind es nicht; 1, 108, 111 und 136 sind
-  aufgeschlüsselt
+- Die Feldzuordnung von `cmd_id` 110. Sie hängt **nicht** an fehlenden Daten, sondern
+  an der Betriebslage: Bei vollem, stillstehendem Akku laufen PV und Netz proportional
+  und sind nicht zu trennen. Nötig ist ein Mitschnitt am Abend, wenn die Batterie
+  übernimmt. 1, 108, 109, 111 und 136 sind aufgeschlüsselt
 - Ob die Stundensumme und der Tagesertrag des Portals je zusammenfinden. Das Vorzeichen
   der Abweichung **dreht sich im Lauf eines Tages**, ein Nachlauf oder ein fester
   Wandlungsverlust scheiden damit aus. Auf der Geräteseite stimmen zwei unabhängige
