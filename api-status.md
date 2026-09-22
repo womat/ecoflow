@@ -474,9 +474,13 @@ Fit angibt. Die Nutzlast enthält eine eingebettete Nachricht mit dieser Belegun
 treffen. Die Vorzeichen decken sich mit denen des Portal-Endpunkts (siehe „Vorzeichen:
 gemessen, nicht angenommen").
 
-**Takt:** Das Gerät meldet den Energiestrom etwa minütlich und schickt jeden Frame
-**doppelt**. Der Gerätezeitstempel lief in der Messung sauber mit (`08:18:00Z`,
-`08:19:00Z`).
+**Takt:** Das Gerät meldet den Energiestrom **genau minütlich** und schickt jeden Frame
+**doppelt**. Der Gerätezeitstempel liegt dabei auf der vollen Minute (`08:30:00Z`,
+`08:31:00Z`, `08:32:00Z`).
+
+Der Takt hängt **nicht** am Weckruf: Ein Lauf mit `ECOFLOW_LIVE_INTERVAL=5` meldete
+weiterhin minütlich. Den schnelleren Rhythmus der App (~3 s) schaltet ein
+`EnergyStreamSwitch` auf dem `.../set`-Topic frei – von hier aus bewusst nicht erreichbar.
 
 Ausgewertet wird das von `scripts/ecoflow-frames.py`, das die Ausgabe von `live` auf
 stdin nimmt. Der schnellere ~3-Sekunden-Takt, den die App über `.../set` freischaltet,
@@ -648,8 +652,11 @@ REST-Interface – eine explizite Bestätigung dafür liegt aber nicht vor.
 - [x] Wird `measured` im REST-Endpunkt wieder frisch, solange `live` läuft? → **Nein.**
   Über zweieinhalb Minuten unverändert, während die Frames eine Stunde weiter waren.
   Der REST-Weg ist damit als Live-Quelle erledigt
-- [ ] Ist der Weckruf auf `.../get` überhaupt nötig, oder genügt das Abo? Unbeantwortet:
-  gemessen wurde nur mit laufendem Weckruf. Ein Lauf ohne ihn würde das klären
+- [x] Ändert ein häufigerer Weckruf den Meldetakt? → **Nein.** Mit
+  `ECOFLOW_LIVE_INTERVAL=5` kam der Energiestrom weiterhin genau minütlich. Der Takt
+  gehört dem Gerät, nicht dem Frager
+- [ ] Ist der Weckruf damit überhaupt nötig, oder genügt das Abo allein? Naheliegend nach
+  dem Befund oben, aber ungeprüft – dafür bräuchte es einen Lauf ganz ohne Weckruf
 - [ ] Bringt der `EnergyStreamSwitch` auf `.../set` den ~3-Sekunden-Takt? Offen und
   bewusst nicht ausprobiert – das Skript publiziert nicht auf `set`. Für einen
   Minutentakt wird er nicht gebraucht
