@@ -17,14 +17,26 @@ Zwei Dinge, die zusammengehören:
 ## Kommandos
 
 ```
-go build ./...                 # baut cmd/modbusread
+go build ./...                 # baut cmd/modbusread und cmd/ecoflowd
 go test ./...                  # alles, läuft ohne Hardware
 go test -run TestParseAddr ./internal/decode/   # einzelner Test
 go vet ./...
+gofmt -l ./cmd ./internal      # keine Ausgabe = in Ordnung; die CI scheitert daran
+scripts/ecoflow-api.sh selftest # Signatur gegen EcoFlows Testvektor, ohne Netz
 ```
 
 Die Integrationstests starten den Modbus-Server aus `github.com/simonvetter/modbus`
-auf einem freien Port und lesen dagegen – kein Gerät nötig.
+auf einem freien Port und lesen dagegen – kein Gerät nötig. `internal/frames` und
+`cmd/ecoflowd` testen gegen anonymisierte Mitschnitte vom echten Gerät in
+`internal/frames/testdata/`; die `.golden`-Dateien dort sind die Ausgabe von
+`scripts/ecoflow-frames.py` über dieselben Mitschnitte und werden von
+`cmd/ecoflowd/ecoflowd_test.go` gelesen — sie halten die Go- und die Python-Fassung
+zeilengleich. Wer eine von beiden ändert, erzeugt sie neu:
+
+```
+python3 scripts/ecoflow-frames.py < internal/frames/testdata/fast.txt \
+  > internal/frames/testdata/fast.golden
+```
 
 ## Branches & Releases
 
@@ -47,9 +59,12 @@ Fehlermeldungen auf Englisch, weil das Tool universell einsetzbar sein soll.
 ## Struktur & Zusammenhang der Dateien
 
 - `cmd/modbusread/` – CLI: Flags, Lesen mit Chunking/Fehlerisolierung, Ausgabe, Polling
-- `cmd/ecoflowd/` – Dienst für den Dauerbetrieb am Cloud-Kanal: Flags, Verbindungsschleife
-  mit Rücknahme, Token-Zwischenspeicher, Ausgabe. Anders als `modbusread` bewusst
-  gerätespezifisch; das Wissen dazu liegt in `internal/frames` und `internal/ecoflow`
+- `cmd/ecoflowd/` – Dienst für den Dauerbetrieb am Cloud-Kanal: Flags,
+  Verbindungsschleife mit Rücknahme, und die Ausgabeseite – er publiziert die Messwerte
+  auf einen lokalen MQTT-Broker, ein Topic je Wert, dazu ein Verfügbarkeits-Topic per
+  Last Will. Nichts davon liegt auf der Platte; die Sitzung lebt im Prozess. Anders als
+  `modbusread` bewusst gerätespezifisch; das Wissen dazu liegt in `internal/frames` und
+  `internal/ecoflow`
 - `internal/decode/` – reine Funktionen über `[]uint16` (Typen, Word-/Byte-Order,
   Adress-Parsing). Hier liegt die Logik, die bei Fehlern *falsche Zahlen* statt
   Abstürze liefert – deshalb netzwerkfrei und vollständig testbar gehalten
@@ -58,12 +73,24 @@ Fehlermeldungen auf Englisch, weil das Tool universell einsetzbar sein soll.
   Komponentenliste, Bau des Stream-Schalters). Aus demselben Grund netzwerkfrei wie
   `internal/decode`. **Hier wohnt das EcoFlow-Wissen**, damit `modbusread` universell
   bleibt. Die Tests laufen gegen anonymisierte Mitschnitte vom echten Gerät in
-  `testdata/`; die `.golden`-Dateien sind die Ausgabe von `scripts/ecoflow-frames.py`
-  über dieselben Mitschnitte und halten beide Fassungen zeilengleich
+  `testdata/` und prüfen die beiden Rechenidentitäten, die die Feldzuordnung belegt
+  haben. Die `.golden`-Dateien liegen zwar hier, gelesen werden sie aber von
+  `cmd/ecoflowd` – dort wohnt die Formatierung, die sie festhalten
 - `internal/ecoflow/` – der Weg *hinein*: Login, Certification, Client-ID, Topics.
   Gegenstück zu `internal/frames`, das nur deutet, was schon da ist; die beiden kennen
   einander nicht. Getestet gegen einen `httptest`-Server, nicht gegen die echte Cloud
+- `scripts/ecoflow-api.sh` – das Messwerkzeug am Cloud-Kanal und die Fassung, mit der
+  alle Befunde entstanden sind: Developer-API, Portal-REST, App-MQTT, Mitlesen des
+  `set`-Topics. Bleibt neben `ecoflowd` bestehen – für die nächste unbekannte Kennung
+  greift man wieder dazu
+- `scripts/ecoflow-frames.py` – packt die Frames aus, die `ecoflow-api.sh live|fast`
+  liefert; `--hours` und `--modules` können mehr als der Go-Dienst. Erzeugt die
+  `.golden`-Dateien
 - `contrib/` – Betriebsbeiwerk, das nicht gebaut wird: die systemd-Vorlage für `ecoflowd`
+- `.github/workflows/` – `ci.yml` (gofmt, vet, build, test -race) und `release.yml`
+  (beide Binaries für sechs Plattformen, Tag `vX.Y.Z` auf `main`)
+- `ecoflow-open-demo/` – EcoFlows offizieller Java-Demo-Client, nur zum Nachlesen
+  heruntergeladen. Per `.gitignore` bewusst **nicht** versioniert; nicht „aufräumen"
 - `README.md` – Einstieg, Disclaimer, Kurzüberblick, Quellenliste, offene Punkte
 - `api-status.md` – die *Entscheidungsebene*: Cloud-REST (EcoFlow Developer/Open API,
   HMAC-signiert, liefert für PowerOcean oft Fehler 1006) vs. lokales **Modbus TCP**
@@ -71,11 +98,19 @@ Fehlermeldungen auf Englisch, weil das Tool universell einsetzbar sein soll.
 - `modbus-registers.md` – die *Detailebene*: Register-Map, Encoding-Konventionen,
   Python-Decoding-Snippets (pymodbus), bekannte Lücken
 
-Die drei Dateien überschneiden sich bewusst: README verlinkt beide, `api-status.md`
-verweist für das Mapping auf `modbus-registers.md`. Bei inhaltlichen Änderungen
-(z.B. Fehler 1006 gelöst, Freischaltpfad gefunden) **alle betroffenen Stellen
+Die drei Markdown-Dateien überschneiden sich bewusst: README verlinkt beide,
+`api-status.md` verweist für das Mapping auf `modbus-registers.md`. Bei inhaltlichen
+Änderungen (z.B. Fehler 1006 gelöst, Freischaltpfad gefunden) **alle betroffenen Stellen
 mitziehen**, inkl. der „Offene Fragen“/„Offene Punkte“-Checklisten in README und
 `api-status.md`.
+
+Dasselbe gilt seit dem Cloud-Kanal für die Werkzeuge: Wer an `scripts/ecoflow-api.sh`,
+`scripts/ecoflow-frames.py` oder `cmd/ecoflowd` etwas ändert, zieht die zugehörigen
+README-Abschnitte und den `--help`-Text mit. **Das ist mehrfach unterblieben** — eine
+Prüfung fand rund 60 Stellen, an denen die Doku beschrieb, was einmal galt: darunter
+die Zusage, das Skript könne „nichts am Gerät ändern", und eine Erklärung fürs
+Einfrieren des REST-Zeitstempels, die die eigene spätere Messung widerlegt hatte.
+Beim Nachziehen zählt der Code, nicht die ältere Prosa.
 
 ## Konventionen im Code
 
@@ -112,14 +147,27 @@ mitziehen**, inkl. der „Offene Fragen“/„Offene Punkte“-Checklisten in RE
   nicht offizielle EcoFlow-Doku. Neue Behauptungen mit Quell-URL belegen (die
   Quellenlisten am Dateiende pflegen) und bestätigtes Wissen von Vermutungen
   sprachlich trennen („vermutlich“, „nicht bestätigt“).
-- **Plus vs. DC Fit:** Das Register-Mapping wurde am PowerOcean **Plus** ermittelt.
-  Ob es 1:1 für den **DC Fit** gilt, ist offen (Firmware kennt `InverterModel`-
-  spezifische `address_overrides`). Diesen Vorbehalt bei Register-Aussagen nicht
-  wegkürzen.
-- **Register-Tabellen:** Adressen sind 1-based; Floats belegen 2 Register,
-  32-bit IEEE754 **word-swapped** (High-Word im zweiten Register). Neue Einträge
-  im bestehenden Tabellenformat (Register | Einheit | Scale | Beschreibung) mit
-  explizitem Scale-Faktor ergänzen.
+- **Plus vs. DC Fit:** Die Modellfrage ist offen, **die Richtung hat sich aber gedreht**:
+  Die aktuelle Quelle behandelt den DC Fit als Normalfall und kennt genau *einen*
+  modellabhängigen Sonderfall, und der gilt dem Plus. Die frühere Sorge, das Mapping sei
+  „am Plus ermittelt und für den DC Fit fraglich", ist damit überholt — bestätigt ist
+  deswegen nichts, nur der Verdacht ist ein anderer. Den Vorbehalt bei Register-Aussagen
+  nicht wegkürzen, aber auch nicht in der alten Fassung konservieren; die aktuelle steht
+  in `modbus-registers.md`.
+
+  **Bei den Protobuf-Feldnummern des Cloud-Kanals gilt er dagegen scharf und in der
+  ursprünglichen Richtung:** `cmd_func 96 / cmd_id 33` belegt beim DC Fit andere Felder
+  als beim Plus, gemessen. Wer dort die falsche Tabelle nimmt, bekommt plausible Zahlen
+  an falschen Namen.
+- **Register-Tabellen:** Die Adressen stehen so da, wie sie auf den Draht gehen – die
+  Referenz-Integration übergibt die 4xxxx-Zahlen unverändert an pymodbus, `modbusread`
+  ebenso. **Ob sie 1-based oder 0-based gemeint sind, ist ungeklärt**; die frühere
+  Angabe „1-based" in diesen Notizen ist inzwischen stark in Zweifel gezogen und erst am
+  Gerät zu entscheiden. Genau deshalb nicht umrechnen und nichts dazuschreiben, was nur
+  eine der beiden Deutungen stützt. Floats belegen 2 Register, 32-bit IEEE754
+  **word-swapped** (High-Word im zweiten Register). Neue Einträge im bestehenden
+  Tabellenformat (Register | Einheit | Scale | Beschreibung) mit explizitem Scale-Faktor
+  ergänzen.
 - **Schreibregister:** Die Trennung in „explizit beschreibbar“ / „bekannt, nicht
   exponiert“ / „unbekannt“ beibehalten und die Warnung vor Schreibzugriffen
   (Leistungslimits 40554/40556) nicht entfernen.
