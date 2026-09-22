@@ -293,6 +293,13 @@ dieselben Größen auf anderen Nummern – dort lieferte das Skript plausible Za
 falschen Namen. Belegt ist die Zuordnung hier über die Energiebilanz: In jedem Frame geht
 `PV = Batterie + Haus + Netz` auf zwei Nachkommastellen auf.
 
+**Warum Python und nicht Go:** Das ist eine Zwischenstufe zum Ausprobieren, keine
+Festlegung. Python3 liegt auf Mac und Raspberry Pi ohnehin bereit, und der
+Protobuf-Rahmen lässt sich mit der Standardbibliothek lesen – für acht Felder kostet eine
+Protobuf-Werkzeugkette mehr, als sie bringt. Bewährt sich das Auswerten im Alltag, gehört
+es als Go-Werkzeug ins Repo: dann läuft es in der CI mit, ist ohne Gerät testbar wie
+`internal/decode`, und die Binaries der Releases decken es mit ab.
+
 `request` und `live` sind die **einzigen** Kommandos, die publizieren, und beide nur auf
 ein `get`-Topic. `request` abonniert `.../get_reply`,
 schickt die Anfrage an `.../get` und wartet `ECOFLOW_WAIT` Sekunden (Default 15). Das
