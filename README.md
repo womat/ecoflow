@@ -433,9 +433,9 @@ eigene EcoFlow-Konto gebunden sein, sonst bleibt die Liste leer.
 Das Gegenstück zu `modbusread` für den Dauerbetrieb: ein Go-Dienst, der den App-MQTT-Kanal
 liest, statt ihn für eine Messung zu öffnen. Gedacht für einen Raspberry Pi unter systemd.
 
-**Im Entstehen.** Heute verbindet er sich, verbindet sich bei Abbruch neu und gibt die
-Messwerte auf stdout aus. Das Weiterreichen an einen lokalen MQTT-Broker kommt als
-Nächstes.
+**Im Entstehen.** Er verbindet sich, verbindet sich bei Abbruch neu, gibt die Messwerte
+auf stdout aus und reicht sie an einen lokalen MQTT-Broker weiter. Was noch fehlt, ist der
+Feinschliff: systemd-Unit und Release-Binaries.
 
 ```bash
 export ECOFLOW_EMAIL='vorname.nachname@example.com'
@@ -454,6 +454,98 @@ connected to mqtt-e.ecoflow.com:8883, subscribed to 3 topics
 **Ohne `--fast` publiziert er nichts.** Das ist keine Vorsicht, sondern das, was das Gerät
 braucht: Das Abo allein hält es am Reden, gemessen über 23 Minuten ohne eine einzige
 gesendete Nachricht. Der Takt ist dann eine Minute.
+
+### An den lokalen Broker: `--broker`
+
+```bash
+./ecoflowd --sn HC31XXXXXXXXXXXX --name mathe --broker tcp://127.0.0.1:1883
+```
+
+Ein Topic je Wert, blanke Zahlen, kein JSON:
+
+| Topic                          | Beispiel               | Einheit                       |
+|--------------------------------|------------------------|-------------------------------|
+| `ecoflow/mathe/pv`             | `970`                  | W                             |
+| `ecoflow/mathe/house`          | `-415`                 | W                             |
+| `ecoflow/mathe/battery`        | `482`                  | W, **positiv = laden**        |
+| `ecoflow/mathe/grid`           | `72`                   | W, **positiv = Einspeisung**  |
+| `ecoflow/mathe/dcdc`           | `379`                  | W, Rolle noch unbekannt       |
+| `ecoflow/mathe/soc`            | `63`                   | %                             |
+| `ecoflow/mathe/measured`       | `2026-09-22T09:13:19Z` | ISO 8601, UTC                 |
+| `ecoflow/mathe/energy/pv`      | `3301`                 | Wh, Tagessumme                |
+| `ecoflow/mathe/energy/…`       |                        | `house`, `battery_in/out`, `grid_in/out` |
+| `ecoflow/mathe/status`         | `online` / `offline`   | Verfügbarkeit, retained       |
+
+Mit `--mqtt-user` und `MQTT_PASSWORD` für einen Broker, der Anmeldung verlangt. Das
+Passwort kommt aus der Umgebung, weil ein Flag in der Prozessliste stünde.
+
+**Die Messwerte sind nicht retained, die Verfügbarkeit schon.** Ein retained Messwert
+überlebt das, was er beschreibt: Nach einem Cloud-Ausfall liest ein Verbraucher den letzten
+Stand für immer weiter und regelt danach. Home Assistant warnt zusätzlich, dass retained
+Werte sich mit `expire_after` beißen. Publiziert wird bei Änderung, dazu einmal pro Minute
+auch unverändert — sonst kann ein Verbraucher „gleich geblieben" nicht von „weg" trennen.
+
+`status` geht auf `offline`, wenn der Dienst stirbt (per Last Will, auch bei `kill -9`)
+oder wenn drei Minuten lang kein Messwert mehr kam. Das Gerät hat zwar ein eigenes
+Status-Topic, aber darauf ist in **keinem** Mitschnitt je eine Nachricht angekommen — die
+Verfügbarkeit wird deshalb aus den Daten abgeleitet, nicht aus einer Nutzlast, die niemand
+gesehen hat.
+
+#### evcc
+
+Die Vorzeichen bleiben so, wie das Gerät misst — das Umrechnen bleibt beim Menschen,
+dieselbe Regel wie bei den Adressen in `modbusread`. evcc erwartet das Gegenteil und hat
+dafür `scale`:
+
+```yaml
+meters:
+  - name: pv
+    type: custom
+    power:
+      source: mqtt
+      topic: ecoflow/mathe/pv
+      timeout: 180s          # ohne timeout gilt jeder Wert unbegrenzt als aktuell
+  - name: grid
+    type: custom
+    power:
+      source: mqtt
+      topic: ecoflow/mathe/grid
+      scale: -1              # Gerät: positiv = Einspeisung, evcc: positiv = Bezug
+      timeout: 180s
+  - name: battery
+    type: custom
+    power:
+      source: mqtt
+      topic: ecoflow/mathe/battery
+      scale: -1              # Gerät: positiv = laden, evcc: positiv = entladen
+      timeout: 180s
+    soc:
+      source: mqtt
+      topic: ecoflow/mathe/soc
+      timeout: 180s
+```
+
+`timeout` ist nicht optional: Ohne ihn akzeptiert evcc laut eigener Doku „values of any
+age" — ein eingefrorener Wert würde dann stillschweigend weiterverwendet.
+
+Für Energiewerte kommt `scale: 0.001` dazu, weil evcc kWh erwartet und hier Wh stehen.
+
+#### Home Assistant
+
+```yaml
+mqtt:
+  sensor:
+    - name: "PV"
+      state_topic: "ecoflow/mathe/pv"
+      unit_of_measurement: "W"
+      device_class: power
+      state_class: measurement
+      availability_topic: "ecoflow/mathe/status"
+      expire_after: 180
+```
+
+`availability_topic` versteht `online`/`offline` ohne weitere Angaben — deshalb heißen die
+Nutzlasten genau so.
 
 ### Sekundenwerte: `--fast`
 

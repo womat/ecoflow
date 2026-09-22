@@ -23,10 +23,24 @@ import (
 // pause. The one that waiting never fixes - credentials the cloud rejected -
 // ends the program with its own status, so the unit can decline to restart it.
 func serve(ctx context.Context, cfg *config, stdout, stderr io.Writer) int {
+	// The local broker is independent of the cloud: it stays connected across
+	// every reconnection attempt, so a consumer keeps seeing the availability
+	// topic even while the cloud side is down. That is the whole point of it.
+	var out *publisher
+	if cfg.broker != "" {
+		p, err := newPublisher(cfg, stderr)
+		if err != nil {
+			fmt.Fprintln(stderr, "error:", err)
+			return exitUsage
+		}
+		defer p.close()
+		out = p
+	}
+
 	wait := backoffStart
 
 	for {
-		err := session(ctx, cfg, stdout, stderr)
+		err := session(ctx, cfg, out, stdout, stderr)
 		switch {
 		case ctx.Err() != nil:
 			fmt.Fprintln(stderr, "stopping")
@@ -55,7 +69,7 @@ func serve(ctx context.Context, cfg *config, stdout, stderr io.Writer) int {
 }
 
 // session runs one connection from start to finish.
-func session(ctx context.Context, cfg *config, stdout, stderr io.Writer) error {
+func session(ctx context.Context, cfg *config, out *publisher, stdout, stderr io.Writer) error {
 	client := &ecoflow.Client{Host: cfg.host}
 
 	s, err := sessionToken(ctx, cfg, client, stderr)
@@ -72,12 +86,12 @@ func session(ctx context.Context, cfg *config, stdout, stderr io.Writer) error {
 	}
 
 	topics := ecoflow.TopicsFor(s.UserID, cfg.serial)
-	return listen(ctx, cfg, broker, s, topics, stdout, stderr)
+	return listen(ctx, cfg, out, broker, s, topics, stdout, stderr)
 }
 
 // listen subscribes and reports what arrives, until the connection or the
 // context ends.
-func listen(ctx context.Context, cfg *config, broker ecoflow.Broker,
+func listen(ctx context.Context, cfg *config, out *publisher, broker ecoflow.Broker,
 	s ecoflow.Session, topics ecoflow.Topics, stdout, stderr io.Writer) error {
 
 	id, err := ecoflow.ClientID(s.UserID)
@@ -144,6 +158,13 @@ func listen(ctx context.Context, cfg *config, broker ecoflow.Broker,
 	}
 
 	var seen readings
+	day := newDailyTotals()
+
+	// Readings stopping is not an event, only an absence, so it has to be
+	// looked for rather than waited for.
+	stale := time.NewTicker(30 * time.Second)
+	defer stale.Stop()
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -152,6 +173,10 @@ func listen(ctx context.Context, cfg *config, broker ecoflow.Broker,
 			return fmt.Errorf("connection lost: %w", err)
 		case <-fast.deadline():
 			fast.complain(stderr)
+		case now := <-stale.C:
+			if out != nil {
+				out.check(now)
+			}
 		case payload := <-incoming:
 			f, err := frames.Parse(payload)
 			if err != nil {
@@ -163,11 +188,48 @@ func listen(ctx context.Context, cfg *config, broker ecoflow.Broker,
 			if f.Command == frames.Fast {
 				fast.arrived()
 			}
-			if line, _, ok := seen.add(f); ok && cfg.stdout {
+
+			if part, ok := f.Hourly(); ok {
+				if parts, complete := day.add(part); complete && out != nil {
+					out.totals(parts, time.Now())
+				}
+				continue
+			}
+
+			line, e, ok := seen.add(f)
+			if !ok {
+				continue
+			}
+			if cfg.stdout {
 				fmt.Fprintln(stdout, line)
+			}
+			if out != nil {
+				out.energy(e, time.Now())
 			}
 		}
 	}
+}
+
+// dailyTotals collects the six parts of the hourly history.
+//
+// They arrive one per flow, all carrying the same timestamp, so the set is
+// only worth reporting once it is complete - publishing a partial set would
+// mean totals that disagree with each other.
+type dailyTotals struct {
+	when  int64
+	parts map[frames.Flow]frames.HourlyPart
+}
+
+func newDailyTotals() *dailyTotals {
+	return &dailyTotals{parts: map[frames.Flow]frames.HourlyPart{}}
+}
+
+func (d *dailyTotals) add(p frames.HourlyPart) (map[frames.Flow]frames.HourlyPart, bool) {
+	if when := p.When.Unix(); when != d.when {
+		d.when, d.parts = when, map[frames.Flow]frames.HourlyPart{}
+	}
+	d.parts[p.Flow] = p
+	return d.parts, len(d.parts) == len(frames.Flows)
 }
 
 // keepFastStream renews the device's fast stream until the connection ends.

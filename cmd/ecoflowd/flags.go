@@ -18,6 +18,9 @@ type options struct {
 	name        string
 	host        string
 	state       string
+	broker      string
+	topic       string
+	mqttUser    string
 	stdout      bool
 	fast        bool
 	switchEvery time.Duration
@@ -27,16 +30,20 @@ type options struct {
 
 // config is the validated form.
 type config struct {
-	serial      string
-	name        string
-	email       string
-	password    string
-	host        string
-	state       string
-	stdout      bool
-	fast        bool
-	switchEvery time.Duration
-	verbose     bool
+	serial       string
+	name         string
+	email        string
+	password     string
+	host         string
+	state        string
+	broker       string
+	topic        string
+	mqttUser     string
+	mqttPassword string
+	stdout       bool
+	fast         bool
+	switchEvery  time.Duration
+	verbose      bool
 }
 
 // backoff bounds the wait between reconnection attempts. The cloud being
@@ -45,6 +52,13 @@ const (
 	backoffStart = 5 * time.Second
 	backoffMax   = 15 * time.Minute
 )
+
+// defaultTopic is the prefix on the local broker.
+//
+// It lives here rather than only in the flag definition so that the flag and
+// buildConfig cannot drift apart: an empty prefix means this, whichever way
+// the configuration was assembled.
+const defaultTopic = "ecoflow"
 
 var errFlag = errors.New("flag error")
 
@@ -57,6 +71,9 @@ func newFlagSet(o *options, stderr io.Writer) *flag.FlagSet {
 	fs.StringVar(&o.name, "name", "", "name to use instead of the serial number")
 	fs.StringVar(&o.host, "host", "", "API host (default "+ecoflow.DefaultHost+")")
 	fs.StringVar(&o.state, "state", "", "directory for the cached session token")
+	fs.StringVar(&o.broker, "broker", "", "local MQTT broker, e.g. tcp://127.0.0.1:1883")
+	fs.StringVar(&o.topic, "topic", defaultTopic, "topic prefix on the local broker")
+	fs.StringVar(&o.mqttUser, "mqtt-user", "", "user for the local broker")
 	fs.BoolVar(&o.stdout, "stdout", false, "print each reading")
 	fs.BoolVar(&o.fast, "fast", false,
 		"switch on the device's fast stream - this publishes, see the note below")
@@ -69,7 +86,13 @@ func newFlagSet(o *options, stderr io.Writer) *flag.FlagSet {
 		fmt.Fprint(stderr, `usage: ecoflowd --sn <serial> [options]
 
 Reads an EcoFlow PowerOcean over the consumer app's cloud channel and keeps
-reading it. Subscribing is all it does, unless --fast is given.
+reading it. Subscribing is all it does there, unless --fast is given.
+
+With --broker the readings go to a local MQTT broker, one topic per value:
+<topic>/<name>/pv, /house, /battery, /grid, /dcdc, /soc, /measured, the day's
+totals under /energy/, and /status as availability. Values carry the device's
+own signs - positive grid is export, positive battery is charging - and watts
+and watt-hours as measured. evcc turns those with scale: -1 and scale: 0.001.
 
 credentials, from the environment and never from flags:
   ECOFLOW_EMAIL        account e-mail
@@ -78,6 +101,8 @@ credentials, from the environment and never from flags:
                        password, not an application token - whatever holds it
                        should be readable by root alone.
   ECOFLOW_HOST         API host, overridden by --host
+  MQTT_PASSWORD        password for the local broker, if it wants one. A flag
+                       would put it in the process list for anyone to read.
 
 options:
 `)
@@ -111,6 +136,7 @@ examples:
   ecoflowd --sn HC31XXXXXXXXXXXX --stdout
   ecoflowd --sn HC31XXXXXXXXXXXX --name mathe --state /var/lib/ecoflowd
   ecoflowd --sn HC31XXXXXXXXXXXX --stdout --fast
+  ecoflowd --sn HC31XXXXXXXXXXXX --name mathe --broker tcp://127.0.0.1:1883
 `)
 	}
 
@@ -140,12 +166,18 @@ func buildConfig(o *options, _ *flag.FlagSet) (*config, error) {
 		name:        strings.TrimSpace(o.name),
 		host:        o.host,
 		state:       o.state,
+		broker:      o.broker,
+		topic:       o.topic,
+		mqttUser:    o.mqttUser,
 		stdout:      o.stdout,
 		fast:        o.fast,
 		switchEvery: o.switchEvery,
 		verbose:     o.verbose,
 		email:       os.Getenv("ECOFLOW_EMAIL"),
 		password:    os.Getenv("ECOFLOW_PASSWORD"),
+		// A flag would put the broker password in the process list, where
+		// anyone on the machine can read it.
+		mqttPassword: os.Getenv("MQTT_PASSWORD"),
 	}
 
 	if c.serial == "" {
@@ -165,6 +197,15 @@ func buildConfig(o *options, _ *flag.FlagSet) (*config, error) {
 	}
 	if c.host == "" {
 		c.host = os.Getenv("ECOFLOW_HOST")
+	}
+	if c.topic = strings.Trim(c.topic, "/"); c.topic == "" {
+		c.topic = defaultTopic
+	}
+	if strings.ContainsAny(c.topic, " \t#+") {
+		return nil, fmt.Errorf("topic prefix must not contain spaces or MQTT wildcards: %q", c.topic)
+	}
+	if c.mqttUser != "" && c.broker == "" {
+		return nil, errors.New("--mqtt-user without --broker has nothing to log in to")
 	}
 	if c.fast && c.switchEvery < time.Second {
 		return nil, fmt.Errorf("--switch-every %s is too short; the app uses 3s", c.switchEvery)
