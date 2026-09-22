@@ -82,6 +82,16 @@ mitziehen**, inkl. der „Offene Fragen“/„Offene Punkte“-Checklisten in RE
 - **Read-only ist eine harte Eigenschaft, kein Default:** `modbusread` ruft keine
   `Write*`-Methode der Library auf. Das Mapping ist unbestätigt (siehe unten), ein
   Tool ohne Schreibpfad kann nicht versehentlich schreiben. Nicht aufweichen.
+- **Der eine Schreibpfad im Repo, und wie er eingehegt ist:** Auf dem App-MQTT-Kanal
+  gibt es genau einen – den `EnergyStreamSwitch` auf `.../set`, der den schnellen
+  Datenstrom einschaltet. Er ist an vier Bedingungen gebunden, und die sind zusammen
+  die Regel: Er hängt an einem **eigenen Kommando** (`ecoflow-api.sh fast`) bzw. einem
+  **eigenen Flag** (`ecoflowd --fast`), passiert also nie als Nebenwirkung des Lesens;
+  er trägt **keine Parameter**; seine Bytes sind am Draht **mitgelesen** und werden
+  unverändert wiedergegeben, nur die Sequenznummer variiert; und er ist als Einziger
+  dort. Ein zweiter Schreibpfad wäre eine eigene Entscheidung, keine Erweiterung
+  dieser. Warum das so streng ist: Ein aus Fremdquellen zusammengesetzter Versuch lag
+  an vier Stellen daneben – auf einem Topic, über das sich das Gerät verstellen lässt.
 - **Adressen werden nie umgerechnet** – was getippt wird, geht so auf den Draht
   (0-based). Viele Quellen dokumentieren 1-based; das Umrechnen bleibt bewusst beim
   Menschen, damit das Tool keine Annahme versteckt.

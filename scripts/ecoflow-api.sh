@@ -1,10 +1,20 @@
 #!/usr/bin/env bash
 #
-# ecoflow-api.sh - read-only client for the EcoFlow Developer/Open API.
+# ecoflow-api.sh - client for the EcoFlow cloud, reading except where it says.
 #
 # Signs requests the way the EcoFlow IoT Open API expects and prints the raw
-# JSON response. Like modbusread, this tool is deliberately read-only: it only
-# ever issues GET requests, so it cannot change anything on the device.
+# JSON response.
+#
+# Almost everything here reads. The exceptions are worth naming rather than
+# glossing over, because "it cannot change the device" is a promise and it is
+# no longer true of the whole script:
+#
+#   - "values" and "login" use POST. Both are still reads; POST is simply what
+#     those endpoints want. The PUT endpoint that sets values is not used.
+#   - "request" publishes to a .../get topic, which is a read request.
+#   - "fast" publishes to a .../set topic, which is the one path here that can
+#     change the device. It sends one captured message and nothing else, and
+#     only when asked for by name - see the note in usage().
 #
 # Credentials come from the environment, never from flags or from this repo:
 #
@@ -75,10 +85,11 @@ commands:
   app-mqtt <SN> [suffix]
                        subscribe to one of the app's own topics under
                        /app/<userId>/<SN>/thing/property/; suffix defaults to
-                       "set", the topic this script never publishes to - so
-                       operating the phone app while this runs shows what it
-                       actually sends. Subscribing only. Runs until Ctrl-C.
-                       Needs jq and mosquitto_sub.
+                       "set", where the phone app sends its commands - so
+                       operating the app while this runs shows what it actually
+                       sends. This command only ever subscribes; the one thing
+                       here that publishes to "set" is "fast". Runs until
+                       Ctrl-C. Needs jq and mosquitto_sub.
   live <SN>            watch the consumer app's MQTT channel and keep it awake:
                        subscribe to the device's push, reply and status topics
                        and publish a wake-up call every ECOFLOW_LIVE_INTERVAL
@@ -106,8 +117,8 @@ environment:
                        (PowerOcean). It is the productKey the portal itself puts
                        in its URL; without a matching value the endpoint answers
                        with no data at all.
-  ECOFLOW_USER_ID      numeric account id, required for "app-cert", "app-mqtt"
-                       and "live".
+  ECOFLOW_USER_ID      numeric account id, required for "app-cert", "app-mqtt",
+                       "live" and "fast".
                        "login" prints it ready to export; in the browser it is
                        the userId the portal sends with its own requests.
   ECOFLOW_LIVE_INTERVAL
