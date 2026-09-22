@@ -96,8 +96,8 @@ Binaries unter [Releases](https://github.com/womat/ecoflow/releases). Sie sind s
 gelinkt (`CGO_ENABLED=0`), es ist also nichts zu installieren: entpacken und ausführen.
 
 ```bash
-VERSION=v0.1.0
-ARCH=linux-arm64   # siehe Tabelle unten
+VERSION=v0.4.1   # oder die neueste, siehe Releases-Seite
+ARCH=linux-arm64 # siehe Tabelle unten
 
 curl -LO "https://github.com/womat/ecoflow/releases/download/$VERSION/modbusread-$VERSION-$ARCH.tar.gz"
 tar -xzf "modbusread-$VERSION-$ARCH.tar.gz"
@@ -523,7 +523,7 @@ Binary aus den [Releases](https://github.com/womat/ecoflow/releases) holen — d
 Plattformen wie bei `modbusread`, statisch gelinkt, nichts zu installieren:
 
 ```bash
-VERSION=v0.4.0
+VERSION=v0.4.1   # oder die neueste, siehe Releases-Seite
 ARCH=linux-arm64
 
 curl -LO "https://github.com/womat/ecoflow/releases/download/$VERSION/ecoflowd-$VERSION-$ARCH.tar.gz"
@@ -798,8 +798,14 @@ git checkout main && git pull
 
 ```bash
 git checkout main && git pull
-git tag v0.5.0 && git push origin v0.5.0
+git tag vX.Y.Z && git push origin vX.Y.Z
 ```
+
+**Welche Nummer**, entscheidet die *Art* der Änderung, nicht ihr Umfang: Patch, solange
+sich am Verhalten nichts ändert — und Hilfetexte, Kommentare und Doku ändern es nicht,
+auch wenn der Diff groß ist. Minor, sobald ein Flag, ein Kommando oder ein Topic
+dazukommt. Das ist leicht zu verwechseln: `v0.4.1` umfasste rund 60 Korrekturen über neun
+Dateien und war trotzdem ein Patch, weil kein einziger Codepfad anders lief.
 
 Nur auf `main` taggen – `release.yml` baut daraus die Binaries und stempelt die
 Versionsnummer über `-X main.version` ein. Ein Tag auf einem anderen Branch erzeugte
