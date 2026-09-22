@@ -621,10 +621,13 @@ Seriennummer als ASCII trägt:
 
 | Feld | Beispielwert       | Komponente                          |
 |------|--------------------|-------------------------------------|
-| 1    | `HC31Z1H4ZG150145` | das System selbst – die abgefragte SN |
-| 2    | `HC312103BFCP0504` | PV Storage Converter, 5 kW          |
-| 3    | `HJ3AZD1AZH6C0814` | Batterie, 5 kWh                     |
-| 3    | `HJ3AZD1B2HAA0025` | Batterie, 5 kWh                     |
+| 1    | `HC31XXXXXXXXXXXX` | das System selbst – die abgefragte SN |
+| 2    | `HC31YYYYYYYYYYYY` | PV Storage Converter, 5 kW          |
+| 3    | `HJ3AXXXXXXXXXXXX` | Batterie, 5 kWh                     |
+| 3    | `HJ3AYYYYYYYYYYYY` | Batterie, 5 kWh                     |
+
+Die Präfixe sind echt und die aussagekräftige Hälfte – `HC31` ist der DC Fit, `HJ3A` die
+Batteriemodule; der Rest ist hier maskiert, weil dieses Repo öffentlich ist.
 
 **Belegt über das Portal**, nicht über die Präfixe geraten: `user-portal.ecoflow.com`
 führt unter *System information → Component information* dieselben Seriennummern mit Typ,
