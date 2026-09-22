@@ -28,25 +28,33 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p dist
-          for target in \
-            linux/amd64 linux/arm64 linux/arm \
-            darwin/arm64 darwin/amd64 \
-            windows/amd64
+          # Each command ships as its own archive. ecoflowd is a service and
+          # only useful on Linux in practice, but it is built everywhere all
+          # the same: this stays one loop over targets instead of a loop over
+          # targets with exceptions, and a darwin build is handy for trying it
+          # out on a laptop.
+          for cmd in modbusread ecoflowd
           do
-            os=${target%/*}
-            arch=${target#*/}
-            name="modbusread-${VERSION}-${os}-${arch}"
-            bin="modbusread"
-            if [ "$os" = "windows" ]; then bin="modbusread.exe"; fi
+            for target in \
+              linux/amd64 linux/arm64 linux/arm \
+              darwin/arm64 darwin/amd64 \
+              windows/amd64
+            do
+              os=${target%/*}
+              arch=${target#*/}
+              name="${cmd}-${VERSION}-${os}-${arch}"
+              bin="${cmd}"
+              if [ "$os" = "windows" ]; then bin="${cmd}.exe"; fi
 
-            # GOARM=6 keeps the 32-bit build usable on every Raspberry Pi,
-            # including the ARMv6 models; it is ignored for other targets.
-            CGO_ENABLED=0 GOOS="$os" GOARCH="$arch" GOARM=6 \
-              go build -trimpath -ldflags "-s -w -X main.version=${VERSION}" \
-              -o "dist/${bin}" ./cmd/modbusread
+              # GOARM=6 keeps the 32-bit build usable on every Raspberry Pi,
+              # including the ARMv6 models; it is ignored for other targets.
+              CGO_ENABLED=0 GOOS="$os" GOARCH="$arch" GOARM=6 \
+                go build -trimpath -ldflags "-s -w -X main.version=${VERSION}" \
+                -o "dist/${bin}" "./cmd/${cmd}"
 
-            tar -czf "dist/${name}.tar.gz" -C dist "${bin}"
-            rm "dist/${bin}"
+              tar -czf "dist/${name}.tar.gz" -C dist "${bin}"
+              rm "dist/${bin}"
+            done
           done
           cd dist && sha256sum *.tar.gz > checksums.txt
 

@@ -47,5 +47,5 @@ func versionString() string {
 		}
 	}
 
-	return fmt.Sprintf("modbusread %s (%s, %s/%s)", v, runtime.Version(), runtime.GOOS, runtime.GOARCH)
+	return fmt.Sprintf("ecoflowd %s (%s, %s/%s)", v, runtime.Version(), runtime.GOOS, runtime.GOARCH)
 }
