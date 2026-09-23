@@ -543,10 +543,13 @@ sudo install -m 0755 ecoflowd /usr/local/bin/
 ```
 
 Die Unit liegt als Vorlage bei — eine Instanz je Gerät, die Seriennummer steht hinter dem
-`@`:
+`@`. Im Release-Archiv steckt nur das Binary, die Unit kommt deshalb aus dem Repo, und zwar
+vom selben Tag wie das Binary (mit einem Checkout tut es auch
+`sudo cp contrib/ecoflowd@.service /etc/systemd/system/`):
 
 ```bash
-sudo cp contrib/ecoflowd@.service /etc/systemd/system/
+sudo curl -fsSL -o /etc/systemd/system/ecoflowd@.service \
+  "https://raw.githubusercontent.com/womat/ecoflow/$VERSION/contrib/ecoflowd@.service"
 sudo install -d -m 0700 /etc/ecoflowd
 sudo install -m 0600 /dev/null /etc/ecoflowd/env
 sudo nano /etc/ecoflowd/env
@@ -568,6 +571,17 @@ base64-kodiert statt gehasht; geschützt ist allein der TLS-Kanal.
 
 Die Unit läuft unter `DynamicUser` mit `ProtectSystem=strict` und schreibt nichts auf die
 Platte — der Sitzungstoken lebt im Speicher des Prozesses.
+
+**Das Binary gehört nach `/usr/local/bin`, nicht in ein eigenes Verzeichnis mit engen
+Rechten** wie `/opt/<name>/bin` mit `0770 pv:docker`. Der dynamische Benutzer ist weder der
+Eigentümer noch in der Gruppe, er käme nicht hinein und der Start scheiterte mit
+„Permission denied". Die beiden naheliegenden Auswege sind bewusst nicht gegangen:
+
+- **Den Dienstbenutzer in die Gruppe `docker` aufnehmen** (`SupplementaryGroups=`) — wer in
+  `docker` ist, ist über den Docker-Socket praktisch root.
+- **`User=pv` statt `DynamicUser`** — dann läuft der Prozess unter einem Konto, das seine
+  Zugangsdatei selbst lesen kann. So liest sie nur systemd als root und reicht dem Prozess
+  die Werte als Umgebung weiter; der Dienstbenutzer hat auf `/etc/ecoflowd` keinen Zugriff.
 
 `RestartPreventExitStatus=78` ist der Kern: Bei abgelehnten Zugangsdaten bleibt der Dienst
 stehen, statt einen Tippfehler stündlich gegen einen inoffiziellen Endpunkt zu fahren —
