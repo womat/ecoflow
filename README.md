@@ -752,10 +752,10 @@ hält sie gegen dieselben Mitschnitte zusammen.
 - Ob der schnelle Strom nach dem letzten Schalter aus Zeitgründen endet oder weil die
   MQTT-Verbindung abriss. Gemessen sind **rund 25 Sekunden** Nachlauf; in derselben
   Messung wurde aber auch neu verbunden, das trennt sie also nicht
-- Die Feldzuordnung von `cmd_id` 110. Sie hängt **nicht** an fehlenden Daten, sondern
-  an der Betriebslage: Bei vollem, stillstehendem Akku laufen PV und Netz proportional
-  und sind nicht zu trennen. Nötig ist ein Mitschnitt am Abend, wenn die Batterie
-  übernimmt. 1, 108, 109, 111 und 136 sind aufgeschlüsselt
+- Die restlichen Felder von `cmd_id` 110. Eine Nacht mit PV = 0 hat sie in drei Gruppen
+  getrennt (PV-gebunden, Batterieentladung, Einstellungen) und Feld 45/47 als
+  Entladeleistung belegt; ungeklärt bleiben unter anderem 2, 3, 5, 18, 19, 24, 28, 32
+  und 48. `cmd_id` 1, 108, 109, 111 und 136 sind aufgeschlüsselt
 - Warum das Portal den Tagesertrag **tagsüber** in beide Richtungen danebenliegen lässt.
   Nach Sonnenuntergang stimmen Portal und Gerät auf 0,058 % überein, es wird also
   dasselbe gemessen; das Portal schreibt nur sprunghaft fort. Praktisch heißt das:

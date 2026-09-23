@@ -497,7 +497,7 @@ Feldbelegung, aber unterschiedlichem Takt und unterschiedlicher Verpackung:
 | Kennung | Takt          | Zeitstempel     | Nutzlast                        | Bedingung                    |
 |---------|---------------|-----------------|---------------------------------|------------------------------|
 | **34**  | genau minütlich | auf die Minute gerundet | Felder in eine Nachricht eingepackt | kommt immer                  |
-| **33**  | alle 2–3 s    | sekundengenau   | Felder direkt in der Nutzlast   | nur bei aktivem Stream-Schalter |
+| **33**  | alle 2–3 s    | sekundengenau   | Felder direkt in der Nutzlast   | mit Stream-Schalter; ohne ihn deutlich seltener, siehe unten |
 
 Wer also nur mit `live` misst, sieht ausschließlich 34 und hält 33 für nicht vorhanden –
 und wer der Fremdquelle folgt, die nur 33 nennt, findet ohne den Schalter gar nichts.
@@ -650,9 +650,18 @@ auseinander, weil das Portal sprunghaft fortschreibt; siehe die Liste der offene
 
 #### Die Antwort auf den Schalter: `96/3` und `96/137`
 
-Beide kommen im schnellen Betrieb im Sekundentakt – und im langsamen **gar nicht**. Die
-Gegenprobe ist eindeutig: 83 bzw. 75 Frames bei aktivem Schalter, null ohne ihn. Der
-Schalter setzt `needAck = 1`, das Gerät antwortet also mit beidem.
+Beide kommen im schnellen Betrieb im Sekundentakt. Der Schalter setzt `needAck = 1`, das
+Gerät antwortet also mit beidem.
+
+> **Einschränkung.** Hier stand, sie kämen ohne Schalter **gar nicht** („null ohne ihn").
+> Das hielt einer längeren Beobachtung nicht stand: Über 264 abgedeckte Minuten ohne
+> Schalter kamen `96/3` mit 1,29 und `96/137` mit 1,08 Frames je Minute – gegenüber 21,5
+> bzw. 18,9 mit Schalter. Der Schalter **beschleunigt** sie also um das Siebzehnfache,
+> er schaltet sie nicht ein. Die frühere Null stammt aus einem kurzen Kontrolllauf.
+>
+> Ein Vorbehalt bleibt: Während der langen Beobachtung lässt sich nicht ausschließen,
+> dass ein **anderer Client** (die Handy-App) zeitweise mitgeredet hat. Ein sauberer
+> Gegenbeweis bräuchte einen langen Lauf mit nachweislich geschlossener App.
 
 **`96/137` hat eine leere Nutzlast** – eine reine Bestätigung, ohne Inhalt.
 
@@ -688,8 +697,10 @@ einen Minutentakt braucht es ihn ohnehin nicht.
 #### Die übrigen Kennungen: `96/1`, `96/108`–`96/111`, `96/136`
 
 Aus einem Mitschnitt vom 22.09.2026, 14:21–14:31Z (5 min `fast`, danach 6 min nur
-zuhören). Alle sechs tragen eine XOR-verschleierte Nutzlast wie die übrigen und kommen
-**nur bei aktivem Stream-Schalter** in dichter Folge; ohne ihn bleiben sie selten.
+zuhören). Alle sechs tragen eine XOR-verschleierte Nutzlast wie die übrigen. `96/1` kommt mit
+Stream-Schalter rund neunmal so oft; `96/108`–`96/111` und `96/136` laufen dagegen
+**unabhängig vom Schalter** in ihrem eigenen Takt (1–2 Frames je Minute, gemessen über
+264 abgedeckte Minuten).
 
 **`96/1` ist der Systembericht** und trägt die **laufenden Tagessummen als Float**. Das
 ist der Befund, der sich am besten belegen lässt – dieselben sechs Flüsse wie die
@@ -743,33 +754,70 @@ Gegenprobe wie `96/1` – hier über die Zeit statt über eine zweite Quelle:
 | 897 W                  | 875 W             | 0,976      |
 
 **Mittel 1,0004 bei einer Streuung von 0,033**, über eine Verdreifachung der Leistung.
-Die Felder 4, 5, 7 bzw. 12, 13, 15 liegen auf derselben Spannungsebene (weitere
-Messpunkte am selben Strang, nicht zugeordnet), Feld 22–25 sind Temperaturen.
+Die Felder 4, 5, 12 und 13 sind **nicht** dieselbe Spannung, auch wenn sie es tagsüber
+scheinen. Nachts trennen sie sich deutlich:
+
+| | Feld 2 (Strang) | Feld 3 | Leistung | Feld 4 | Feld 12 |
+|---|---|---|---|---|---|
+| nachts, PV = 0 | 4,6–5,6 V | 0,08 A | 0,4 W | 397–426 V | 397–426 V |
+| tags, PV 578 W | 535,5 V | 0,51 A | 273 W | 534,4 V | 534,6 V |
+
+Der Strang fällt im Dunkeln auf wenige Volt, die Felder 4/5/12/13 bleiben bei rund
+400 V – das ist der **DC-Zwischenkreis**, den die entladende Batterie oben hält. Tagsüber
+laufen beide zusammen, weil der Strang dann den Zwischenkreis speist. Feld 22–25 sind
+Temperaturen, Feld 7 und 15 liegen konstant bei rund 800 (wie der Grenzwert in Feld 21).
 
 Die Spannung verhält sich dabei wie erwartet: Sie **steigt**, wenn die Leistung fällt
 (428 V bei 2526 W, 556 V bei 897 W) – der Arbeitspunkt wandert bei wenig Licht Richtung
 Leerlaufspannung. Das ist eine unabhängige Plausibilitätsprobe für die Deutung als
 Strangspannung.
 
-**`96/110` liegt auf derselben Ebene und ist nicht zugeordnet.** Die Felder 2, 3 und 5
-tragen dieselben Strangspannungen; 15, 18, 19, 24, 30 und 42 stehen über den ganzen
-Mitschnitt **konstant** und sind damit Einstellungen, keine Messwerte. Feld 48 läuft mit
-der Leistung mit, lässt sich aber nicht festnageln – und zwar aus einem Grund, der
-festgehalten gehört:
+**`96/110` zerfällt in drei Gruppen.** Eine Nacht mit 57 Proben bei PV = 0 gegen 12 bei
+Licht trennt sie – was im Dunkeln null ist, hängt an der PV, was dann arbeitet, nicht:
 
-> Im Mitschnitt stand die Batterie still (SoC 100 %). Dann gilt Netz = PV − Haus bei
-> nahezu konstantem Haus, PV und Netz laufen also proportional. `f48/Netz` ≈ 1,00 und
-> `f48/PV` ≈ 0,82 sind beide konstant – **die beiden Größen sind in dieser Betriebslage
-> nicht trennbar.** Mehr Proben derselben Lage ändern daran nichts.
+| Gruppe | Felder | Befund |
+|--------|--------|--------|
+| PV-gebunden | 14, 16, 17, 20, 27, 29, 42, 43 | im Dunkeln **exakt null**, bei Licht bis 3300 |
+| Batterieentladung | **45 und 47** | im Dunkeln 174–354, bei Licht null |
+| Einstellungen | 21, 23, 25, 26, 37, 38, 44, 46, 50, 53, 54 | über den ganzen Mitschnitt konstant |
+
+**Feld 45 ist die Entladeleistung der Batterie in W.** Gegen den Energiebericht auf
+5 Sekunden gepaart (n = 15, nur während Entladung): Mittelabweichung **−9,3 W bei einer
+Streuung von 14 W**, auf Werten um 250 W. Feld 47 trägt dieselbe Größe an einem zweiten
+Messpunkt, im Mittel 1,6 W darunter. Beim Laden stehen beide auf null – das Vorzeichen
+steckt also nicht im Wert, sondern in der Feldwahl.
+
+Das ist schwächer belegt als `96/109` (dort 3 % über eine Verdreifachung); die Streuung
+kommt daher, dass der Energiebericht nachts nur minütlich kommt, die Hauslast sich aber
+dazwischen ändert.
+
+Nicht zugeordnet bleiben unter anderem die Felder 2, 3, 5 (Spannungen auf derselben
+Ebene wie `96/109`), 18, 19, 24, 28, 32 und 48. Zu Feld 48 gehört eine Warnung:
+
+> Im Nachmittagsmitschnitt stand die Batterie still (SoC 100 %). Dann gilt
+> Netz = PV − Haus bei nahezu konstantem Haus, PV und Netz laufen also proportional.
+> `f48/Netz` ≈ 1,00 und `f48/PV` ≈ 0,82 waren beide konstant – **in dieser Betriebslage
+> nicht trennbar.**
+>
+> In der Nacht darauf lag Feld 48 dann zwischen −27 und +49, obwohl PV bis 1006 W stieg.
+> Mit einer Leistung um 2000 W am Vortag ist das unvereinbar. **Feld 48 ist damit
+> vermutlich gar keine Leistung**; was es ist, ist offen.
 
 **Was hier weiterhilft**, ist deshalb nicht ein längerer, sondern ein *anders gelegter*
 Mitschnitt: einer, in dem PV, Netz, Haus und Batterie sich unabhängig bewegen. Am
 einfachsten am Abend, wenn die PV-Leistung fällt, das Haus weiter zieht und die Batterie
-übernimmt. Dazu passt ein gemessener Nebenbefund: **`96/109` und `96/110` kommen ohne
-Stream-Schalter sechsmal häufiger** (29 Frames in 348 s gegen 5 in 300 s) – der schnelle
-Energiestrom verdrängt sie. Für diese Frage ist `live` also die bessere Quelle als `fast`,
-und schreibt obendrein nichts ans Gerät. Nur zum Paaren mit einem Energiebericht auf die
-Sekunde genau ist eine kurze `fast`-Phase nützlich.
+übernimmt.
+
+> **Korrektur.** Hier stand, `96/109` und `96/110` kämen ohne Stream-Schalter *sechsmal
+> häufiger*. Das war falsch und ist zurückgezogen. Die Zahl entstand, weil eine noch
+> wachsende Mitschnittdatei zweimal zu verschiedenen Zeitpunkten gelesen wurde: Die
+> Frame-Anzahl stammte aus dem späteren Lesen, die Zeitspanne aus dem früheren. Über
+> 264 abgedeckte Minuten nachgerechnet ist die Rate **gleich**: 2,03 Frames je Minute
+> mit Schalter, 2,06 ohne.
+
+Für die Wahl zwischen `live` und `fast` bleibt trotzdem `live` das Mittel der Wahl – nicht
+wegen der Rate, sondern weil es **nichts ans Gerät schickt**. Nur zum Paaren mit einem
+Energiebericht auf die Sekunde genau ist eine kurze `fast`-Phase nützlich.
 
 **`96/136` ist eine Konstante.** Über alle Proben dieselben zwei Byte: `08 0b`, also
 Feld 1 = 11. Kein Messwert.
@@ -976,7 +1024,8 @@ REST-Interface – eine explizite Bestätigung dafür liegt aber nicht vor.
   `ecoflow-frames.py --hours`
 - [x] Was tragen `96/3` und `96/137`? → `96/3` ist eine **Komponentenliste** mit vier
   Seriennummern, `96/137` hat eine **leere Nutzlast** und ist die Bestätigung auf den
-  Stream-Schalter. Beide erscheinen nur bei aktivem Schalter. Siehe Abschnitt 3
+  Stream-Schalter. Der Schalter beschleunigt beide um etwa das Siebzehnfache, schaltet
+  sie aber nicht ein. Siehe Abschnitt 3
 - [x] Welche Rolle haben die Komponenten ab Feld 2 der Liste? → Über
   *System information → Component information* im Portal aufgelöst: Feld 2 ist der
   PV Storage Converter, die `HJ3A`-Einträge sind die Batteriemodule
