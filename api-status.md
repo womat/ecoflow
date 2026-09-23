@@ -18,6 +18,10 @@ Praktisch heißt das: Wer heute Werte will, nimmt den App-MQTT-Kanal — `script
 zum Messen, `cmd/ecoflowd` für den Dauerbetrieb. Wer Verlässlichkeit will, betreibt die
 Modbus-Freischaltung.
 
+Diese Datei behandelt den Weg *zum Gerät*. Wie `ecoflowd` die gewonnenen Werte auf den
+lokalen Broker weitergibt — und warum diese Form zur Debatte steht — steht in
+[`mqtt-ausgabe.md`](./mqtt-ausgabe.md).
+
 ## 1. EcoFlow Developer/Open API (Cloud)
 
 - Endpunkt: developer.ecoflow.com

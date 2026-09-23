@@ -109,14 +109,19 @@ Fehlermeldungen auf Englisch, weil das Tool universell einsetzbar sein soll.
 - `api-status.md` – die *Entscheidungsebene*: Cloud-REST (EcoFlow Developer/Open API,
   HMAC-signiert, liefert für PowerOcean oft Fehler 1006) vs. lokales **Modbus TCP**
   (Port 502, Freischaltung nur durch Installateur via EcoFlow **Pro App**)
+- `mqtt-ausgabe.md` – die *Ausgabeseite*: wie `ecoflowd` auf den lokalen Broker
+  publiziert, warum es heute ein Topic je Wert ist und warum ein JSON-Sammeltelegramm
+  die bessere Form wäre. Enthält die korrigierten Annahmen (evcc und Home Assistant
+  können JSON; der Heartbeat ersetzt nur den fehlenden Zeitstempel). Reine Analyse —
+  am Code ist deswegen **nichts** geändert
 - `modbus-registers.md` – die *Detailebene*: Register-Map, Encoding-Konventionen,
   Python-Decoding-Snippets (pymodbus), bekannte Lücken
 
-Die drei Markdown-Dateien überschneiden sich bewusst: README verlinkt beide,
-`api-status.md` verweist für das Mapping auf `modbus-registers.md`. Bei inhaltlichen
-Änderungen (z.B. Fehler 1006 gelöst, Freischaltpfad gefunden) **alle betroffenen Stellen
-mitziehen**, inkl. der „Offene Fragen“/„Offene Punkte“-Checklisten in README und
-`api-status.md`.
+Die vier Markdown-Dateien überschneiden sich bewusst: README verlinkt alle drei,
+`api-status.md` verweist für das Mapping auf `modbus-registers.md` und für die
+Ausgabeseite auf `mqtt-ausgabe.md`. Bei inhaltlichen Änderungen (z.B. Fehler 1006 gelöst,
+Freischaltpfad gefunden) **alle betroffenen Stellen mitziehen**, inkl. der „Offene
+Fragen“/„Offene Punkte“-Checklisten in README und `api-status.md`.
 
 Dasselbe gilt seit dem Cloud-Kanal für die Werkzeuge: Wer an `scripts/ecoflow-api.sh`,
 `scripts/ecoflow-frames.py` oder `cmd/ecoflowd` etwas ändert, zieht die zugehörigen
