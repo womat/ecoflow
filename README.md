@@ -14,6 +14,7 @@ Modbus TCP) für den EcoFlow PowerOcean DC Fit.
 |------------------------------------------------------|-------------------------------------------------------------------------------------------------------|
 | [`api-status.md`](./api-status.md)                   | Überblick: Cloud-REST-API vs. lokales Modbus TCP, bekannte Probleme (z.B. Fehler 1006), Freischaltung |
 | [`modbus-registers.md`](./modbus-registers.md)       | Register-Map (SOC, Batterie, PV, Netz, Energiezähler, Steuerregister) inkl. Decoding-Beispielen       |
+| [`mqtt-ausgabe.md`](./mqtt-ausgabe.md)               | Das Ausgabeformat von `ecoflowd` am lokalen Broker – Analyse des Status quo und Empfehlung            |
 | [`cmd/modbusread`](./cmd/modbusread)                 | Kleines Go-CLI zum Nachmessen der Register am Gerät (s.u.)                                            |
 | [`scripts/ecoflow-api.sh`](./scripts/ecoflow-api.sh) | Shell-Skript für alle vier Cloud-Wege: Developer-API, Portal, App-MQTT, Stream-Schalter (s.u.)        |
 | [`scripts/ecoflow-frames.py`](./scripts/ecoflow-frames.py) | Packt die Live-Frames aus `ecoflow-api.sh live` aus – aktuelle Messwerte und Stundenbilanz (s.u.) |
@@ -634,6 +635,10 @@ Status-Topic, aber darauf ist in **keinem** Mitschnitt je eine Nachricht angekom
 Verfügbarkeit wird deshalb aus den Daten abgeleitet, nicht aus einer Nutzlast, die niemand
 gesehen hat.
 
+**Warum ein Topic je Wert und nicht ein JSON-Telegramm?** Die Frage ist untersucht und in
+[`mqtt-ausgabe.md`](./mqtt-ausgabe.md) beantwortet — mit dem Ergebnis, dass ein
+Sammeltelegramm die bessere Form wäre. Geändert ist hier bislang nichts.
+
 #### evcc
 
 Die Vorzeichen bleiben so, wie das Gerät misst — das Umrechnen bleibt beim Menschen,
@@ -770,6 +775,13 @@ hält sie gegen dieselben Mitschnitte zusammen.
   getrennt (PV-gebunden, Batterieentladung, Einstellungen) und Feld 45/47 als
   Entladeleistung belegt; ungeklärt bleiben unter anderem 2, 3, 5, 18, 19, 24, 28, 32
   und 48. `cmd_id` 1, 108, 109, 111 und 136 sind aufgeschlüsselt
+- Ob das Verfügbarkeits-Topic einfrieren kann: Hängt `ecoflowd`, ohne die MQTT-Verbindung
+  zu verlieren, bleibt das retained `online` stehen und der Last Will feuert nicht. Der
+  Stale-Wächter greift nur, solange der Prozess läuft. Beim Bau eines Verbrauchers
+  aufgefallen, am eigenen Code **nicht nachgestellt** (siehe `mqtt-ausgabe.md`)
+- Ob unvollständige Frames real vorkommen. `internal/frames/energy.go` prüft nur PV auf
+  Anwesenheit; die übrigen Felder werden als 0 gelesen, wenn sie fehlen — ununterscheidbar
+  von einer gemessenen 0 (siehe `mqtt-ausgabe.md`)
 - Warum das Portal den Tagesertrag **tagsüber** in beide Richtungen danebenliegen lässt.
   Nach Sonnenuntergang stimmen Portal und Gerät auf 0,058 % überein, es wird also
   dasselbe gemessen; das Portal schreibt nur sprunghaft fort. Praktisch heißt das:
