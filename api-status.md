@@ -501,7 +501,7 @@ field assignment, but a different rate and different packaging:
 | ID      | Rate          | Timestamp       | Payload                         | Condition                    |
 |---------|---------------|-----------------|---------------------------------|------------------------------|
 | **34**  | exactly every minute | rounded to the minute | fields wrapped in a message | always comes                 |
-| **33**  | every 2–3 s   | accurate to the second | fields directly in the payload | with the stream switch; without it considerably rarer, see below |
+| **33**  | every 2–3 s   | accurate to the second | fields directly in the payload | only with the stream switch; without it none in a 23-minute control (see "Open questions") |
 
 So whoever only measures with `live` sees exclusively 34 and takes 33 to be nonexistent –
 and whoever follows the third-party source that only names 33 finds nothing at all without
@@ -931,9 +931,11 @@ port 502 `connection refused` – so disabled, as documented.
 
 **For the register question (Plus vs. DC Fit)**
 
-- [ ] Ask for the firmware version and exact model designation/`InverterModel`. The mapping
-  in `modbus-registers.md` was determined on the PowerOcean **Plus**, and the firmware
-  knows model-dependent `address_overrides`.
+- [ ] Ask for the firmware version and exact model designation/`InverterModel`. The
+  current map in `modbus-registers.md` treats the DC Fit as the normal case and knows
+  exactly one model-dependent address (`feed_in_power_max`: 40538 on the **Plus** instead
+  of 40609); only the older table was scanned on a Plus. None of it is confirmed on the
+  DC Fit, and `models.py` cannot recognise the DC Fit by `product_number`.
 - [ ] Has EcoFlow documented a register list to him? Unlikely, but
   the cheapest way to official information.
 
@@ -975,9 +977,11 @@ REST interface – but there is no explicit confirmation of this.
 
 ## Open questions / still to be clarified
 
-- [ ] Does the Modbus register mapping (PowerOcean Plus) apply 1:1 to the DC Fit, or
-  is there a separate `InverterModel` mapping with different addresses?
-  → `models.py` in the repo `MaxGrmm/EF-PowerOcean-TcpModbus` not yet checked.
+- [ ] Does the Modbus register mapping apply 1:1 to the DC Fit? → `models.py` in
+  `MaxGrmm/EF-PowerOcean-TcpModbus` is checked: the current source treats the DC Fit as
+  the normal case, the only model-dependent address concerns the Plus
+  (`feed_in_power_max`). **Not yet measured on the device**; the contradictions between
+  the sources in `modbus-registers.md` are the measurement plan
 - [ ] Exact menu path to the Modbus switch in the EcoFlow Pro app. Known from a
   third-party source (`MaxGrmm/EF-PowerOcean-TcpModbus`): select the inverter, switch
   Control Mode to **"Modbus control"** – so a change of operating mode, not a hidden
@@ -1002,7 +1006,7 @@ REST interface – but there is no explicit confirmation of this.
 - [x] Does the documented request path via `.../get` help? → **No**, the publish is
   rejected with PUBACK 0x87 "Not authorized", the subscription to `.../get_reply` with
   SUBACK 0x80. This fully measures out the **Open API** MQTT channel. The
-  app channel is a different one and still open – see the next three points.
+  app channel is a different one, and it delivers – see the next points and section 3.
 - [x] Does `/iot-auth/app/certification` answer with the consumer token, and does the
   broker allow the client ID form `ANDROID_<hex>_<userId>`? → **Yes, both** (22 Sep 2026);
   frames arrive on `/app/device/property/<SN>`
@@ -1031,7 +1035,11 @@ REST interface – but there is no explicit confirmation of this.
   runs is known and could be the explanation: here the MQTT client was **reconnected**
   between the two phases (the broker demands a fresh client ID anyway). Whether the end of
   the stream depended on time or on the disconnect, this measurement does **not** separate
-  – for that the same connection would have to stay up and only the switching stop
+  – for that the same connection would have to stay up and only the switching stop.
+  That part is kept as an open point of its own, next
+- [ ] Does the fast stream end after the last switch for reasons of time, or because the
+  MQTT connection dropped? → The measurement above does not separate the two. To be
+  measured with one connection that stays up while only the switching stops
 - [x] Does the device ever switch the fast stream on by itself? → **No.** The control
   with the app and the portal closed showed **not a single** `96/33` over 23 minutes.
   In an earlier run it had appeared without our doing anything; the cause was
@@ -1069,11 +1077,14 @@ REST interface – but there is no explicit confirmation of this.
   (14.00 against 15.96 kWh). So the portal measures the same thing, but hands it out
   **in jumps and at its own rate**.
 
-  **What is still open about it** (hence only almost done): pure lag does not explain
+  **What is still open about it** (kept as its own point, next): pure lag does not explain
   the too-high reading in the morning. A suspicion, not established: the timestamp
   `measured` belongs to the power value; when the energy counter was last updated
   it possibly does not say at all. **In practice this means: whoever wants daily values
   takes those from the device** (`254/32` or `96/1`), not those from the portal
+- [ ] Why is the portal's daily yield off in both directions **during the day**, and in
+  particular too high in the morning? → Not explained by lag alone; see the point above.
+  Suspicion, not established: `measured` dates the power value, not the energy counter
 - [x] What do the remaining `cmd_id` (1, 108, 109, 110, 111, 136) carry? → **Broken
   down**, see section 3. In short: `96/1` is the system report and carries the daily
   totals as floats (established against the hourly history to within a few Wh), `96/108`

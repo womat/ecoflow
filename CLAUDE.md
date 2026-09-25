@@ -190,7 +190,8 @@ refuted. When catching up, the code counts, not the older prose.
   device. That is exactly why nothing is converted and nothing is added that supports
   only one of the two readings. Floats occupy 2 registers, 32-bit IEEE754
   **word-swapped** (high word in the second register). Add new entries in the existing
-  table format (Register | Unit | Scale | Description) with an explicit scale factor.
+  table format (Register | Type | Description); state the unit, and a scale factor
+  whenever it is not 1, explicitly in the description rather than implying it.
 - **Write registers:** keep the split into "explicitly writable" / "known, not exposed" /
   "unknown", and do not remove the warning about write access (power limits
   40554/40556).
