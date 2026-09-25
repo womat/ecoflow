@@ -39,11 +39,12 @@ func direction(v float32, positive, negative string) string {
 	return "idle"
 }
 
-// fastStillRunning is how long a fast report keeps the minutely one redundant.
+// fastMemory is how long a fast report's timestamp is remembered, in seconds.
 //
-// The fast stream arrives every two to three seconds, so anything beyond a
-// minute means it has lapsed and the minutely report is the only source left.
-const fastStillRunning = 90
+// A minutely report is redundant only if a fast one with exactly its timestamp
+// was already seen. The matching fast report arrives a few seconds before the
+// minutely one, so five minutes is ample.
+const fastMemory = 300
 
 // readings turns frames into measurements, dropping what would only repeat.
 //
@@ -53,12 +54,17 @@ const fastStillRunning = 90
 // stream runs it repeats a reading already shown - with a timestamp rounded to
 // the minute, which makes it look like the clock stopped.
 //
+// The second rule matches the timestamp rather than asking whether a fast
+// report came recently. That difference shows when the stream ends: the first
+// minutely report after it has no fast twin, and a time window would drop it
+// and leave a minute without a reading - seen on the broker on 26.09.2026,
+// right after the phone app was closed.
+//
 // Two different readings within the same second are kept: they happen, and
 // they are not repetition.
 type readings struct {
 	previous string
-	lastFast int64
-	haveFast bool
+	fastSeen map[int64]struct{}
 }
 
 // add returns the line to report, or false if this frame adds nothing.
@@ -68,12 +74,21 @@ func (r *readings) add(f frames.Frame) (string, frames.Energy, bool) {
 		return "", e, false
 	}
 
-	when := e.Measured.Unix()
-	switch {
-	case f.Command == frames.Fast:
-		r.lastFast, r.haveFast = when, true
-	case r.haveFast && when-r.lastFast <= fastStillRunning:
-		return "", e, false
+	if !e.Measured.IsZero() {
+		when := e.Measured.Unix()
+		if f.Command == frames.Fast {
+			if r.fastSeen == nil {
+				r.fastSeen = map[int64]struct{}{}
+			}
+			r.fastSeen[when] = struct{}{}
+			for t := range r.fastSeen {
+				if when-t > fastMemory {
+					delete(r.fastSeen, t)
+				}
+			}
+		} else if _, twin := r.fastSeen[when]; twin {
+			return "", e, false
+		}
 	}
 
 	line := reading(e)

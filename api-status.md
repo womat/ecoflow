@@ -512,8 +512,15 @@ the switch.
 **While the fast stream is running, 34 is superfluous:** across a series of measurements
 *every* minute report had a per-second report with the same timestamp. So it contributes
 nothing, but looks like a standstill because its timestamp is rounded to the
-minute. `ecoflow-frames.py` therefore suppresses it as long as a 33 arrived within the last
-90 seconds – and shows it again as soon as the fast stream dries up.
+minute. `ecoflow-frames.py` and `ecoflowd` therefore suppress a minute report when a 33 with
+**exactly its timestamp** has already arrived – in every capture that twin came a few seconds
+earlier – and show it otherwise.
+
+Until 26.09.2026 the rule was “a 33 within the last 90 seconds”. That dropped the first minute
+report after the fast stream ended: it has no twin, only 33s from a few seconds before it. On
+the broker this showed as a minute without a reading right after the phone app – which
+switches the stream on – was closed (23:05 UTC that night). Matching the timestamp suppresses
+the same lines in all captures (the `.golden` files are unchanged) and closes the gap.
 
 Independently of this, the device sends some frames **twice**, for both IDs. Two
 identical readings are one reading, so a line identical to the

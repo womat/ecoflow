@@ -211,33 +211,15 @@ func TestReadingsSuppressesRepeats(t *testing.T) {
 // TestMinutelyYieldsWhenFastIsRunning covers the other suppression: while the
 // fast stream runs, the minutely report repeats a reading already shown, and
 // its timestamp rounded to the minute makes it look like the clock stopped.
+// In the capture every minutely report has a fast twin with the same
+// timestamp that arrived first; that twin is what makes it redundant.
 func TestMinutelyYieldsWhenFastIsRunning(t *testing.T) {
-	var fast, minutely frames.Frame
-	var haveFast, haveMinutely bool
-
-	for _, f := range captureFrames(t, "fast") {
-		switch f.Command {
-		case frames.Fast:
-			if !haveFast {
-				fast, haveFast = f, true
-			}
-		case frames.Minutely:
-			if !haveMinutely {
-				minutely, haveMinutely = f, true
-			}
-		}
-		if haveFast && haveMinutely {
-			break
-		}
-	}
-	if !haveFast || !haveMinutely {
-		t.Fatal("the capture holds no pair of a fast and a minutely report")
-	}
+	minutely, twin, _ := minutelyWithNeighbours(t)
 
 	var withFast readings
-	withFast.add(fast)
+	withFast.add(twin)
 	if line, _, ok := withFast.add(minutely); ok {
-		t.Errorf("minutely report reported while the fast stream runs: %s", line)
+		t.Errorf("minutely report reported although its fast twin was shown: %s", line)
 	}
 
 	// On its own it must come through, or a device that only reports once a
@@ -246,6 +228,52 @@ func TestMinutelyYieldsWhenFastIsRunning(t *testing.T) {
 	if _, _, ok := alone.add(minutely); !ok {
 		t.Error("minutely report suppressed although no fast report arrived")
 	}
+}
+
+// TestMinutelyAfterTheFastStreamEnds is the gap this rule used to leave. When
+// the stream stops, the next minutely report has no fast twin - only fast
+// reports from a few seconds earlier. Suppressing it because a fast report
+// came "recently" dropped a whole minute; it was seen on the broker right
+// after the phone app, which switches the stream on, was closed.
+func TestMinutelyAfterTheFastStreamEnds(t *testing.T) {
+	minutely, _, earlier := minutelyWithNeighbours(t)
+
+	var r readings
+	r.add(earlier)
+	if _, _, ok := r.add(minutely); !ok {
+		t.Error("minutely report suppressed although no fast report carried its timestamp")
+	}
+}
+
+// minutelyWithNeighbours finds, in the fast capture, a minutely report, the
+// fast report with the same timestamp, and a fast report from before it.
+func minutelyWithNeighbours(t *testing.T) (minutely, twin, earlier frames.Frame) {
+	t.Helper()
+
+	var fastByTime = map[int64]frames.Frame{}
+	for _, f := range captureFrames(t, "fast") {
+		e, ok := f.Energy()
+		if !ok {
+			continue
+		}
+		when := e.Measured.Unix()
+		switch f.Command {
+		case frames.Fast:
+			fastByTime[when] = f
+		case frames.Minutely:
+			tw, haveTwin := fastByTime[when]
+			if !haveTwin {
+				continue
+			}
+			for back := int64(1); back <= 60; back++ {
+				if ef, ok := fastByTime[when-back]; ok {
+					return f, tw, ef
+				}
+			}
+		}
+	}
+	t.Fatal("the capture holds no minutely report with a fast twin and an earlier fast report")
+	return
 }
 
 func firstEnergyFrame(t *testing.T) frames.Frame {
