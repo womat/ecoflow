@@ -850,6 +850,15 @@ gh pr merge --squash --delete-branch
 git checkout main && git pull
 ```
 
+**Go-Version und Abhängigkeiten.** Die `go`-Zeile in `go.mod` ist eine *Mindestversion*
+und nennt deshalb nur die Minor-Version (`go 1.27`), keinen Patch. Ein Patch dort zwänge
+jeden mit einer älteren Patch-Version, eine Toolchain nachzuladen, obwohl der Code nichts
+daraus braucht. Sicherheitskorrekturen der Standardbibliothek kommen aus der Toolchain, mit
+der gebaut wird, und CI wie Release bauen mit `stable`. Angehoben wird die Zeile nur, wenn
+der Code eine neuere Sprach- oder Bibliotheksfunktion braucht. Abhängigkeiten prüft
+`go list -m -u all`; `govulncheck ./...` zeigt, ob eine bekannte Schwachstelle den eigenen
+Code erreicht. Aktualisiert wird auch, was nur in einem eingebundenen Modul steckt.
+
 **Release.** Wenn der Stand auf `main` veröffentlicht werden soll:
 
 ```bash
