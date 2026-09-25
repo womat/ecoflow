@@ -97,7 +97,7 @@ Binaries unter [Releases](https://github.com/womat/ecoflow/releases). Sie sind s
 gelinkt (`CGO_ENABLED=0`), es ist also nichts zu installieren: entpacken und ausführen.
 
 ```bash
-VERSION=v0.4.2   # oder die neueste, siehe Releases-Seite
+VERSION=v0.5.0   # oder die neueste, siehe Releases-Seite
 ARCH=linux-arm64 # siehe Tabelle unten
 
 curl -LO "https://github.com/womat/ecoflow/releases/download/$VERSION/modbusread-$VERSION-$ARCH.tar.gz"
@@ -535,7 +535,7 @@ Binary aus den [Releases](https://github.com/womat/ecoflow/releases) holen — d
 Plattformen wie bei `modbusread`, statisch gelinkt, nichts zu installieren:
 
 ```bash
-VERSION=v0.4.2   # oder die neueste, siehe Releases-Seite
+VERSION=v0.5.0   # oder die neueste, siehe Releases-Seite
 ARCH=linux-arm64
 
 curl -LO "https://github.com/womat/ecoflow/releases/download/$VERSION/ecoflowd-$VERSION-$ARCH.tar.gz"
