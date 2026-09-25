@@ -215,8 +215,9 @@ measured : 2026-09-17T08:39:26Z
 
 `measured` is the timestamp from the firmware's energy stream block – the **time of
 measurement, not the time of the query**. If it stands still across several calls, the
-display is a still image: the endpoint hands out whatever was last pushed to the cloud,
-and pushing only happens while a client is asking. That is exactly what `live` is for.
+display is a still image: the endpoint hands out whatever was last pushed to the cloud.
+Why it freezes is open (see `api-status.md`); current values come from `live`, not from
+`status`.
 
 The assignment in front **without `export`** only applies to this one command: afterwards
 the shell does not know the variable, the token is in no other process environment, and
@@ -245,8 +246,6 @@ A subshell takes the token with it when it exits, which saves the cleanup:
   scripts/ecoflow-api.sh status HC31XXXXXXXXXXXX )
 ```
 
-The token is valid until it expires; on HTTP 401, log in again.
-
 `status` renders the answer of `portal` as an overview. The portal reports house and
 battery power as **negative**, while its own UI shows them as positive. `status` therefore
 prints the magnitude and writes the direction next to it, instead of passing on a sign you
@@ -267,9 +266,8 @@ is the more convenient way. Both are unofficial interfaces.
 
 ### Keeping the channel alive: `live`
 
-`status` only returns fresh numbers if the device pushed something to the cloud shortly
-before – and apparently it only does that while someone is asking. Without an open app,
-`measured` stands still, sometimes for hours. `live` takes over the app's role:
+`live` subscribes to the app's MQTT channel the way the app does; the device then reports
+into it once a minute:
 
 ```bash
 export ECOFLOW_PORTAL_TOKEN="$(scripts/ecoflow-api.sh login)"
@@ -318,6 +316,15 @@ The timestamp on the left is the device's (UTC). The device sends some frames tw
 identical consecutive lines are suppressed, but two different values within the same
 second are not — those happen. How the frames are built, why the payload is
 XOR-obfuscated and what the field assignment rests on is in `api-status.md`.
+
+**Caveat:** the field numbers apply to the **DC Fit**. On the PowerOcean Plus the same
+quantities sit on different numbers – there the script produced plausible numbers under
+the wrong names. The assignment here is backed by the energy balance: in every frame,
+`PV = battery + house + grid` adds up to two decimal places.
+
+Python because it needs nothing beyond the standard library on the Mac and the Pi; the
+continuous-operation counterpart in Go is `ecoflowd`, whose output matches this script
+character for character.
 
 ### Fast rate: `fast`
 
@@ -423,23 +430,8 @@ what arrives there. The default is `set` — the topic the script otherwise writ
 to. Operate the phone app while this is running and you see its commands in the original.
 Pure subscription, no write access.
 
-**Caveat:** the field numbers apply to the **DC Fit**. On the PowerOcean Plus the same
-quantities sit on different numbers – there the script produced plausible numbers under
-the wrong names. The assignment here is backed by the energy balance: in every frame,
-`PV = battery + house + grid` adds up to two decimal places.
-
-**Why Python and not Go:** this is an intermediate stage for trying things out, not a
-commitment. Python 3 is already there on the Mac and the Raspberry Pi, and the protobuf
-wrapper can be read with the standard library – for eight fields a protobuf toolchain
-costs more than it brings. If the decoding proves itself in everyday use, it belongs in
-the repo as a Go tool: then it runs in CI, is testable without a device like
-`internal/decode`, and the release binaries cover it too.
-
-**Three commands publish, all others only subscribe.** Two of them to a `get` topic, i.e.
-read requests: `request` and `live`. The third, `fast`, publishes to `.../set` — the only
-path in the script through which the device could be reconfigured. That it is a command of
-its own and not a switch on `live` is intentional: whoever queries values should not be
-writing without noticing.
+Besides `fast`, only `request` and `live` publish, and only read requests to a `get`
+topic; all other commands just subscribe.
 
 `request` subscribes to **two** topics — `.../get_reply` and `.../quota` —, sends the
 request to `.../get` and waits `ECOFLOW_WAIT` seconds (default 15). Listening on both is
@@ -526,6 +518,9 @@ connected to mqtt-e.ecoflow.com:8883, subscribed to 3 topics
 10:30:00Z  PV    1544 W | house    618 W | battery    926 W (charging) | grid      0 W (idle) | SoC 74 %
 ```
 
+The output is **character-for-character identical** to `scripts/ecoflow-frames.py`, so both
+can be run side by side and compared; a test holds them together against the same captures.
+
 **Without `--fast` it sends nothing to the device.** That is not caution but what the
 device needs: the subscription alone keeps it talking, measured over 23 minutes without a
 single message sent to the cloud. The readings still go to your local broker — just every
@@ -572,14 +567,13 @@ When something goes wrong, the service tells three cases apart — by whether wa
 - **Connection gone** (network, broker, timeout): it waits and starts over at the
   certification. The wait starts at 5 s and doubles up to at most 15 min; if the
   connection stood in between, it starts at 5 s again. The token is kept, so there is no
-  new login. The client id is new on every attempt, because the broker refuses one it has
+  new login – that matters, because the login is the one request that carries the account
+  password. A timeout or an HTML error page from the gateway says nothing about the token. The client id is new on every attempt, because the broker refuses one it has
   already seen — which is also why paho does not reconnect on its own.
 - **Token rejected** (`401`/`403` or a `code` other than `0` on the certification): the
-  token is discarded, the next attempt starts with a login.
+  token is discarded, the next attempt starts with a login. The token is never written to
+  disk: that would save one login per restart and be one more copy of a credential.
 - **Credentials rejected**: exit `78`, see above — no restart by systemd.
-
-On top of that, with `--fast`: if the broker accepts the switch but no fast reports
-arrive, the service says so once after about 60 s and carries on at the minute rate.
 
 In the code: the flow in [`cmd/ecoflowd/serve.go`](cmd/ecoflowd/serve.go), login,
 certification and topics in [`internal/ecoflow/`](internal/ecoflow/), unpacking the frames
@@ -641,11 +635,8 @@ neither the owner nor in the group, it would not get in, and the start would fai
   values to the process as environment; the service user has no access to
   `/etc/ecoflowd`.
 
-`RestartPreventExitStatus=78` is the core: when the credentials are rejected, the service
-stays down instead of firing a typo at an unofficial endpoint every hour — for the narrow
-meaning of "rejected", see the exit code table above. Any *other* failure restarts after
-30 seconds — a clean stop by signal does not, because the unit is set to
-`Restart=on-failure`.
+Exit `78` keeps the unit down (see the exit codes above); any *other* failure restarts
+after 30 seconds, a clean stop by signal does not (`Restart=on-failure`).
 
 ```bash
 systemctl status ecoflowd@HC31XXXXXXXXXXXX
@@ -694,37 +685,24 @@ same timestamp are together (without `--fast` roughly every ten minutes):
 **"Today" is the UTC day**, because the device keeps its hours in UTC. In Austria the
 totals therefore jump to 0 at 01:00 (CET) or 02:00 (CEST), not at midnight.
 
-**Why the timestamp is in the telegram.** It makes three mechanisms unnecessary that the
-earlier format needed: the heartbeat, the availability topic with last will, and the
-staleness watchdog behind it. A receiver sees the age of every value itself, and by the
-**device's** clock. A hanging service can only be noticed by the receiver anyway – a hung
-process reports nothing, least of all that it is hung. That is why every consumer needs an
-age check: `timeout` in evcc, `expire_after` in Home Assistant.
+Why the format looks like this – the reasoning and the measurements are in
+[`mqtt-output.md`](./mqtt-output.md):
 
-**Why `grid` is 0 rather than missing.** The device simply leaves a field with the value 0
-out of the frame – that is how protobuf (proto3) works: a field with its default value is
-not transmitted, and the receiver reads the absence as 0. `grid` is missing like this in
-about half of all reports, and in every one of them the energy balance adds up exactly
-with `grid = 0`. "Missing" here therefore means "measured 0"; if it were left out, `grid`
-would be missing in precisely the most common state. That EcoFlow uses proto3 is inferred
-from this behaviour, not proven. The numbers are in [`mqtt-output.md`](./mqtt-output.md).
-
-**`dcdc` is deliberately not published** as long as its role is not clear (see
-"Open points"). Both decoders still read the field, but it is output nowhere; a capture
-from `ecoflow-api.sh live|fast` serves to clear it up.
-
-**The serial number is in the telegram, not in the topic.** There it survives forwarding
-to InfluxDB or into a queue where the topic gets lost, and `--topic` fits into any
-existing naming scheme. Several devices each need their own `--topic`. **Best keep topics
-lowercase:** MQTT is case-sensitive, and a subscription with one wrong letter gets no
-error message, but nothing. `ecoflowd` takes `--topic` unchanged.
-
-**Keys in camelCase.** JSON itself prescribes no style; camelCase is the one of the common
-guidelines (Google, Microsoft, JSON:API). Reasoning in `mqtt-output.md`.
-
-**Nothing is retained.** A retained reading outlives what it describes, and Home Assistant
-warns that retained values clash with `expire_after`. Whoever reconnects waits for the
-next measurement – without `--fast` at most a minute.
+- **The timestamp is in the telegram**, so a receiver sees the age of every value by the
+  device's clock. That replaces heartbeat, availability topic and last will; every consumer
+  needs an age check instead: `timeout` in evcc, `expire_after` in Home Assistant.
+- **`grid` is 0, not missing:** the device leaves out fields with the value 0 (proto3
+  behaviour, inferred, not proven); in every such report the energy balance adds up with
+  `grid = 0`.
+- **`dcdc` is not published** until its role is clear (see "Open points").
+- **The serial number is in the payload, not in the topic**, so it survives forwarding;
+  several devices each need their own `--topic`. Keep topics lowercase – MQTT is
+  case-sensitive, and a subscription with one wrong letter gets nothing, not an error.
+  `ecoflowd` takes `--topic` unchanged.
+- **Keys in camelCase**, the style of the common JSON guidelines.
+- **Nothing is retained:** a retained reading outlives what it describes, and Home
+  Assistant warns that retained values clash with `expire_after`. A new subscriber waits
+  for the next measurement – without `--fast` at most a minute.
 
 With `--mqtt-user` and `MQTT_PASSWORD` for a broker that requires authentication. The
 password comes from the environment, because a flag would show up in the process list.
@@ -808,37 +786,14 @@ minutes, the sensor becomes `unavailable`.
 Sends the stream switch every `--switch-every` seconds (default 3) and delivers values
 every two to three seconds instead of every minute.
 
-**This is the program's only write path**, and it goes to the `.../set` topic — the path
-through which the device could also be reconfigured. That is why it is a flag and not a
-default: whoever queries values never writes without noticing.
+**This is the program's only write path**, on the `.../set` topic through which the device
+could also be reconfigured – hence a flag, not a default. It sends the same captured,
+parameterless switch as `ecoflow-api.sh fast` (see there), with the same 3-second rate;
+at ten seconds the device falls back to the minute rate.
 
-The command itself is not guessed. It was captured on the wire while the phone app was
-running; the program replays those bytes unchanged and only changes the sequence number.
-It carries no parameters. A repeat interval of ten seconds was measured to be too slow —
-the device then falls back to the minute rate —, hence three, the app's rate.
-
-If the fast stream still does not come, the service says so **once** and carries on at the
-minute rate. The broker accepts the switch in any case (`PUBACK RC:0` measured); whether
+If the fast stream still does not come, the service says so **once**, after about 60 s,
+and carries on at the minute rate. The broker accepts the switch in any case (`PUBACK RC:0` measured); whether
 it works is shown only by whether fast reports arrive.
-
-**Credentials come from the environment, never from flags.** The login endpoint sends the
-password base64-encoded rather than hashed, and it is the **account password**, not an
-application token — whoever can read the file has full EcoFlow access. On a long-running
-machine it belongs in a file only root can read.
-
-The session token stays in memory as long as the process runs — and it runs until a
-signal comes or the credentials are rejected. A network that comes and goes is handled
-internally and does **not** lead to a new login: the token is only thrown away when the
-cloud itself rejects it (HTTP 401/403 or a `code` other than `0` on `certification`) — a
-dropped connection, a timeout or an HTML error page from the gateway say nothing about
-the token. The difference is not cosmetic: the login is the one request that carries the
-account password, and before this a flaky line triggered it on every attempt. The token is
-not written to disk: that would save exactly one login per restart and be one more copy of
-an access credential on a file system.
-
-The output is **character-for-character identical** to `scripts/ecoflow-frames.py` — not
-out of taste, but so that both versions can be run side by side and compared; a test holds
-them together against the same captures.
 
 ## Summary
 
@@ -895,98 +850,46 @@ them together against the same captures.
 
 ## Working on this repo
 
-Every change – Go code and notes alike – goes through a short-lived feature branch and a
-PR to `main`. That keeps `main` shippable at all times, and CI checks *before* something
-lands, not after. This matters because a release is a tag on `main` (see below).
-
-**1. Start clean.** You branch off `main` right away; if your copy is old, you build on
-something outdated and buy yourself conflicts at merge time.
-
-```bash
-git checkout main && git pull
-```
-
-**2. Create a branch.** Short, lowercase, named after the *goal* of the change.
-
-```bash
-git checkout -b register-map-dcfit
-```
-
-**3. Change and check locally.** These are exactly the checks from
-`.github/workflows/ci.yml` – if they pass here, CI will hardly go red later.
+Every change – Go code and notes alike – goes through a short-lived feature branch and a PR
+to `main`; there is no second long-lived branch. CI runs exactly these checks, so running
+them first keeps the PR green:
 
 ```bash
 go build ./... && go vet ./... && go test ./...
 gofmt -l ./cmd ./internal      # no output = fine
 ```
 
-For documentation-only changes this does not apply. Instead: `README.md`,
-`api-status.md` and `modbus-registers.md` overlap on purpose – if a statement changes,
-carry the other places and the "open points" lists along.
+- **Docs overlap on purpose.** `README.md`, `api-status.md`, `modbus-registers.md` and
+  `mqtt-output.md` refer to each other; if a statement changes, carry the other places and
+  the open-points lists along. The same goes for the tools: a change to a script or to
+  `ecoflowd` carries its README section and `--help` text along.
+- **Commits:** subject in the imperative, naming the result; below it the *why* – the what
+  is in the diff.
+- **Merging:** squash. `git branch --merged` then reports such branches as "not merged"
+  forever, because the branch's commit never becomes an ancestor of `main`; `gh pr list`
+  is the reliable way.
+- **Go version:** the `go` line in `go.mod` is a minimum and names only the minor version
+  (`go 1.27`); it is raised only when the code needs a newer language or library feature.
+  Standard library security fixes come from the toolchain used to build – CI and release
+  build with `stable`. `go list -m -u all` checks the dependencies, `govulncheck ./...`
+  whether a known vulnerability reaches the code; what sits only in an included module is
+  updated too.
 
-**4. Commit.** Subject line in the imperative, naming the *result*; below it a paragraph
-on the **why**. The what is already in the diff. `git add -p` shows every hunk
-separately, so no forgotten debug statement slips in.
-
-```bash
-git add -p && git commit
-```
-
-**5. Push and open a PR.** `--fill` takes title and body from the commit.
-
-```bash
-git push -u origin register-map-dcfit
-gh pr create --base main --fill
-```
-
-**6. Wait for CI.** It runs on a fresh machine and thus finds the forgotten file and the
-dependency that only exists locally. Red means: fix, commit again, push – the PR updates
-by itself.
-
-```bash
-gh pr checks --watch
-```
-
-**7. Merge.** Squash turns the intermediate steps into one readable commit on `main`.
-GitHub deletes the remote branch by itself.
-
-```bash
-gh pr merge --squash --delete-branch
-git checkout main && git pull
-```
-
-**Go version and dependencies.** The `go` line in `go.mod` is a *minimum version* and
-therefore names only the minor version (`go 1.27`), no patch. A patch there would force
-everyone with an older patch version to download a toolchain, although the code needs
-nothing from it. Security fixes to the standard library come from the toolchain used to
-build, and CI and release both build with `stable`. The line is only raised when the code
-needs a newer language or library feature. `go list -m -u all` checks the dependencies;
-`govulncheck ./...` shows whether a known vulnerability reaches your own code. Whatever
-sits only in an included module is updated too.
-
-**Release.** When the state on `main` is to be published:
+**Release:** a tag `vX.Y.Z` on `main` – `release.yml` builds the binaries and stamps the
+version in via `-X main.version`. Never tag another branch: the release would point at a
+state that never existed in `main`.
 
 ```bash
 git checkout main && git pull
 git tag vX.Y.Z && git push origin vX.Y.Z
 ```
 
-**Which number** is decided by the *kind* of change, not its size: patch, as long as
-nothing about the behaviour changes — and help texts, comments and docs do not change it,
-even if the diff is large. Minor, as soon as a flag, a command or a topic is added – and
-likewise, as long as the number starts with `0.`, when one is removed or an output format
-changes. That is then a break and is stated as such in the release notes; that is what
-happened with `v0.5.0`, when the single topics gave way to the JSON telegrams. This is
-easy to mix up: `v0.4.1` comprised about 60 corrections across nine files and was still a
-patch, because not a single code path ran differently.
-
-Only tag on `main` – `release.yml` builds the binaries from it and stamps the version
-number in via `-X main.version`. A tag on another branch would produce a release pointing
-at a state that never existed in `main`.
-
-> A squash merge creates a *new* commit on `main`; the branch's commit never becomes an
-> ancestor of `main`. `git branch --merged` therefore reports such branches as "not
-> merged" forever – `gh pr list` is the reliable way.
+**Which number** is decided by the *kind* of change, not its size: patch as long as no
+behaviour changes (help texts, comments and docs do not, however large the diff – `v0.4.1`
+had about 60 corrections and was a patch); minor as soon as a flag, command or topic is
+added – and, while the number starts with `0.`, also when one is removed or an output
+format changes. That is a break and is stated as such in the release notes, as with
+`v0.5.0`.
 
 ## Sources
 
