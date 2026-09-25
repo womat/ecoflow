@@ -506,9 +506,7 @@ Drei Exit-Codes, und einer davon ist für den Dauerbetrieb entscheidend:
 
 Einen Code für „nach wiederholtem Fehlschlag aufgegeben" gibt es nicht: Der Dienst gibt bei
 Netz- und Brokerfehlern nie auf, sondern versucht es mit wachsender Pause weiter (siehe
-[So kommt ecoflowd an die Daten](#so-kommt-ecoflowd-an-die-daten)). Die Konstante
-`exitRuntime = 2` in `cmd/ecoflowd/main.go` ist reserviert, wird aber derzeit nirgends
-zurückgegeben.
+[So kommt ecoflowd an die Daten](#so-kommt-ecoflowd-an-die-daten)).
 
 Die systemd-Unit führt die `78` in `RestartPreventExitStatus`, damit ein Tippfehler in der
 Zugangsdatei nicht endlos Anmeldeversuche gegen einen inoffiziellen Endpunkt fährt.
