@@ -1,53 +1,71 @@
 # Das Ausgabeformat von `ecoflowd`
 
-Wie `cmd/ecoflowd` seine Messwerte auf den lokalen Broker legt, warum es heute so ist –
-und warum ein Sammeltelegramm die bessere Form wäre.
+Wie `cmd/ecoflowd` seine Messwerte auf den lokalen Broker legt und warum in dieser Form.
 
-> **Herkunft:** Die Angaben über `ecoflowd` stammen aus dem Code dieses Repos, die über
-> das Vergleichsmuster aus einem Mitschnitt am Broker einer bestehenden
-> Hausautomatisierung (23.09.2026, rund fünf Minuten). Die Einschätzung am Ende ist ein
-> Urteil, kein Messergebnis: **gebaut und erprobt ist das empfohlene Format nicht.**
+> **Herkunft:** Die Angaben über `ecoflowd` stammen aus dem Code dieses Repos. Das
+> Vergleichsmuster stammt aus einem Mitschnitt am Broker einer bestehenden
+> Hausautomatisierung (23.09.2026, rund fünf Minuten) und aus deren Node-RED-Flow. Die
+> Aussagen über fehlende Felder und über `dcdc` sind an den Mitschnitten in
+> `internal/frames/testdata/` gemessen (26.09.2026); wo etwas gefolgert statt gemessen ist,
+> steht das dabei.
 
 ## Kurzfassung
 
-`ecoflowd` publiziert **ein Topic je Wert mit blanker Zahl**. Die verbreitetere Bauform –
-und die bessere für diese Datenquelle – ist **ein JSON-Telegramm je Messung**, mit
-Seriennummer und Messzeit im Payload.
+Seit **v0.5.0** publiziert `ecoflowd` **zwei JSON-Telegramme**: `<topic>/state` je Messung
+und `<topic>/energy` mit den Tagessummen, beide mit Seriennummer und Messzeit im Payload,
+nicht retained. Bis v0.4.x war es ein Topic je Wert mit blanker Zahl, dazu ein
+Verfügbarkeits-Topic mit Last Will; das ist ersatzlos entfallen, der Bruch war bewusst.
 
-Der Grund ist nicht Geschmack: `internal/frames.Energy` ist bereits ein Sammelobjekt –
-sechs Messwerte und eine Messzeit aus *einem* Frame. Die Ausgabeseite nimmt es
-auseinander und baut anschließend drei Mechanismen, um den Verlust auszugleichen
-(Heartbeat, Verfügbarkeits-Topic, Änderungserkennung). Alle drei entfallen, sobald die
-Messzeit im Payload steht.
+Der Grund ist nicht Geschmack: `internal/frames.Energy` ist ein Sammelobjekt – mehrere
+Messwerte und eine Messzeit aus *einem* Frame. Das alte Format nahm es auseinander und
+baute anschließend drei Mechanismen, um den Verlust auszugleichen (Heartbeat,
+Verfügbarkeits-Topic, Änderungserkennung). Mit der Messzeit im Payload ist keiner davon
+mehr nötig.
 
-**Geändert ist bislang nichts.** Diese Datei hält die Analyse fest, damit die Entscheidung
-nicht beim nächsten Mal von vorn geführt werden muss.
+## 1. Was `ecoflowd` sendet
 
-## 1. Was `ecoflowd` heute sendet
+```
+ecoflow/state   {"sn":"HC31XXXXXXXXXXXX","timestamp":"2026-09-22T09:13:16Z","pv":975,"house":-459,"battery":515,"grid":0,"soc":63}
+ecoflow/energy  {"sn":"HC31XXXXXXXXXXXX","timestamp":"2026-09-22T09:13:18Z","pv":3301,"house":3206,"batteryIn":1545,"batteryOut":1562,"gridIn":62,"gridOut":175}
+```
 
-Ein Topic je Wert, Nutzlast eine blanke Zahl als Text, kein JSON
-(`cmd/ecoflowd/publish.go:224-230`):
+Die Werte sind aus `internal/frames/testdata/fast.txt` dekodiert; die Tests in
+`cmd/ecoflowd/telegram_test.go` prüfen genau diese. Die Feldtabellen stehen in der README,
+Abschnitt „An den lokalen Broker“.
+
+- `state` geht bei jeder neuen Messung hinaus: ohne `--fast` minütlich, mit `--fast` alle
+  zwei bis drei Sekunden. Es gibt keine Änderungserkennung mehr – eine unveränderte Messung
+  mit neuer Messzeit ist eine Nachricht: Das Gerät ist noch da.
+- `energy` geht hinaus, sobald die sechs Teile der Stundenhistorie (254/32) mit gleichem
+  Zeitstempel beisammen sind (`cmd/ecoflowd/serve.go`, `dailyTotals`).
+- `timestamp` ist immer die **Messzeit des Geräts**, bei `energy` die der Stundenhistorie.
+  Die Tagessummen gelten für den **UTC-Tag**; in Österreich springen sie um 01:00 (MEZ)
+  bzw. 02:00 (MESZ) auf 0.
+- Watt und Wattstunden wie gemessen, Vorzeichen wie das Gerät sie liefert – positives
+  `grid` ist Einspeisung, positives `battery` ist Laden. Umrechnen bleibt beim Menschen,
+  dieselbe Regel wie bei den Adressen in `modbusread`.
+
+### Das frühere Format (bis v0.4.x)
+
+Zum Nachschlagen, falls ein alter Verbraucher auftaucht:
 
 ```
 ecoflow/HC31XXXXXXXXXXXX/pv        0
 ecoflow/HC31XXXXXXXXXXXX/house     -293
-ecoflow/HC31XXXXXXXXXXXX/battery   -293
-ecoflow/HC31XXXXXXXXXXXX/grid      0
-ecoflow/HC31XXXXXXXXXXXX/dcdc      -163
-ecoflow/HC31XXXXXXXXXXXX/soc       71
+…
 ecoflow/HC31XXXXXXXXXXXX/measured  2026-09-23T20:39:00Z
+ecoflow/HC31XXXXXXXXXXXX/energy/…  (sechs Tagessummen)
 ecoflow/HC31XXXXXXXXXXXX/status    online        ← retained, Last Will
 ```
 
-Dazu die Tagessummen unter `/energy/` (`pv`, `house`, `battery_in`, `battery_out`,
-`grid_in`, `grid_out`). Messwerte QoS 0 und nicht retained, die Verfügbarkeit retained.
-Publiziert wird bei Änderung, dazu einmal pro Minute auch unverändert
-(`publish.go:34-39`, `:277-284`).
+Publiziert wurde bei Änderung, dazu einmal pro Minute auch unverändert. Das retained
+`status` bleibt nach dem Umstieg am Broker stehen, bis man es löscht (README, „Umstieg von
+v0.4.x“).
 
 ## 2. Das Vergleichsmuster
 
 Eine gewachsene Hausautomatisierung am selben Broker sendet **ein flaches JSON-Objekt je
-Gerät**, alle fünf Sekunden, unabhängig von Änderungen:
+Gerät** auf `myhome/<gerät>/summary`, unabhängig von Änderungen:
 
 ```
 myhome/inverter/summary   {"E":39836000,"P":240,"PC":242.39,"PR":-34,"F":49.98,…}
@@ -58,157 +76,149 @@ myhome/wallbox/summary    {"timeStamp":"…","counter":34274662,"counterUnit":"W
 
 Kein Verfügbarkeits-Topic, kein Last Will; die Empfänger prüfen den Zeitstempel selbst.
 
-Bemerkenswert ist der Wetter-Zweig desselben Brokers: Er führt **beide** Formen parallel –
-ein `summary` mit dem vollständigen JSON *und* aufgefächerte Einzelwerte als blanke Zahlen
-(`…/temperature` → `9.03`). Die Formen schließen einander also nicht aus; die Frage ist,
-welche der Hauptzugang ist.
+Der Wetter-Zweig desselben Brokers führt **beide** Formen parallel – ein `summary` mit dem
+vollständigen JSON *und* aufgefächerte Einzelwerte. Die Formen schließen einander also
+nicht aus; `ecoflowd` bietet nur die eine an, weil ein zweiter Zugang ein zweiter wäre, den
+man nachziehen muss.
 
-## 3. Die drei Annahmen hinter dem heutigen Format – und was aus ihnen wurde
+**Einen einheitlichen Schlüsselstil gibt es dort nicht** (Stand 25.09.2026, aus den
+Schlüsseln, die der Flow liest): PascalCase (`Timestamp`, `State`, `Power`), Kürzel (`E`,
+`P`, `SOC`), camelCase (`timeStamp`, `unitCounter`), Kleinschreibung (`out1`), und zweimal
+gemischt in einem Objekt (Smartfox: `BoilerE` neben `grid`). Ein Hausstil, dem `ecoflowd`
+folgen könnte, existiert also nicht – siehe §4.
+
+## 3. Die Annahmen hinter dem alten Format – und was aus ihnen wurde
 
 ### 3.1 „evcc und Home Assistant brauchen je Topic einen Skalar" – **widerlegt**
 
 evcc kennt im MQTT-Plugin einen `jq:`-Ausdruck, Home Assistant `value_template:
-"{{ value_json.pv }}"`. JSON kostet dort eine Konfigurationszeile, nicht mehr. Das war das
-tragende Argument für die Auffächerung; es trägt nicht.
+"{{ value_json.pv }}"`. JSON kostet dort eine Konfigurationszeile, nicht mehr.
 
 ### 3.2 „Ein Heartbeat ist nötig" – **entfällt mit dem Zeitstempel**
 
-Die Begründung steht wörtlich im Code (`publish.go:34-39`): *„Without a heartbeat a
-consumer cannot tell 'unchanged' from 'gone'."* Genau das leistet eine Messzeit im Payload,
-und zwar besser: Sie ist die Uhr des **Geräts**, nicht die Sendezeit des Dienstes.
-
-Hinzu kommt: Bei einem Sammelobjekt wäre die Änderungserkennung ohnehin wirkungslos, weil
-sich die Messzeit bei jeder Messung ändert und damit das Objekt immer.
+Die alte Begründung lautete: *„Without a heartbeat a consumer cannot tell 'unchanged' from
+'gone'."* Genau das leistet eine Messzeit im Payload, und zwar besser: Sie ist die Uhr des
+**Geräts**, nicht die Sendezeit des Dienstes.
 
 ### 3.3 „Ein retained Messwert überlebt das, was er beschreibt" – **nur ohne Zeitstempel**
 
-Die Begründung gegen `retain` (README, „Die Messwerte sind nicht retained…“) trifft auf
-eine blanke Zahl zu: Nach
-einem Ausfall liest ein Verbraucher den letzten Stand für immer weiter. Trägt die Nachricht
-ihre Messzeit, sieht ein neu verbundener Empfänger den Stand **und** sein Alter.
+Trägt die Nachricht ihre Messzeit, sieht ein neu verbundener Empfänger den Stand **und**
+sein Alter. Es bleibt trotzdem bei `retain: false` – aus Gleichlauf mit dem
+Vergleichsmuster und weil Home Assistant vor retained Werten zusammen mit `expire_after`
+warnt, nicht mehr aus dem alten Grund.
 
-Die Empfehlung bleibt trotzdem `retain: false` – aus Gleichlauf mit dem Vergleichsmuster,
-nicht mehr aus dem alten Grund.
+### 3.4 „Ein Verfügbarkeits-Topic meldet den Ausfall" – **trägt nicht**
 
-## 4. Empfehlung: ein Telegramm je Messung
+Der einzige bekannte Verbraucher hat einen eigenen Alterswächter bauen müssen, weil er dem
+retained `status` nicht trauen konnte: Hängt `ecoflowd`, ohne die Verbindung zu verlieren,
+bleibt `online` stehen und der Last Will feuert nicht. Einen hängenden Dienst kann nur der
+Empfänger bemerken. Home Assistant kommt mit `expire_after`, evcc mit `timeout` ohne
+Verfügbarkeits-Topic aus.
 
-```
---topic myhome/ecoflow   →   myhome/ecoflow/state
-                             myhome/ecoflow/energy
-```
+## 4. Die Entscheidungen im Einzelnen
 
-**Momentanwerte**, ein Telegramm je eingegangener Messung:
+### Zwei Telegramme, nicht eines
 
-```json
-{"sn":"HC31XXXXXXXXXXXX","measured":"2026-09-23T20:39:00Z",
- "pv":0,"house":-293,"battery":-293,"grid":0,"dcdc":-163,"soc":71}
-```
+Momentanwerte und Tagessummen stammen aus verschiedenen Frames (96/33 bzw. 96/34 und
+254/32) mit verschiedenen Zeitstempeln. In ein Objekt gepackt, entstünde genau die Lüge,
+die ein Sammeltelegramm vermeiden soll: Felder verschiedenen Alters unter einem
+Zeitstempel.
 
-**Tagessummen**, eigenes Telegramm:
+### Die Seriennummer im Payload, das Topic frei
 
-```json
-{"sn":"HC31XXXXXXXXXXXX","date":"2026-09-23",
- "pv":…,"house":10887,"battery_in":…,"battery_out":4106,"grid_in":…,"grid_out":…}
-```
+Dort überlebt sie eine Weiterleitung nach InfluxDB oder in eine Warteschlange, bei der das
+Topic verloren geht, und ein frei wählbares Topic fügt sich in jedes gewachsene
+Namensschema. **Was man dafür aufgibt:** `ecoflow/+/soc` über mehrere Geräte. Mehrere
+Geräte brauchen je ein eigenes `--topic` (die systemd-Unit liest dafür
+`/etc/ecoflowd/<SN>.env`).
 
-Watt und Wattstunden wie gemessen, Vorzeichen wie das Gerät sie liefert – positives `grid`
-ist Einspeisung, positives `battery` ist Laden. Das bleibt so: Das Umrechnen gehört zum
-Menschen, dieselbe Regel wie bei den Adressen in `modbusread`.
+### Topics klein, `/state` und `/energy` fest
 
-### Warum die Werte zusammengehören
+MQTT unterscheidet Groß- und Kleinschreibung; ein Abo, das sich in einem Buchstaben
+unterscheidet, bekommt keinen Fehler, sondern nichts. Die festen Teile sind deshalb klein.
+`--topic` übernimmt `ecoflowd` unverändert – was getippt wird, geht so hinaus.
 
-Sie wurden zusammen gemessen. `internal/frames.Energy` trägt sie als ein Struct aus einem
-Frame; `publish.go:224-230` zerlegt es in sechs Nachrichten und legt die Messzeit als
-siebte daneben. Ein Verbraucher kann heute `pv` von 09:13 mit `soc` von 09:12 kombinieren,
-und nichts sagt ihm das.
+### Schlüssel in camelCase
 
-### Warum die Tagessummen ein eigenes Telegramm brauchen
+JSON selbst schreibt keinen Stil vor (RFC 8259, ECMA-404). Die meistzitierten Leitfäden
+legen sich auf camelCase fest: Googles JSON Style Guide, die Microsoft REST API Guidelines,
+JSON:API. snake_case ist in Python-nahen Ökosystemen verbreitet (Home Assistant,
+zigbee2mqtt), PascalCase empfiehlt für JSON praktisch niemand. Für die Empfänger ist es
+gleich – `value_json.batteryIn` liest sich wie `value_json.battery_in`. Abkürzungen werden
+wie Wörter behandelt: `sn`, `soc`, `pv`. Zweiwortig sind nur `batteryIn`, `batteryOut`,
+`gridIn`, `gridOut`.
 
-Sie stammen aus einem anderen Frame (254/32) und werden erst weitergegeben, wenn alle sechs
-Flussanteile mit gleichem Zeitstempel beisammen sind (`cmd/ecoflowd/serve.go:224-228`).
-In dasselbe Objekt gepackt, entstünde genau die Lüge, die ein Sammeltelegramm vermeiden
-soll: Felder verschiedenen Alters unter einem Zeitstempel.
+### Ein fehlendes Feld ist 0 – gemessen, nicht angenommen
 
-Dass sie eigenständig behandelt gehören, zeigt auch der Betrieb: In 150 Sekunden Mitschnitt
-kamen **zwei** der sechs Summen (`house` 10887 Wh, `battery_out` 4106 Wh) – die anderen
-vier ändern sich nachts nicht und schweigen deshalb. Wer den Tagesstand will, muss heute
-sechs Topics einzeln einsammeln und darauf bauen, jedes irgendwann gesehen zu haben.
+Bis v0.4.x stand hier die Sorge, ein fehlendes Feld werde stillschweigend als 0 gelesen
+und sei von einer gemessenen 0 nicht zu unterscheiden; JSON könne das Feld stattdessen
+weglassen. Die Mitschnitte beantworten das anders:
 
-### Warum die Seriennummer in den Payload gehört
+| | `slow.txt` | `fast.txt` | zusammen |
+|---|---|---|---|
+| Energieberichte | 47 | 144 | 191 |
+| davon ohne `grid` | 13 | 87 | **100** |
+| Leistungsfeld explizit `0.0` am Draht | 0 | 0 | **0** |
+| Bilanz `PV − battery − │house│ − 0` ohne `grid` | 0,000 W | 0,000 W | **exakt 0** |
+| Bilanz mit `grid` | ≤ 0,001 W | 0,000 W | |
 
-Heute steht sie im Topic, begründet damit, sie sei „der einzige Name, den ein Gerät hat"
-(README, Abschnitt „An den lokalen Broker“). Das trägt nicht mehr, sobald sie im Payload
-steht – dort ist sie ja,
-und zwar an der Stelle, die eine Weiterleitung überlebt. Wer die Nachricht nach InfluxDB
-oder in eine Warteschlange reicht, verliert das Topic und mit ihm die Zuordnung.
+Andere Felder als `grid` fehlen nie. Das ist das Verhalten von **proto3**: Ein Feld, das
+seinen Standardwert hat – bei Zahlen 0 –, wird nicht übertragen, und der Empfänger liest
+das Fehlen als diesen Standardwert. Nur Felder mit `optional` verraten, ob sie gesetzt
+waren. **Dass EcoFlows Schema proto3 ohne `optional` ist, ist gefolgert, nicht belegt**;
+belegt ist das Verhalten.
 
-Dazu kommt: Ein erzwungenes Seriennummer-Segment ist ein Fremdkörper in jedem gewachsenen
-Namensschema. Ein frei wählbares Topic fügt sich ein.
+„Fehlt“ heißt hier also „gemessen 0“. Weglassen wäre falsch: `grid` fehlte dann in jedem
+zweiten Telegramm, und zwar im häufigsten Zustand (weder Bezug noch Einspeisung), und ein
+Empfänger bekäme `null` statt 0. Festgehalten in `internal/frames` als
+`TestAbsentMeansZero`, der anschlägt, wenn eine Firmware das Verhalten ändert.
 
-**Was man dafür aufgibt:** `ecoflow/+/soc` über mehrere Geräte hinweg. Ersatz ist
-`<prefix>/+/state` mit einem Filter auf `sn` – eine Zeile mehr beim Empfänger.
+### `dcdc` erst nach Klärung
 
-### Kein Verfügbarkeits-Topic
+Ins Telegramm kommt nur, was verstanden ist. `dcdc` (Feld 2) ist es nicht: Der Name stammt
+aus einer Fremdquelle (`dcdc_pwr`, `foxthefox/ioBroker.ecoflow-mqtt`), das Feld ist nicht
+Teil der Energiebilanz und folgt der Batterie mit gleichem Vorzeichen, in den Mitschnitten
+mit 63–103 % ihres Werts, ohne festes Verhältnis. Werte über 100 % schließen aus, dass es
+schlicht die Batterieleistung abzüglich Wandlerverlust ist. Beide Dekoder lesen das Feld
+weiter; `ecoflowd` publiziert es erst, wenn seine Rolle belegt ist
+(`TestDCDCIsNotPublished` hält das fest).
 
-Der Beleg dagegen kommt aus dem Betrieb: Der einzige bekannte Konsument hat einen eigenen
-Alterswächter bauen müssen, weil er dem retained `status` nicht trauen konnte. Hängt
-`ecoflowd`, ohne die Verbindung zu verlieren, bleibt `online` stehen und der Last Will
-feuert nicht (siehe „Offene Punkte"). Ein Signal, dem sein Empfänger nicht traut, trägt
-nichts.
+### Was dabei zusammengefallen ist
 
-Home Assistant kommt mit `expire_after` ohne `availability_topic` aus. Was ein Last Will
-kann und eine Messzeit nicht – sofort melden statt nach Ablauf einer Frist –, gewinnt
-niemand, der ohnehin einen Alterswächter betreibt.
+`last`-Map, Heartbeat-Takt, Stale-Wächter, `setOnlineLocked`, `announce`, `check`, der Last
+Will und beide 30-Sekunden-Ticker. Übrig ist: Frame kommt, Objekt bauen, publizieren.
 
-### Was dabei zusammenfällt
-
-Mit der Messzeit im Payload entfallen `last`-Map, Heartbeat-Takt, Stale-Wächter,
-`setOnlineLocked`, `announce`, `check`, der Last Will und beide 30-Sekunden-Ticker. Übrig
-bleibt: Frame kommt, Objekt bauen, publizieren.
-
-**Der Kernsatz dieser Analyse:** Die halbe Komplexität der Ausgabeseite existiert nur,
-weil die Messzeit nicht im Payload steht.
-
-## 5. Was das neue Format kostet
-
-Nicht verschweigen:
+## 5. Was das Format kostet
 
 - **Keine Sofortmeldung bei Absturz.** Ohne Last Will merkt ein Empfänger den Tod des
   Dienstes erst nach seiner eigenen Frist statt in Sekunden.
-- **Kein selektives Abonnement.** Wer nur den Ladestand will, bekommt alles. Bei acht
-  Feldern belanglos, bei einem schwachen Client nicht.
-- **JSON-Parsen bei jedem Konsumenten.** Eine Zeile `jq` bzw. `value_template` – überall.
+- **Kein selektives Abonnement.** Wer nur den Ladestand will, bekommt alles. Bei sieben
+  Feldern belanglos.
+- **JSON-Parsen bei jedem Konsumenten.** Eine Zeile `jq` bzw. `value_template`.
+- **Bruch für bestehende Verbraucher.** Wer an `ecoflow/<SN>/+` hing, muss umstellen; nach
+  der Versionsregel in `0.x` ein Minor-Schritt mit Bruch-Vermerk, daher v0.5.0.
 
-## 6. Was ein Umbau kostet
+## 6. Offene Punkte
 
-Die bekannten Verbraucher hängen an `ecoflow/<SN>/+`, und die README nennt die Einzeltopics
-in den Beispielen für evcc und Home Assistant. **Additiv** wäre der Schritt verträglich,
-ein **Wegfall** der Einzeltopics ein Major-Schritt nach der Versionsregel (README,
-Abschnitt „Arbeiten an diesem Repo“).
-
-## 7. Offene Punkte
-
-- **Kommen unvollständige Frames real vor?** `internal/frames/energy.go:57-77` prüft **nur
-  PV** darauf, ob das Feld wirklich da war – mit der Begründung, ein als lauter Nullen
-  gelesener Frame sehe nachts wie eine echte Messung aus. Für House, Battery, Grid, DCDC
-  und SoC liefert `float32At()` stillschweigend eine 0, wenn das Feld fehlt.
-
-  Das ist **kein Formatproblem**, es besteht heute schon: `publish.go:224-230` sendet diese
-  0 als blanke Zahl, und die ist von einer gemessenen 0 nicht zu unterscheiden. Nur kann
-  das heutige Format den Unterschied gar nicht ausdrücken – Schweigen heißt dort bereits
-  „unverändert". JSON kann ein Feld weglassen.
-
-  Zu messen mit `scripts/ecoflow-frames.py` über einen längeren Mitschnitt: bei welchen
-  Feldern fehlt tatsächlich etwas? Bis dahin ist „fehlende Felder weglassen statt als 0
-  senden" eine begründete Absicht und **kein belegter Bedarf**.
-
-- **Das Verfügbarkeitssignal kann einfrieren.** Hängt `ecoflowd`, ohne die MQTT-Verbindung
-  zu verlieren, bleibt das retained `online` stehen und der Last Will feuert nicht. Der
-  Stale-Wächter (`publish.go:32`, drei Minuten) greift nur, solange der Prozess noch läuft.
-  Gefunden beim Bau eines Verbrauchers, am eigenen Code nicht nachgestellt.
+- **Kommen nachts Energieberichte an?** Nach derselben proto3-Regel fehlte bei PV = 0 auch
+  das PV-Feld, und beide Dekoder verwerfen einen Frame ohne PV
+  (`internal/frames/energy.go`, `scripts/ecoflow-frames.py`). Die Mitschnitte sind reine
+  Tagaufnahmen (PV ≥ 948 W). Zu prüfen mit einem nächtlichen `ecoflow-api.sh live`; fällt
+  die Antwort „nein“ aus, ist die PV-Prüfung zu ändern – in beiden Fassungen und mit neuen
+  `.golden`-Dateien.
+- **Wie oft kommt `energy` mit `--fast`?** Die Stundenhistorie kommt dann deutlich
+  häufiger. Nicht gezählt; wird es zu viel, wäre „nur bei geänderten Summen senden“ eine
+  eigene Entscheidung.
+- **Was misst `dcdc`?** Siehe §4.
 
 ## Quellen
 
+- https://www.rfc-editor.org/rfc/rfc8259 – JSON, ohne Vorgabe zur Schreibweise
+- https://google.github.io/styleguide/jsoncstyleguide.xml – Googles JSON Style Guide, camelCase
+- https://github.com/microsoft/api-guidelines – Microsoft REST API Guidelines, camelCase
+- https://jsonapi.org/recommendations/ – JSON:API, camelCase für Member-Namen
+- https://protobuf.dev/programming-guides/proto3/#default – Standardwerte in proto3
+- https://protobuf.dev/programming-guides/field_presence/ – wann ein Feld übertragen wird
 - https://docs.evcc.io/en/docs/devices/plugins – `jq` im MQTT-Plugin
 - https://github.com/evcc-io/evcc/pull/943 – Einbau des `jq`-Parsens
 - https://www.home-assistant.io/integrations/sensor.mqtt/ – `value_template`,

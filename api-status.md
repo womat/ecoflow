@@ -19,7 +19,7 @@ zum Messen, `cmd/ecoflowd` für den Dauerbetrieb. Wer Verlässlichkeit will, bet
 Modbus-Freischaltung.
 
 Diese Datei behandelt den Weg *zum Gerät*. Wie `ecoflowd` die gewonnenen Werte auf den
-lokalen Broker weitergibt — und warum diese Form zur Debatte steht — steht in
+lokalen Broker weitergibt — zwei JSON-Telegramme, und warum in dieser Form — steht in
 [`mqtt-ausgabe.md`](./mqtt-ausgabe.md).
 
 ## 1. EcoFlow Developer/Open API (Cloud)
@@ -522,7 +522,7 @@ Die Feldbelegung ist in beiden Fällen dieselbe:
 | Feld | Typ     | Bedeutung                              |
 |------|---------|----------------------------------------|
 | 1    | float   | Netzleistung (positiv = Einspeisung)   |
-| 2    | float   | DCDC-Leistung                          |
+| 2    | float   | DCDC-Leistung – Rolle ungeklärt, s.u.  |
 | 3    | float   | Batterieleistung (positiv = Laden)     |
 | 4    | float   | PV-Leistung                            |
 | 5    | uint32  | Zeitstempel (Unix-Sekunden, UTC)       |
@@ -982,6 +982,16 @@ REST-Interface – eine explizite Bestätigung dafür liegt aber nicht vor.
   Schalter. **Am Gerät unbestätigt**, deshalb kein Haken; steht als Aufgabe in 4b
 - [ ] Wirkt sich der Modus „Modbus control" auf das interne Scheduling aus? Bei rein
   lesendem Zugriff vermutlich folgenlos, belegt ist das nicht
+- [ ] Was misst Feld 2 des Energieberichts (`dcdc`)? Der Name stammt aus
+  `foxthefox/ioBroker.ecoflow-mqtt` (`dcdc_pwr`). Gemessen an den Mitschnitten
+  (26.09.2026): nicht Teil der Energiebilanz, gleiches Vorzeichen wie die Batterie, 63–103 %
+  ihres Werts ohne festes Verhältnis. Bis das geklärt ist, publiziert `ecoflowd` es nicht
+  (`mqtt-ausgabe.md`, §4)
+- [x] Heißt ein fehlendes Leistungsfeld „0“ oder „unbekannt“? → **„0“.** `grid` fehlt in
+  100 von 191 Energieberichten, eine explizite `0.0` steht in keinem, und ohne `grid` geht
+  die Bilanz exakt auf – das proto3-Verhalten, Felder mit Standardwert wegzulassen
+  (26.09.2026, `mqtt-ausgabe.md`, §4). Offen bleibt, ob deshalb nachts, bei PV = 0, gar
+  keine Berichte durch die Dekoder kommen
 - [x] Liefert das Präfix `HC31` (DC Fit) Fehler 1006? → **Ja, bei `quota/all`**;
   `device/list` listet das Gerät dagegen normal (September 2026)
 - [x] Kommen auf dem MQTT-Topic `/open/<acct>/<SN>/quota` Nachrichten an? → **Nein**,

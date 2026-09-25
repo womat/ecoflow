@@ -14,7 +14,7 @@ Modbus TCP) für den EcoFlow PowerOcean DC Fit.
 |------------------------------------------------------|-------------------------------------------------------------------------------------------------------|
 | [`api-status.md`](./api-status.md)                   | Überblick: Cloud-REST-API vs. lokales Modbus TCP, bekannte Probleme (z.B. Fehler 1006), Freischaltung |
 | [`modbus-registers.md`](./modbus-registers.md)       | Register-Map (SOC, Batterie, PV, Netz, Energiezähler, Steuerregister) inkl. Decoding-Beispielen       |
-| [`mqtt-ausgabe.md`](./mqtt-ausgabe.md)               | Das Ausgabeformat von `ecoflowd` am lokalen Broker – Analyse des Status quo und Empfehlung            |
+| [`mqtt-ausgabe.md`](./mqtt-ausgabe.md)               | Das Ausgabeformat von `ecoflowd` am lokalen Broker – warum zwei JSON-Telegramme und wie sie aussehen  |
 | [`cmd/modbusread`](./cmd/modbusread)                 | Kleines Go-CLI zum Nachmessen der Register am Gerät (s.u.)                                            |
 | [`scripts/ecoflow-api.sh`](./scripts/ecoflow-api.sh) | Shell-Skript für alle vier Cloud-Wege: Developer-API, Portal, App-MQTT, Stream-Schalter (s.u.)        |
 | [`scripts/ecoflow-frames.py`](./scripts/ecoflow-frames.py) | Packt die Live-Frames aus `ecoflow-api.sh live` aus – aktuelle Messwerte und Stundenbilanz (s.u.) |
@@ -598,52 +598,94 @@ journalctl -fu ecoflowd@HC31XXXXXXXXXXXX
 ### An den lokalen Broker: `--broker`
 
 ```bash
-./ecoflowd --sn HC31XXXXXXXXXXXX --broker tcp://127.0.0.1:1883
+./ecoflowd --sn HC31XXXXXXXXXXXX --broker tcp://127.0.0.1:1883 --topic myhome/ecoflow
 ```
 
-Ein Topic je Wert, blanke Zahlen, kein JSON:
+**Zwei JSON-Telegramme**, beide nicht retained, QoS 0. Das Topic ist `--topic` (Default
+`ecoflow`) plus ein festes `/state` bzw. `/energy`:
 
-| Topic                          | Beispiel               | Einheit                       |
-|--------------------------------|------------------------|-------------------------------|
-| `ecoflow/HC31XXXXXXXXXXXX/pv`             | `970`                  | W                             |
-| `ecoflow/HC31XXXXXXXXXXXX/house`          | `-415`                 | W, **negativ = Verbrauch**    |
-| `ecoflow/HC31XXXXXXXXXXXX/battery`        | `482`                  | W, **positiv = laden**        |
-| `ecoflow/HC31XXXXXXXXXXXX/grid`           | `72`                   | W, **positiv = Einspeisung**  |
-| `ecoflow/HC31XXXXXXXXXXXX/dcdc`           | `379`                  | W, Rolle noch unbekannt       |
-| `ecoflow/HC31XXXXXXXXXXXX/soc`            | `63`                   | %                             |
-| `ecoflow/HC31XXXXXXXXXXXX/measured`       | `2026-09-22T09:13:19Z` | ISO 8601, UTC                 |
-| `ecoflow/HC31XXXXXXXXXXXX/energy/pv`      | `3301`                 | Wh, Tagessumme                |
-| `ecoflow/HC31XXXXXXXXXXXX/energy/…`       |                        | `house`, `battery_in/out`, `grid_in/out` |
-| `ecoflow/HC31XXXXXXXXXXXX/status`         | `online` / `offline`   | Verfügbarkeit, retained       |
+```
+myhome/ecoflow/state   {"sn":"HC31XXXXXXXXXXXX","timestamp":"2026-09-22T09:13:16Z","pv":975,"house":-459,"battery":515,"grid":0,"soc":63}
+myhome/ecoflow/energy  {"sn":"HC31XXXXXXXXXXXX","timestamp":"2026-09-22T09:13:18Z","pv":3301,"house":3206,"batteryIn":1545,"batteryOut":1562,"gridIn":62,"gridOut":175}
+```
 
-Im Topic steht die Seriennummer — sie ist der einzige Name, den ein Gerät hat, und ein
-zweiter wäre nur eine weitere Sache, die man nachziehen muss. Mit `--topic` lässt sich das
-Präfix davor ändern.
+Die Werte sind aus dem Mitschnitt `internal/frames/testdata/fast.txt` dekodiert.
+
+**`state`** – ein Telegramm je neuer Messung, ohne `--fast` minütlich, mit `--fast` alle
+zwei bis drei Sekunden:
+
+| Schlüssel   | Einheit       | Bedeutung                                         |
+|-------------|---------------|---------------------------------------------------|
+| `sn`        | –             | Seriennummer des Geräts                           |
+| `timestamp` | RFC 3339, UTC | **Messzeit des Geräts**, nicht die Sendezeit      |
+| `pv`        | W             | PV-Leistung                                       |
+| `house`     | W             | Hauslast, **negativ = Verbrauch**                 |
+| `battery`   | W             | **positiv = laden**, negativ = entladen           |
+| `grid`      | W             | **positiv = Einspeisung**, negativ = Bezug        |
+| `soc`       | %             | Ladestand                                         |
+
+**`energy`** – die Tagessummen, sobald die sechs Teile der Stundenhistorie mit gleichem
+Zeitstempel beisammen sind (ohne `--fast` etwa alle zehn Minuten):
+
+| Schlüssel                    | Einheit | Bedeutung                                     |
+|------------------------------|---------|-----------------------------------------------|
+| `sn`, `timestamp`            | –       | wie oben; `timestamp` der Stundenhistorie     |
+| `pv`, `house`                | Wh      | PV-Ertrag, Hausverbrauch                      |
+| `batteryIn`, `batteryOut`    | Wh      | geladen, entladen                             |
+| `gridIn`, `gridOut`          | Wh      | Bezug, Einspeisung                            |
+
+**„Heute“ ist der UTC-Tag**, weil das Gerät seine Stunden in UTC führt. In Österreich
+springen die Summen deshalb um 01:00 (MEZ) bzw. 02:00 (MESZ) auf 0, nicht um Mitternacht.
+
+**Warum der Zeitstempel im Telegramm steht.** Er macht drei Mechanismen überflüssig, die
+das frühere Format brauchte: den Heartbeat, das Verfügbarkeits-Topic mit Last Will und den
+Stale-Wächter dahinter. Ein Empfänger sieht das Alter jedes Werts selbst, und zwar nach der
+Uhr des **Geräts**. Einen hängenden Dienst kann ohnehin nur der Empfänger bemerken – ein
+hängender Prozess meldet nichts, am wenigsten, dass er hängt. Deshalb gehört an jeden
+Verbraucher eine Altersprüfung: `timeout` bei evcc, `expire_after` bei Home Assistant.
+
+**Warum `grid` 0 ist und nicht fehlt.** Das Gerät lässt ein Feld mit dem Wert 0 im Frame
+einfach weg – so arbeitet Protobuf (proto3): Ein Feld mit Standardwert wird nicht
+übertragen, und der Empfänger liest das Fehlen als 0. `grid` fehlt so in rund der Hälfte
+aller Berichte, und in jedem davon geht die Energiebilanz mit `grid = 0` exakt auf. „Fehlt“
+heißt hier also „gemessen 0“; weggelassen würde `grid` genau im häufigsten Zustand fehlen.
+Dass EcoFlow proto3 verwendet, ist aus diesem Verhalten gefolgert, nicht belegt. Die Zahlen
+stehen in [`mqtt-ausgabe.md`](./mqtt-ausgabe.md).
+
+**`dcdc` wird bewusst nicht publiziert**, solange seine Rolle nicht geklärt ist (siehe
+„Offene Punkte“). Beide Dekoder lesen das Feld weiter, ausgegeben wird es aber nirgends;
+zum Klären dient ein Mitschnitt von `ecoflow-api.sh live|fast`.
+
+**Die Seriennummer steht im Telegramm, nicht im Topic.** Dort überlebt sie eine
+Weiterleitung nach InfluxDB oder in eine Warteschlange, bei der das Topic verloren geht, und
+`--topic` fügt sich in jedes bestehende Namensschema. Mehrere Geräte brauchen je ein eigenes
+`--topic`. **Topics am besten klein schreiben:** MQTT unterscheidet Groß- und
+Kleinschreibung, ein Abo mit einem falschen Buchstaben bekommt keine Fehlermeldung, sondern
+nichts. `ecoflowd` übernimmt `--topic` unverändert.
+
+**Schlüssel in camelCase.** JSON selbst schreibt keinen Stil vor; camelCase ist der der
+verbreiteten Leitfäden (Google, Microsoft, JSON:API). Begründung in `mqtt-ausgabe.md`.
+
+**Nichts ist retained.** Ein retained Messwert überlebt das, was er beschreibt, und Home
+Assistant warnt, dass retained Werte sich mit `expire_after` beißen. Wer sich neu verbindet,
+wartet auf die nächste Messung – ohne `--fast` höchstens eine Minute.
 
 Mit `--mqtt-user` und `MQTT_PASSWORD` für einen Broker, der Anmeldung verlangt. Das
 Passwort kommt aus der Umgebung, weil ein Flag in der Prozessliste stünde.
 
-**Die Messwerte sind nicht retained, die Verfügbarkeit schon.** Ein retained Messwert
-überlebt das, was er beschreibt: Nach einem Cloud-Ausfall liest ein Verbraucher den letzten
-Stand für immer weiter und regelt danach. Home Assistant warnt zusätzlich, dass retained
-Werte sich mit `expire_after` beißen. Publiziert wird bei Änderung, dazu einmal pro Minute
-auch unverändert — sonst kann ein Verbraucher „gleich geblieben" nicht von „weg" trennen.
+**Umstieg von v0.4.x.** Bis v0.4.x publizierte `ecoflowd` ein Topic je Wert
+(`ecoflow/<SN>/pv`, …, `/energy/…`) und ein retained `ecoflow/<SN>/status`. Das fällt mit
+v0.5.0 ersatzlos weg. Das alte retained `status` bleibt am Broker stehen, bis man es löscht:
 
-`status` geht auf `offline`, wenn der Dienst stirbt (per Last Will, auch bei `kill -9`)
-oder wenn drei Minuten lang kein Messwert mehr kam. Das Gerät hat zwar ein eigenes
-Status-Topic, aber darauf ist in **keinem** Mitschnitt je eine Nachricht angekommen — die
-Verfügbarkeit wird deshalb aus den Daten abgeleitet, nicht aus einer Nutzlast, die niemand
-gesehen hat.
-
-**Warum ein Topic je Wert und nicht ein JSON-Telegramm?** Die Frage ist untersucht und in
-[`mqtt-ausgabe.md`](./mqtt-ausgabe.md) beantwortet — mit dem Ergebnis, dass ein
-Sammeltelegramm die bessere Form wäre. Geändert ist hier bislang nichts.
+```bash
+mosquitto_pub -h <broker> -r -n -t ecoflow/HC31XXXXXXXXXXXX/status
+```
 
 #### evcc
 
 Die Vorzeichen bleiben so, wie das Gerät misst — das Umrechnen bleibt beim Menschen,
 dieselbe Regel wie bei den Adressen in `modbusread`. evcc erwartet das Gegenteil und hat
-dafür `scale`:
+dafür `scale`; aus dem Telegramm holt `jq` den Wert:
 
 ```yaml
 meters:
@@ -651,32 +693,37 @@ meters:
     type: custom
     power:
       source: mqtt
-      topic: ecoflow/HC31XXXXXXXXXXXX/pv
+      topic: ecoflow/state
+      jq: .pv
       timeout: 180s          # ohne timeout gilt jeder Wert unbegrenzt als aktuell
   - name: grid
     type: custom
     power:
       source: mqtt
-      topic: ecoflow/HC31XXXXXXXXXXXX/grid
+      topic: ecoflow/state
+      jq: .grid
       scale: -1              # Gerät: positiv = Einspeisung, evcc: positiv = Bezug
       timeout: 180s
   - name: battery
     type: custom
     power:
       source: mqtt
-      topic: ecoflow/HC31XXXXXXXXXXXX/battery
+      topic: ecoflow/state
+      jq: .battery
       scale: -1              # Gerät: positiv = laden, evcc: positiv = entladen
       timeout: 180s
     soc:
       source: mqtt
-      topic: ecoflow/HC31XXXXXXXXXXXX/soc
+      topic: ecoflow/state
+      jq: .soc
       timeout: 180s
 ```
 
 `timeout` ist nicht optional: Ohne ihn akzeptiert evcc laut eigener Doku „values of any
 age" — ein eingefrorener Wert würde dann stillschweigend weiterverwendet.
 
-Für Energiewerte kommt `scale: 0.001` dazu, weil evcc kWh erwartet und hier Wh stehen.
+Für Energiewerte aus `ecoflow/energy` kommt `scale: 0.001` dazu, weil evcc kWh erwartet und
+hier Wh stehen.
 
 #### Home Assistant
 
@@ -684,16 +731,16 @@ Für Energiewerte kommt `scale: 0.001` dazu, weil evcc kWh erwartet und hier Wh 
 mqtt:
   sensor:
     - name: "PV"
-      state_topic: "ecoflow/HC31XXXXXXXXXXXX/pv"
+      state_topic: "ecoflow/state"
+      value_template: "{{ value_json.pv }}"
       unit_of_measurement: "W"
       device_class: power
       state_class: measurement
-      availability_topic: "ecoflow/HC31XXXXXXXXXXXX/status"
       expire_after: 180
 ```
 
-`availability_topic` versteht `online`/`offline` ohne weitere Angaben — deshalb heißen die
-Nutzlasten genau so.
+`expire_after` ersetzt das frühere `availability_topic`: Kommt drei Minuten lang kein
+Telegramm, wird der Sensor `unavailable`.
 
 ### Sekundenwerte: `--fast`
 
@@ -775,13 +822,16 @@ hält sie gegen dieselben Mitschnitte zusammen.
   getrennt (PV-gebunden, Batterieentladung, Einstellungen) und Feld 45/47 als
   Entladeleistung belegt; ungeklärt bleiben unter anderem 2, 3, 5, 18, 19, 24, 28, 32
   und 48. `cmd_id` 1, 108, 109, 111 und 136 sind aufgeschlüsselt
-- Ob das Verfügbarkeits-Topic einfrieren kann: Hängt `ecoflowd`, ohne die MQTT-Verbindung
-  zu verlieren, bleibt das retained `online` stehen und der Last Will feuert nicht. Der
-  Stale-Wächter greift nur, solange der Prozess läuft. Beim Bau eines Verbrauchers
-  aufgefallen, am eigenen Code **nicht nachgestellt** (siehe `mqtt-ausgabe.md`)
-- Ob unvollständige Frames real vorkommen. `internal/frames/energy.go` prüft nur PV auf
-  Anwesenheit; die übrigen Felder werden als 0 gelesen, wenn sie fehlen — ununterscheidbar
-  von einer gemessenen 0 (siehe `mqtt-ausgabe.md`)
+- Ob am DC Fit **nachts überhaupt Energieberichte ankommen**. Das Gerät lässt Felder mit
+  dem Wert 0 weg (siehe „Warum `grid` 0 ist“ oben); bei PV = 0 fehlte dann auch das
+  PV-Feld, und beide Dekoder verwerfen einen Frame ohne PV
+  (`internal/frames/energy.go`, `scripts/ecoflow-frames.py`). Die Mitschnitte im Repo sind
+  reine Tagaufnahmen (PV ≥ 948 W) und entscheiden das nicht. Zu prüfen mit einem
+  nächtlichen `ecoflow-api.sh live`
+- Was `dcdc` (Feld 2 des Energieberichts) misst. Der Name stammt aus einer Fremdquelle
+  (`dcdc_pwr`); es ist **nicht** Teil der Energiebilanz und folgt der Batterie mit
+  gleichem Vorzeichen, in den Mitschnitten mit 63–103 % ihres Werts, ohne festes
+  Verhältnis. Bis das geklärt ist, publiziert `ecoflowd` es nicht
 - Warum das Portal den Tagesertrag **tagsüber** in beide Richtungen danebenliegen lässt.
   Nach Sonnenuntergang stimmen Portal und Gerät auf 0,058 % überein, es wird also
   dasselbe gemessen; das Portal schreibt nur sprunghaft fort. Praktisch heißt das:
@@ -860,7 +910,10 @@ git tag vX.Y.Z && git push origin vX.Y.Z
 **Welche Nummer**, entscheidet die *Art* der Änderung, nicht ihr Umfang: Patch, solange
 sich am Verhalten nichts ändert — und Hilfetexte, Kommentare und Doku ändern es nicht,
 auch wenn der Diff groß ist. Minor, sobald ein Flag, ein Kommando oder ein Topic
-dazukommt. Das ist leicht zu verwechseln: `v0.4.1` umfasste rund 60 Korrekturen über neun
+dazukommt – und ebenso, solange die Nummer mit `0.` beginnt, wenn eines wegfällt oder ein
+Ausgabeformat sich ändert. Das ist dann ein Bruch und steht als solcher in den
+Release-Notes; so geschehen mit `v0.5.0`, als die Einzeltopics den JSON-Telegrammen
+wichen. Das ist leicht zu verwechseln: `v0.4.1` umfasste rund 60 Korrekturen über neun
 Dateien und war trotzdem ein Patch, weil kein einziger Codepfad anders lief.
 
 Nur auf `main` taggen – `release.yml` baut daraus die Binaries und stempelt die

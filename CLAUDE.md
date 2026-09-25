@@ -75,8 +75,10 @@ Fehlermeldungen auf Englisch, weil das Tool universell einsetzbar sein soll.
 - `cmd/modbusread/` – CLI: Flags, Lesen mit Chunking/Fehlerisolierung, Ausgabe, Polling
 - `cmd/ecoflowd/` – Dienst für den Dauerbetrieb am Cloud-Kanal: Flags,
   Verbindungsschleife mit Rücknahme, und die Ausgabeseite – er publiziert die Messwerte
-  auf einen lokalen MQTT-Broker, ein Topic je Wert, dazu ein Verfügbarkeits-Topic per
-  Last Will. Nichts davon liegt auf der Platte; die Sitzung lebt im Prozess. Anders als
+  auf einen lokalen MQTT-Broker, als zwei JSON-Telegramme (`<topic>/state`,
+  `<topic>/energy`) mit Seriennummer und Messzeit im Payload; kein Retain, kein
+  Verfügbarkeits-Topic, kein Heartbeat. Ins Telegramm kommt nur, was geklärt ist —
+  `dcdc` fehlt deshalb bewusst. Nichts davon liegt auf der Platte; die Sitzung lebt im Prozess. Anders als
   `modbusread` bewusst gerätespezifisch; das Wissen dazu liegt in `internal/frames` und
   `internal/ecoflow`
 - `internal/decode/` – reine Funktionen über `[]uint16` (Typen, Word-/Byte-Order,
@@ -110,10 +112,10 @@ Fehlermeldungen auf Englisch, weil das Tool universell einsetzbar sein soll.
   HMAC-signiert, liefert für PowerOcean oft Fehler 1006) vs. lokales **Modbus TCP**
   (Port 502, Freischaltung nur durch Installateur via EcoFlow **Pro App**)
 - `mqtt-ausgabe.md` – die *Ausgabeseite*: wie `ecoflowd` auf den lokalen Broker
-  publiziert, warum es heute ein Topic je Wert ist und warum ein JSON-Sammeltelegramm
-  die bessere Form wäre. Enthält die korrigierten Annahmen (evcc und Home Assistant
-  können JSON; der Heartbeat ersetzt nur den fehlenden Zeitstempel). Reine Analyse —
-  am Code ist deswegen **nichts** geändert
+  publiziert und warum so — zwei JSON-Telegramme statt, wie bis v0.4.x, ein Topic je
+  Wert. Enthält die Begründungen (Messzeit im Payload statt Heartbeat und Last Will,
+  camelCase, fehlendes Feld = 0 wegen proto3, `dcdc` erst nach Klärung) und die
+  Messungen, auf denen sie stehen
 - `modbus-registers.md` – die *Detailebene*: Register-Map, Encoding-Konventionen,
   Python-Decoding-Snippets (pymodbus), bekannte Lücken
 

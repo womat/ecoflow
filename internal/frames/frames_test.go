@@ -120,6 +120,56 @@ func TestEnergyBalances(t *testing.T) {
 	}
 }
 
+// TestAbsentMeansZero pins why a missing power field is read as 0 and not as
+// "unknown". The device leaves out a field whose value is zero - protobuf's
+// default - and never sends an explicit 0.0: in the captures grid is absent
+// from about half the reports, and on every one of those the balance closes
+// with grid taken as 0. A firmware that starts sending zeros, or that drops
+// fields for another reason, shows up here.
+func TestAbsentMeansZero(t *testing.T) {
+	powerFields := []uint64{energyGrid, energyDCDC, energyBattery, energyPV, energyHouse}
+
+	var absent int
+	for _, file := range []string{"fast.txt", "slow.txt"} {
+		for _, b := range readCapture(t, file) {
+			f, err := Parse(b)
+			if err != nil {
+				t.Fatalf("Parse: %v", err)
+			}
+			e, ok := f.Energy()
+			if !ok {
+				continue
+			}
+
+			body := parse(f.Payload)
+			if first, ok := find(body, 1); ok && first.wire == wireBytes {
+				body = parse(first.bytes)
+			}
+
+			for _, n := range powerFields {
+				if fl, ok := find(body, n); ok && fl.float32At() == 0 {
+					t.Errorf("%s at %v: field %d is on the wire as an explicit 0", file, e.Measured, n)
+				}
+			}
+
+			if _, ok := find(body, energyGrid); ok {
+				continue
+			}
+			absent++
+			if e.Grid != 0 {
+				t.Errorf("%s at %v: grid absent but read as %v", file, e.Measured, e.Grid)
+			}
+			if d := math.Abs(float64(e.Balance())); d > 0.01 {
+				t.Errorf("%s at %v: grid absent and the balance is off by %.4f W", file, e.Measured, d)
+			}
+		}
+	}
+	if absent == 0 {
+		t.Fatal("no report without grid; the captures no longer show the case this test is about")
+	}
+	t.Logf("%d reports without grid, all balanced with grid = 0", absent)
+}
+
 // TestFastAndMinutelyAgree checks the two packings against each other. Every
 // minutely report shares its timestamp with a fast one, so where both exist
 // they have to describe the same moment.

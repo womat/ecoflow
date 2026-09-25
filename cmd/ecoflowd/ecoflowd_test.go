@@ -7,6 +7,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/womat/ecoflow/internal/frames"
 )
@@ -104,22 +105,25 @@ func TestHelp(t *testing.T) {
 	}
 }
 
-// TestTopicsCarryTheSerial pins the namespace. The serial is the only name a
-// device has, and having a second one would mean two things to keep in step
-// for no gain - the serial is already on the command line and in the systemd
-// instance name anyway.
-func TestTopicsCarryTheSerial(t *testing.T) {
+// TestTopicIsThePrefix pins the namespace. The serial is no longer part of
+// the topic: it travels in the payload, where it survives a telegram being
+// passed on to a database or a queue, and --topic is free to fit whatever
+// naming scheme the broker already has.
+func TestTopicIsThePrefix(t *testing.T) {
 	t.Setenv("ECOFLOW_EMAIL", "a@b.c")
 	t.Setenv("ECOFLOW_PASSWORD", "x")
 
-	cfg, err := buildConfig(&options{serial: "HC31XXXXXXXXXXXX", topic: "ecoflow"}, nil)
+	cfg, err := buildConfig(&options{serial: "HC31XXXXXXXXXXXX", topic: "/myhome/ecoflow/"}, nil)
 	if err != nil {
 		t.Fatalf("buildConfig: %v", err)
 	}
 
-	want := "ecoflow/HC31XXXXXXXXXXXX/pv"
-	if got := topicFor(cfg.topic, cfg.serial, "pv"); got != want {
-		t.Errorf("got %q, want %q", got, want)
+	p, f := newTestPublisher()
+	p.prefix = cfg.topic
+	p.energy(frames.Energy{PV: 1, Measured: time.Unix(0, 0).UTC()})
+
+	if got := f.all()[0].topic; got != "myhome/ecoflow/state" {
+		t.Errorf("got %q, want myhome/ecoflow/state", got)
 	}
 }
 
