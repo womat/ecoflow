@@ -1,7 +1,9 @@
-# EcoFlow PowerOcean DC Fit – API & Modbus notes
+# EcoFlow PowerOcean DC Fit – MQTT bridge, Modbus CLI & notes
 
-Personal research notes on ways to integrate the EcoFlow PowerOcean DC Fit (REST API,
-local Modbus TCP), and the tools that came out of them.
+`ecoflowd` reads live data from an EcoFlow PowerOcean (DC Fit) through the app's cloud
+channel and publishes it to a local MQTT broker – for evcc, Home Assistant or anything
+else that speaks MQTT. Alongside: `modbusread`, a read-only Modbus TCP/RTU CLI, and
+research notes on the cloud API and the local Modbus registers.
 
 > **Disclaimer:** These notes are mostly based on community reverse engineering, not on
 > official EcoFlow documentation. EcoFlow does not officially support or confirm the
