@@ -203,7 +203,7 @@ $ ECOFLOW_PORTAL_TOKEN="$(scripts/ecoflow-api.sh login first.last@example.com)" 
     scripts/ecoflow-api.sh status HC31XXXXXXXXXXXX
 Password (not echoed):
 logged in as user 1000000000000…
-device   : Mathe (online)
+device   : Home (online)
 SoC      : 18 %
 PV       : 1045 W
 grid     : 0 W (idle)
