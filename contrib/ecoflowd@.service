@@ -7,7 +7,10 @@
 #   sudo systemctl enable --now ecoflowd@HC31XXXXXXXXXXXX
 #
 # The instance name after the @ is the serial number, so a second device is a
-# second instance rather than a second unit file.
+# second instance rather than a second unit file. Its readings need their own
+# topic, because the serial travels in the payload rather than in the topic:
+# put ECOFLOWD_OPTIONS with a different --topic into /etc/ecoflowd/<serial>.env,
+# which is read after the shared file and overrides it.
 #
 # /etc/ecoflowd/env holds the credentials and the options, and must be readable
 # by root alone:

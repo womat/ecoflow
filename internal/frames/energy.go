@@ -52,6 +52,18 @@ func (f Frame) Energy() (Energy, bool) {
 	// seen tracks a PV field that really is a fixed32, not merely a field with
 	// that number. float32At hands back a zero for anything else, and a frame
 	// rendered as all zeros reads like a genuine measurement at night.
+	//
+	// The other power fields stay 0 when they are absent, and that is the
+	// right reading rather than a gap: the device leaves out a field whose
+	// value is zero - protobuf's default - and never sends an explicit 0.0. In
+	// the captures grid is missing from about half the reports, and on every
+	// one of them the balance closes with grid taken as 0 (TestAbsentMeansZero).
+	// That EcoFlow's schema is proto3 without "optional" is inferred from this
+	// behaviour, not known.
+	//
+	// By the same rule a PV of exactly 0 would not be sent either, and this
+	// check would then drop the frame. The captures are daytime only, so
+	// whether that happens at night is open - see README, "Offene Punkte".
 	var e Energy
 	var seen bool
 	for _, fl := range body {

@@ -1,7 +1,6 @@
 package main
 
 import (
-	"strings"
 	"testing"
 	"time"
 
@@ -40,23 +39,6 @@ func TestBrokerURL(t *testing.T) {
 				t.Errorf("got %q, want %q", got, tc.want)
 			}
 		})
-	}
-}
-
-func TestTopicFor(t *testing.T) {
-	tests := []struct {
-		prefix, serial, leaf, want string
-	}{
-		{"ecoflow", "HC31XXXXXXXXXXXX", "pv", "ecoflow/HC31XXXXXXXXXXXX/pv"},
-		{"/ecoflow/", "HC31XXXXXXXXXXXX", "status", "ecoflow/HC31XXXXXXXXXXXX/status"},
-		{"solar/dach", "HC31XXXXXXXXXXXX", "energy/pv", "solar/dach/HC31XXXXXXXXXXXX/energy/pv"},
-	}
-
-	for _, tc := range tests {
-		if got := topicFor(tc.prefix, tc.serial, tc.leaf); got != tc.want {
-			t.Errorf("topicFor(%q, %q, %q) = %q, want %q",
-				tc.prefix, tc.serial, tc.leaf, got, tc.want)
-		}
 	}
 }
 
@@ -101,17 +83,19 @@ func TestTopicPrefixIsChecked(t *testing.T) {
 func TestWattsKeepsTheDeviceSigns(t *testing.T) {
 	tests := []struct {
 		in   float32
-		want string
+		want int64
 	}{
-		{970.4, "970"},
-		{-415.6, "-416"},
-		{0, "0"},
-		{0.4, "0"},
+		{970.4, 970},
+		{-415.6, -416},
+		{0, 0},
+		{0.4, 0},
+		// Used to come out as "-0" when the value was rendered as text.
+		{-0.4, 0},
 	}
 
 	for _, tc := range tests {
 		if got := watts(tc.in); got != tc.want {
-			t.Errorf("watts(%v) = %q, want %q", tc.in, got, tc.want)
+			t.Errorf("watts(%v) = %d, want %d", tc.in, got, tc.want)
 		}
 	}
 }
@@ -173,18 +157,5 @@ func TestReadingsFeedTheTotals(t *testing.T) {
 		if d := frames.HourlyBalance(complete, hour); d < -1 || d > 1 {
 			t.Errorf("hour %d: balance off by %d Wh", hour, d)
 		}
-	}
-}
-
-func TestStatusTopicNames(t *testing.T) {
-	// Home Assistant's availability_topic defaults to these payloads, so the
-	// names are not arbitrary: getting them wrong means every sensor stays
-	// unavailable with no error anywhere.
-	if payloadOnline != "online" || payloadOffline != "offline" {
-		t.Errorf("availability payloads are %q and %q, want online and offline",
-			payloadOnline, payloadOffline)
-	}
-	if !strings.Contains(topicFor("ecoflow", "HC31XXXXXXXXXXXX", "status"), "/status") {
-		t.Error("the availability topic is not called status")
 	}
 }

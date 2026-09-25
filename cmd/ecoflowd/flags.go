@@ -66,7 +66,8 @@ func newFlagSet(o *options, stderr io.Writer) *flag.FlagSet {
 	fs.StringVar(&o.serial, "sn", "", "serial number of the device")
 	fs.StringVar(&o.host, "host", "", "API host (default "+ecoflow.DefaultHost+")")
 	fs.StringVar(&o.broker, "broker", "", "local MQTT broker, e.g. tcp://127.0.0.1:1883")
-	fs.StringVar(&o.topic, "topic", defaultTopic, "topic prefix on the local broker")
+	fs.StringVar(&o.topic, "topic", defaultTopic,
+		"topic prefix on the local broker; readings go to <topic>/state and <topic>/energy")
 	fs.StringVar(&o.mqttUser, "mqtt-user", "", "user for the local broker")
 	fs.BoolVar(&o.stdout, "stdout", false, "print each reading")
 	fs.BoolVar(&o.fast, "fast", false,
@@ -82,11 +83,19 @@ func newFlagSet(o *options, stderr io.Writer) *flag.FlagSet {
 Reads an EcoFlow PowerOcean over the consumer app's cloud channel and keeps
 reading it. Nothing is ever sent to the device unless --fast is given.
 
-With --broker the readings go to a local MQTT broker, one topic per value:
-<topic>/<SN>/pv, /house, /battery, /grid, /dcdc, /soc, /measured, the day's
-totals under /energy/, and /status as availability. Values carry the device's
-own signs - positive grid is export, positive battery is charging - and watts
-and watt-hours as measured. evcc turns those with scale: -1 and scale: 0.001.
+With --broker the readings go to a local MQTT broker as two JSON telegrams,
+neither retained:
+
+  <topic>/state   one per reading: sn, timestamp, pv, house, battery, grid, soc
+  <topic>/energy  the day's totals: sn, timestamp, pv, house, batteryIn,
+                  batteryOut, gridIn, gridOut
+
+timestamp is the device's measurement time in UTC, not the time of sending, so
+a consumer checks a value's age there; there is no availability topic. The
+totals cover the UTC day. Values carry the device's own signs - positive grid
+is export, positive battery is charging - and watts and watt-hours as
+measured; evcc turns those with scale: -1 and scale: 0.001. A field the device
+did not send is 0, because the device leaves out fields that are zero.
 
 credentials, from the environment and never from flags:
   ECOFLOW_EMAIL        account e-mail

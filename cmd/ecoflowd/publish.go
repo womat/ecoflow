@@ -2,12 +2,12 @@ package main
 
 import (
 	"crypto/tls"
+	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"net/url"
-	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	mqtt "github.com/eclipse/paho.mqtt.golang"
@@ -15,108 +15,103 @@ import (
 	"github.com/womat/ecoflow/internal/frames"
 )
 
-// Payloads of the availability topic. These are Home Assistant's defaults for
-// an availability_topic, so it needs no extra configuration to understand them.
+// The two telegrams, under the prefix given with --topic. Lower case on
+// purpose: MQTT topics are case-sensitive, and a subscription that differs
+// in one letter gets silence rather than an error.
+//
+// Readings and totals come from different frames with different timestamps,
+// so they go out separately. One object holding both would put fields of
+// different age under a single time - the thing a telegram is meant to avoid.
 const (
-	payloadOnline  = "online"
-	payloadOffline = "offline"
+	leafState  = "state"
+	leafEnergy = "energy"
 )
 
-// staleAfter is how long without a reading counts as offline.
-//
-// The device reports once a minute even when nothing else is running, so three
-// missed minutes mean something is wrong rather than quiet. The device's own
-// status topic would be the better source, but nothing was ever seen on it -
-// see api-status.md - so this infers from the data instead of decoding a
-// payload nobody has observed.
-const staleAfter = 3 * time.Minute
-
-// heartbeat is how often unchanged values are published again.
-//
-// Only changes are published otherwise, which keeps the broker quiet. Without
-// a heartbeat a consumer cannot tell "unchanged" from "gone", and both evcc
-// and Home Assistant want a value often enough to decide that themselves.
-const heartbeat = 60 * time.Second
-
-// publisher writes readings to the local broker.
-//
-// Measurements are published without the retain flag on purpose. A retained
-// reading outlives the thing it describes: after a cloud outage a consumer
-// reads the last one forever and acts on it, and Home Assistant's own
-// documentation warns that retained values collide with expire_after and leave
-// entities behind. Availability is retained, because that one is a fact about
-// the publisher and stays true until it changes.
 // broker is the little of an MQTT client this needs. Naming it separately is
-// what makes the publisher testable at all: the availability logic is the part
-// that can quietly lie to a consumer, and it had no test because the real
-// client can only be built by connecting to something.
+// what makes the publisher testable at all: the real client can only be built
+// by connecting to something.
 type broker interface {
 	Publish(topic string, qos byte, retained bool, payload any) mqtt.Token
 	Disconnect(quiesce uint)
 }
 
+// publisher writes readings to the local broker, one JSON telegram per
+// measurement.
+//
+// Each telegram carries the serial and the device's own measurement time.
+// The output used to lack the time, and three mechanisms stood in for it: a
+// heartbeat so that "unchanged" could be told from "gone", an availability
+// topic with a last will, and a staleness watch feeding it. A consumer that
+// reads the time in the payload needs none of them - it sees the age of every
+// value, by the device's clock rather than this program's. And only the
+// consumer can notice a publisher that hangs: a hung process reports nothing,
+// least of all that it hangs.
+//
+// Nothing is retained. A retained reading outlives the thing it describes;
+// a consumer connecting later waits for the next one, at most a minute.
 type publisher struct {
 	client broker
 	prefix string
+	serial string
 	stderr io.Writer
-
-	// The staleness watch runs on its own goroutine, so everything it touches
-	// is shared with the goroutine feeding in readings.
-	mu       sync.Mutex
-	last     map[string]string
-	lastSent time.Time
-	seen     time.Time
-	online   bool
-
-	done chan struct{}
 }
 
-// watchStale reports the device offline once readings stop arriving.
+// state is one measurement. The field order is the order on the wire.
 //
-// It lives here rather than in the read loop for one reason: that loop only
-// runs while the cloud connection stands. When it drops, the service waits -
-// up to a quarter of an hour - and during exactly that wait a consumer needs
-// to be told that the values have stopped. A watch that stops when the
-// connection stops would go quiet at the only moment it matters.
-func (p *publisher) watchStale() {
-	t := time.NewTicker(30 * time.Second)
-	defer t.Stop()
-
-	for {
-		select {
-		case <-p.done:
-			return
-		case now := <-t.C:
-			p.check(now)
-		}
-	}
+// Keys are camelCase: JSON prescribes no style, and this is the one the
+// widely cited guides (Google, Microsoft, JSON:API) settle on.
+//
+// A field the frame did not carry goes out as 0 rather than being left out.
+// That is not a shortcut: the device omits a field whose value is zero - the
+// protobuf default - and in the captures the energy balance closes exactly
+// whenever grid is absent. Leaving it out would drop grid from every telegram
+// in the most common state, neither importing nor exporting.
+//
+// DCDC is decoded but deliberately not published. Its role is not settled -
+// it is not part of the energy balance and follows the battery at a varying
+// share - and a telegram should carry only what is understood. It comes back
+// once it is.
+type state struct {
+	SN        string `json:"sn"`
+	Timestamp string `json:"timestamp"`
+	PV        int64  `json:"pv"`
+	House     int64  `json:"house"`
+	Battery   int64  `json:"battery"`
+	Grid      int64  `json:"grid"`
+	SoC       uint64 `json:"soc"`
 }
 
-// topicFor builds one topic. The device is named by its serial: it is the one
-// name a device actually has, and a second one would be a second thing to keep
-// in step for nothing.
-func topicFor(prefix, serial, leaf string) string {
-	return strings.Trim(prefix, "/") + "/" + serial + "/" + leaf
+// energy is the day's totals so far. Timestamp is that of the history frame,
+// and the day it covers is the UTC day, because the device keeps its hours in
+// UTC.
+type energy struct {
+	SN         string `json:"sn"`
+	Timestamp  string `json:"timestamp"`
+	PV         uint64 `json:"pv"`
+	House      uint64 `json:"house"`
+	BatteryIn  uint64 `json:"batteryIn"`
+	BatteryOut uint64 `json:"batteryOut"`
+	GridIn     uint64 `json:"gridIn"`
+	GridOut    uint64 `json:"gridOut"`
 }
 
 // newPublisher connects to the local broker.
-//
-// The last will is set before connecting, which is the only time it can be:
-// it is what the broker sends on this program's behalf when it stops saying
-// anything, including when it is killed outright.
 func newPublisher(cfg *config, stderr io.Writer) (*publisher, error) {
 	broker, err := brokerURL(cfg.broker)
 	if err != nil {
 		return nil, err
 	}
 
-	status := topicFor(cfg.topic, cfg.serial, "status")
+	p := &publisher{
+		prefix: strings.Trim(cfg.topic, "/"),
+		serial: cfg.serial,
+		stderr: stderr,
+	}
 
 	opts := mqtt.NewClientOptions().
 		AddBroker(broker).
-		SetClientID("ecoflowd-"+cfg.serial).
+		SetClientID("ecoflowd-" + cfg.serial).
 		SetCleanSession(true).
-		SetWill(status, payloadOffline, 0, true).
 		SetConnectTimeout(15 * time.Second).
 		SetAutoReconnect(true).
 		SetMaxReconnectInterval(time.Minute).
@@ -130,26 +125,9 @@ func newPublisher(cfg *config, stderr io.Writer) (*publisher, error) {
 		opts.SetTLSConfig(&tls.Config{MinVersion: tls.VersionTLS12})
 	}
 
-	p := &publisher{
-		prefix: strings.Trim(cfg.topic, "/") + "/" + cfg.serial,
-		stderr: stderr,
-		last:   map[string]string{},
-		done:   make(chan struct{}),
-		// Not online until something has actually arrived. Claiming otherwise
-		// at startup would be a retained lie for as long as the first reading
-		// takes - and forever if it never comes.
-		online: false,
-	}
-
-	// Re-assert availability whenever a connection stands, including after a
-	// reconnect: the broker dropped the retained value when the will fired.
-	// What gets re-asserted is the *current* state, not "online" - otherwise a
-	// broker restart would silently undo the staleness watch and leave a device
-	// that has gone quiet showing as available.
-	opts.SetOnConnectHandler(func(c mqtt.Client) {
-		p.announce(c)
-		fmt.Fprintf(stderr, "publishing to %s under %s\n", broker,
-			topicFor(cfg.topic, cfg.serial, "")+"…")
+	opts.SetOnConnectHandler(func(mqtt.Client) {
+		fmt.Fprintf(stderr, "publishing to %s on %s/%s and %s/%s\n",
+			broker, p.prefix, leafState, p.prefix, leafEnergy)
 	})
 
 	c := mqtt.NewClient(opts)
@@ -164,20 +142,7 @@ func newPublisher(cfg *config, stderr io.Writer) (*publisher, error) {
 		return nil, fmt.Errorf("connect to %s: %w", broker, err)
 	}
 
-	go p.watchStale()
 	return p, nil
-}
-
-// announce publishes the availability state as it currently stands.
-func (p *publisher) announce(c broker) {
-	p.mu.Lock()
-	payload := payloadOffline
-	if p.online {
-		payload = payloadOnline
-	}
-	p.mu.Unlock()
-
-	c.Publish(p.prefix+"/status", 0, true, payload)
 }
 
 // brokerURL turns what was typed into what paho wants.
@@ -208,96 +173,68 @@ func brokerURL(s string) (string, error) {
 	return u.String(), nil
 }
 
+// stateOf builds the telegram for one reading.
+func stateOf(serial string, e frames.Energy) state {
+	return state{
+		SN:        serial,
+		Timestamp: e.Measured.Format(time.RFC3339),
+		PV:        watts(e.PV),
+		House:     watts(e.House),
+		Battery:   watts(e.Battery),
+		Grid:      watts(e.Grid),
+		SoC:       e.SoC,
+	}
+}
+
+// energyOf builds the telegram for a set of hourly parts. The caller only
+// hands over complete sets, and all parts of a set share one timestamp.
+func energyOf(serial string, parts map[frames.Flow]frames.HourlyPart) energy {
+	total := func(f frames.Flow) uint64 { return parts[f].Total() }
+
+	return energy{
+		SN:         serial,
+		Timestamp:  parts[frames.FlowPV].When.Format(time.RFC3339),
+		PV:         total(frames.FlowPV),
+		House:      total(frames.FlowHouse),
+		BatteryIn:  total(frames.FlowBatteryIn),
+		BatteryOut: total(frames.FlowBatteryOut),
+		GridIn:     total(frames.FlowGridIn),
+		GridOut:    total(frames.FlowGridOut),
+	}
+}
+
 // energy publishes one reading.
-func (p *publisher) energy(e frames.Energy, now time.Time) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-
-	p.seen = now
-	p.setOnlineLocked(true)
-
-	force := now.Sub(p.lastSent) >= heartbeat
-	if force {
-		p.lastSent = now
-	}
-
-	p.put("pv", watts(e.PV), force)
-	p.put("house", watts(e.House), force)
-	p.put("battery", watts(e.Battery), force)
-	p.put("grid", watts(e.Grid), force)
-	p.put("dcdc", watts(e.DCDC), force)
-	p.put("soc", strconv.FormatUint(e.SoC, 10), force)
-	p.put("measured", e.Measured.Format(time.RFC3339), force)
+func (p *publisher) energy(e frames.Energy) {
+	p.send(leafState, stateOf(p.serial, e))
 }
 
-// totals publishes the day's energy so far, one topic per flow.
-func (p *publisher) totals(parts map[frames.Flow]frames.HourlyPart, now time.Time) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-
-	force := now.Sub(p.lastSent) >= heartbeat
-	for _, flow := range frames.Flows {
-		part, ok := parts[flow]
-		if !ok {
-			continue
-		}
-		p.put("energy/"+flow.String(), strconv.FormatUint(part.Total(), 10), force)
-	}
+// totals publishes the day's energy so far.
+func (p *publisher) totals(parts map[frames.Flow]frames.HourlyPart) {
+	p.send(leafEnergy, energyOf(p.serial, parts))
 }
 
-// check marks the device offline when readings stop arriving.
-func (p *publisher) check(now time.Time) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-
-	// Nothing has ever arrived, so there is nothing to call stale yet - the
-	// service may simply still be starting up.
-	if p.seen.IsZero() {
+func (p *publisher) send(leaf string, v any) {
+	payload, err := json.Marshal(v)
+	if err != nil {
+		// Both types are flat structs of strings and integers, so this does
+		// not happen - but saying so beats publishing an empty message.
+		fmt.Fprintf(p.stderr, "error: encoding the %s telegram: %v\n", leaf, err)
 		return
 	}
-	p.setOnlineLocked(now.Sub(p.seen) < staleAfter)
+	p.client.Publish(p.prefix+"/"+leaf, 0, false, payload)
 }
 
-// setOnlineLocked expects p.mu held.
-func (p *publisher) setOnlineLocked(online bool) {
-	if online == p.online {
-		return
-	}
-	p.online = online
-
-	payload := payloadOffline
-	if online {
-		payload = payloadOnline
-		fmt.Fprintln(p.stderr, "readings are arriving again")
-	} else {
-		fmt.Fprintf(p.stderr, "no reading for %s; reporting offline\n", staleAfter)
-	}
-	p.client.Publish(p.prefix+"/status", 0, true, payload)
-}
-
-// put publishes one value when it changed, or when the heartbeat is due.
-// put expects p.mu held.
-func (p *publisher) put(leaf, value string, force bool) {
-	if !force && p.last[leaf] == value {
-		return
-	}
-	p.last[leaf] = value
-	p.client.Publish(p.prefix+"/"+leaf, 0, false, value)
-}
-
-// close says offline and hangs up, so a clean stop is not reported as a crash.
+// close hangs up.
 func (p *publisher) close() {
-	close(p.done)
-	p.client.Publish(p.prefix+"/status", 0, true, payloadOffline).WaitTimeout(2 * time.Second)
 	p.client.Disconnect(250)
 }
 
-// watts renders a power value.
+// watts rounds a power value to whole watts.
 //
-// Rounded to whole watts and with the device's own sign: positive grid means
-// export and positive battery means charging, which is the opposite of what
-// evcc expects. Turning it here would bury a measured finding inside a
-// conversion - evcc has scale: -1 for exactly this, and the README says so.
-func watts(v float32) string {
-	return strconv.FormatFloat(float64(v), 'f', 0, 32)
+// The device's own sign is kept: positive grid means export and positive
+// battery means charging, which is the opposite of what evcc expects. Turning
+// it here would bury a measured finding inside a conversion - evcc has
+// scale: -1 for exactly this, and the README says so.
+func watts(v float32) int64 {
+	return int64(math.Round(float64(v)))
 }

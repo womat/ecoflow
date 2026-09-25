@@ -21,8 +21,8 @@ import (
 // ends the program with its own status, so the unit can decline to restart it.
 func serve(ctx context.Context, cfg *config, stdout, stderr io.Writer) int {
 	// The local broker is independent of the cloud: it stays connected across
-	// every reconnection attempt, so a consumer keeps seeing the availability
-	// topic even while the cloud side is down. That is the whole point of it.
+	// every reconnection attempt, so a reconnect to the cloud does not also
+	// mean a reconnect to the broker.
 	var out *publisher
 	if cfg.broker != "" {
 		p, err := newPublisher(cfg, stderr)
@@ -192,11 +192,6 @@ func listen(ctx context.Context, cfg *config, out *publisher, broker ecoflow.Bro
 	var seen readings
 	day := newDailyTotals()
 
-	// Readings stopping is not an event, only an absence, so it has to be
-	// looked for rather than waited for.
-	stale := time.NewTicker(30 * time.Second)
-	defer stale.Stop()
-
 	for {
 		select {
 		case <-ctx.Done():
@@ -205,10 +200,6 @@ func listen(ctx context.Context, cfg *config, out *publisher, broker ecoflow.Bro
 			return true, fmt.Errorf("connection lost: %w", err)
 		case <-fast.deadline():
 			fast.complain(stderr)
-		case now := <-stale.C:
-			if out != nil {
-				out.check(now)
-			}
 		case payload := <-incoming:
 			f, err := frames.Parse(payload)
 			if err != nil {
@@ -223,7 +214,7 @@ func listen(ctx context.Context, cfg *config, out *publisher, broker ecoflow.Bro
 
 			if part, ok := f.Hourly(); ok {
 				if parts, complete := day.add(part); complete && out != nil {
-					out.totals(parts, time.Now())
+					out.totals(parts)
 				}
 				continue
 			}
@@ -236,7 +227,7 @@ func listen(ctx context.Context, cfg *config, out *publisher, broker ecoflow.Bro
 				fmt.Fprintln(stdout, line)
 			}
 			if out != nil {
-				out.energy(e, time.Now())
+				out.energy(e)
 			}
 		}
 	}
