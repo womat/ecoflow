@@ -299,10 +299,11 @@ def render_hours(when, parts):
     return '\n'.join(lines)
 
 
-# How long a fast report keeps the minutely one redundant. The fast stream
-# arrives every two to three seconds, so anything beyond a minute means it has
-# lapsed and the minutely report is the only source left.
-FAST_STILL_RUNNING = 90
+# How long a fast report's timestamp is remembered. A minutely report is
+# redundant only if a fast one with exactly its timestamp was already seen -
+# which it always was while the fast stream ran. Remembering five minutes is
+# ample: the matching fast report arrives a few seconds before the minutely one.
+FAST_MEMORY = 300
 
 
 def main_modules():
@@ -362,7 +363,7 @@ def main_hours():
 
 def main():
     previous = None
-    last_fast = None
+    fast_seen = set()
 
     for line in sys.stdin:
         parts = line.split()
@@ -381,13 +382,17 @@ def main():
         when = values.get(TIMESTAMP)
 
         if cmd_id == FAST:
-            last_fast = when
-        elif last_fast is not None and when is not None \
-                and when - last_fast <= FAST_STILL_RUNNING:
-            # Every minutely report shares its timestamp with a fast one, so
-            # while the fast stream runs it is a second copy of a reading
-            # already printed - only rounded to the minute, which makes it look
-            # like the clock stopped.
+            if when is not None:
+                fast_seen.add(when)
+                fast_seen = {t for t in fast_seen if when - t <= FAST_MEMORY}
+        elif when in fast_seen:
+            # While the fast stream runs, every minutely report shares its
+            # timestamp with a fast one already printed - a second copy, only
+            # rounded to the minute, which makes it look like the clock
+            # stopped. Matching the timestamp rather than asking whether a fast
+            # report came recently matters when the stream ends: the first
+            # minutely report after it has no fast twin, and a time window
+            # would drop it and leave a minute without a reading.
             continue
 
         line = render(values)
