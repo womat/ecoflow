@@ -8,8 +8,9 @@ local Modbus TCP), and the tools that came out of them.
 > Modbus registers described here. Use at your own risk, especially when writing to
 > registers.
 
-This README and all tools (output, `--help`, code comments) are in English. The three
-research notes it links to are written in **German**.
+This README, `mqtt-output.md` and all tools (output, `--help`, code comments) are in
+English. The two research notes `api-status.md` and `modbus-registers.md` are written in
+**German**.
 
 ## Contents
 
@@ -17,7 +18,7 @@ research notes it links to are written in **German**.
 |------------------------------------------------------|--------------------------------------------------------------------------------------------------------|
 | [`api-status.md`](./api-status.md)                   | Overview: cloud REST API vs. local Modbus TCP, known problems (e.g. error 1006), unlocking (German)     |
 | [`modbus-registers.md`](./modbus-registers.md)       | Register map (SOC, battery, PV, grid, energy counters, control registers) with decoding examples (German) |
-| [`mqtt-ausgabe.md`](./mqtt-ausgabe.md)               | The output format of `ecoflowd` on the local broker – why two JSON telegrams and what they look like (German) |
+| [`mqtt-output.md`](./mqtt-output.md)                 | The output format of `ecoflowd` on the local broker – why two JSON telegrams and what they look like   |
 | [`cmd/modbusread`](./cmd/modbusread)                 | Small Go CLI for checking the registers on the device (see below)                                      |
 | [`scripts/ecoflow-api.sh`](./scripts/ecoflow-api.sh) | Shell script for all four cloud paths: Developer API, portal, app MQTT, stream switch (see below)       |
 | [`scripts/ecoflow-frames.py`](./scripts/ecoflow-frames.py) | Unpacks the live frames from `ecoflow-api.sh live` – current readings and hourly balance (see below) |
@@ -708,7 +709,7 @@ not transmitted, and the receiver reads the absence as 0. `grid` is missing like
 about half of all reports, and in every one of them the energy balance adds up exactly
 with `grid = 0`. "Missing" here therefore means "measured 0"; if it were left out, `grid`
 would be missing in precisely the most common state. That EcoFlow uses proto3 is inferred
-from this behaviour, not proven. The numbers are in [`mqtt-ausgabe.md`](./mqtt-ausgabe.md).
+from this behaviour, not proven. The numbers are in [`mqtt-output.md`](./mqtt-output.md).
 
 **`dcdc` is deliberately not published** as long as its role is not clear (see
 "Open points"). Both decoders still read the field, but it is output nowhere; a capture
@@ -721,7 +722,7 @@ lowercase:** MQTT is case-sensitive, and a subscription with one wrong letter ge
 error message, but nothing. `ecoflowd` takes `--topic` unchanged.
 
 **Keys in camelCase.** JSON itself prescribes no style; camelCase is the one of the common
-guidelines (Google, Microsoft, JSON:API). Reasoning in `mqtt-ausgabe.md`.
+guidelines (Google, Microsoft, JSON:API). Reasoning in `mqtt-output.md`.
 
 **Nothing is retained.** A retained reading outlives what it describes, and Home Assistant
 warns that retained values clash with `expire_after`. Whoever reconnects waits for the
