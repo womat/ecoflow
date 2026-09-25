@@ -86,31 +86,24 @@ only takes effect when fetching data, though, not when listing. Measured with
 | `GET /iot-open/sign/device/quota/all?sn=…`                                                                   | `"code": "1006"`, `"current device is not allowed to get device info"`                   |
 | `POST /iot-open/sign/device/quota` (selected values, the path described in the official PowerOcean docs)     | likewise **1006**                                                                        |
 
-**The block depends on the device, not on the endpoint.** That the signature is built
-correctly is shown independently of this: `scripts/ecoflow-api.sh selftest` reproduces the
-test vector from EcoFlow's own docs. The path described in EcoFlow's own
-PowerOcean docs (`POST /iot-open/sign/device/quota` with
-`{"sn": …, "params": {"quotas": ["bpSoc"]}}`) is also rejected with 1006. The signature is
-demonstrably correct here – a faulty signature would produce a signature error,
-not a rejection on the merits. Telling detail: the examples in these docs use
-SNs with the prefix `HJ31`, i.e. one of those listed as reachable.
+**The block depends on the device, not on the endpoint** – and not on the client. The
+signature is demonstrably correct: `scripts/ecoflow-api.sh selftest` reproduces the test
+vector from EcoFlow's docs, and a faulty signature would produce a signature error, not a
+rejection on the merits. Even the path from EcoFlow's own PowerOcean docs
+(`POST /iot-open/sign/device/quota` with `{"sn": …, "params": {"quotas": ["bpSoc"]}}`) gets
+1006. Telling detail: the examples in these docs use SNs with the prefix `HJ31`, one of
+those listed as reachable.
 
 **So listed does not mean readable.** Whoever only tests `device/list` wrongly takes the
-cloud path to be open; the block only shows on the second call. The prefix `HC31`
-therefore belongs on the 1006 blocklist above, even though none of the community sources
-lists it.
+cloud path to be open; the block only shows on the second call.
 
 Side finding: an SN that is *not* bound to the account answers `quota/all` with
 `"code": "8512"` / `"no permission to do it"` – a different error from 1006 and a
 useful test of whether the owner binding is in place at all.
 
-**It is not a registration or mapping problem.** The obvious suspicion that the
-system is not assigned to the developer account is refuted: `device/list` returns, with
-the same keys, our own SN including `online` and `productName` – which establishes the
-binding. The API distinguishes the cases cleanly (8512 "does not belong to you" vs. 1006
-"this device does not hand out data"), and the message text of 1006 speaks about the
-device, not about permission. That it is not a client problem either is shown by the
-reproduced signature test vector and the comparison with the official demo client.
+**It is not a registration problem** either: `device/list` returns our own SN with
+`online` and `productName`, which establishes the binding, and the API tells the cases apart
+(8512 "does not belong to you" vs. 1006 "this device does not hand out data").
 
 ### Official field names (for comparison with the Modbus registers)
 
@@ -165,26 +158,16 @@ went through). So the block acts *silently* here: connection and subscription ar
 nothing is published. This matches other users' reports that the Open API's MQTT topic
 also delivers no data for 1006 models.
 
-Limitation: this is a negative finding from a short observation. A push could
-theoretically depend on conditions (time of day, load changes, firmware). Whoever
-checks it again: let it run longer and deliberately make the system move (e.g. switch on
-consumers) – do not test with `#`, see the wildcard note above.
+Limitation: a negative finding from a short observation; a push could depend on
+conditions (time of day, load changes, firmware). To re-check, run
+`scripts/ecoflow-api.sh -v mqtt <SN>` longer (verbose shows CONNACK, SUBACK and keepalives,
+every message timestamped) and make the system move, e.g. by switching on consumers.
 
-Re-measurable with `scripts/ecoflow-api.sh -v mqtt <SN>`; verbose mode shows CONNACK,
-SUBACK and the keepalive packets, and every incoming message is logged with a
-timestamp.
-
-**In short:** the account may connect and subscribe to exactly two topics, on
-which nothing is published for this device. It may not make requests. Of the six
-documented topics, two silent ones remain – consistent with the 1006 on all
-REST data endpoints.
-
-Important for interpreting the publish test: under MQTT 3.1.1 the broker acknowledges a
-publish even when the ACL discards it – "no answer" would not have been interpretable
-there. Only **MQTT v5 with QoS 1** returns a reason code in the PUBACK and thereby
-separates "the broker did not pass it on" (0x87) from "the device did not answer". That is
-exactly how `scripts/ecoflow-api.sh request` measures, and the answer was 0x87: the
-request never left the broker.
+Reading the publish test: under MQTT 3.1.1 the broker acknowledges a publish even when the
+ACL discards it. Only **MQTT v5 with QoS 1** returns a reason code in the PUBACK and so
+separates "the broker did not pass it on" (0x87) from "the device did not answer" –
+`scripts/ecoflow-api.sh request` measures that way, and got 0x87: the request never left
+the broker.
 
 - Sources: https://github.com/Feberdin/ecoflow-powerocean-ha (README),
   https://github.com/shuette42/ecoflow-energy-ha (prefix lists)
@@ -261,26 +244,19 @@ Only one thing is established by this: **the REST endpoint does not poll the dev
 out what was last pushed to the cloud. A `status` call therefore looks like a
 live value and is a still image.
 
-**The obvious explanation was wrong.** It went: pushing only happens while a
-client is actively *asking*; without a wake-up call the stream dries up. Third-party evidence
-spoke for this — `jensfr1/ha-ecoflow-ocean2` keeps a 60-second interval with the comment "Ohne
+**It is not that the device only pushes while someone asks.** Third-party projects assume
+so – `jensfr1/ha-ecoflow-ocean2` keeps a 60-second wake-up call with the comment "Ohne
 diesen regelmaessigen Weckruf sendet das Geraet keine Telemetrie, solange keine
 EcoFlow-App geoeffnet ist" ("without this regular wake-up call the device sends no
-telemetry as long as no EcoFlow app is open"); `shuette42/ecoflow-energy-ha` asks every
-20–30 s; the openHAB binding reports updates for the STREAM Micro only while the app is open.
+telemetry as long as no EcoFlow app is open"), `shuette42/ecoflow-energy-ha` asks every
+20–30 s, the openHAB binding sees STREAM Micro updates only while the app is open. On the
+DC Fit a subscription alone is enough (see "Measured on the DC Fit").
 
-Measured on our own device, this does **not** hold here: 23 minutes without a single
-publish, minute values throughout (see "Measured on the DC Fit"). It is enough **to be
-subscribed** — nobody has to ask.
-
-What causes the freezing thus remains open. It is conceivable that the device only pushes
-while *some* subscription exists, and the portal session is one; or that the
-REST endpoint reads from a different store than the MQTT channel. From the outside this cannot
-be told apart.
-
-**For practical purposes it makes no difference:** the REST endpoint is no good as a live
-source — not even while a subscription is running. This was cross-checked: `measured`
-stood still while the MQTT frames were already an hour further on.
+What causes the freezing remains open: the device may push only while *some* subscription
+exists, the portal session being one, or the REST endpoint reads from a different store
+than the MQTT channel. From the outside this cannot be told apart. In practice the endpoint
+is no live source either way – not even while a subscription is running (finding 2 in
+"Measured on the DC Fit").
 
 #### Signs: measured, not assumed
 
@@ -311,12 +287,8 @@ POST https://api-e.ecoflow.com/auth/login
 → data.token, data.user.userId
 ```
 
-That is exactly what `scripts/ecoflow-api.sh login [e-mail]` does: it prints only the token
-to stdout, so it can be captured directly –
-`export ECOFLOW_PORTAL_TOKEN="$(scripts/ecoflow-api.sh login)"`, then `status <SN>`.
-
-The password is only transmitted **base64-encoded, not hashed** – encoding, not
-encryption. Whoever does not want that takes the browser token: a smaller secret, it expires by
+`scripts/ecoflow-api.sh login` does this (usage in the README). The password travels
+**base64-encoded, not hashed**; the browser token is the smaller secret and expires by
 itself. Source for the flow: `shuette42/ecoflow-energy-ha`, `enhanced_auth.py`.
 
 The same source also says what else this token is good for: it opens the app's **MQTT
@@ -338,7 +310,7 @@ Plain-text JSON, no decryption needed. Fetchable with
 
 **The encrypted one:** `/iot-auth/enterprise-development/user/certification` – which the
 portal calls itself when loading – returns the same fields **AES-encrypted**, but
-without `userId`. More precisely than it stood here before:
+without `userId`:
 
 | Parameter  | Value                                                             |
 |------------|-------------------------------------------------------------------|
@@ -362,21 +334,16 @@ It is here in case EcoFlow closes the simple door. It also remains unconfirmed w
 the `enterprise-development` path answers a pure consumer token at all –
 the path name suggests a Pro/installer context.
 
-**Assessment:** this is an internal interface of the web interface, neither documented
-nor promised by EcoFlow, and the token expires. As a permanent data source it is no
-good – local Modbus remains the stable path. As a cross-check when verifying the
-Modbus registers, on the other hand, it is excellent: the same quantities, from EcoFlow's own
-display.
+**What this path is good for:** an internal interface of the web interface, neither
+documented nor promised, with an expiring token – no good for continuous readings (those
+come from the app MQTT channel, section 3). As a cross-check for counter readings and for
+the Modbus registers it is excellent: the same quantities, from EcoFlow's own display.
 
 According to `MaxGrmm/EF-PowerOcean-TcpModbus`, the same endpoint delivers considerably
 more than the dashboard shows – cell voltages, SOH, per-phase active/reactive/apparent
 power, around 180 grid protection parameters. **Unchecked:** the project named is a Modbus
 integration, and whether the statement refers to this REST endpoint or to registers is not
 clear from it.
-
-**What this path is good for:** as a cross-check and for counter readings, not for continuous
-readings – for those, the app MQTT channel (section 3). The stable path would remain Modbus
-(section 4), once it is unlocked.
 
 ## 3. The app's MQTT channel
 
@@ -411,14 +378,9 @@ seconds (default 30):
  "operateType":"latestQuotas","params":{},"version":"1.0"}
 ```
 
-**What `live` deliberately does not do:** the app activates its fast stream (~2–3 s) via
-a protobuf frame `EnergyStreamSwitch` on the `.../set` topic. `live` only publishes
-to `get` topics – whoever queries values should not write unnoticed in the process. The switch
-is sent only by the command `fast` (see "The command for the fast rate"), and by the
-Go service `cmd/ecoflowd` only with the flag `--fast`.
-
-The price for `live` is the device's minute rate – **not** the rate of its own
-requests: those, as measured further below, make no difference to the data flow.
+`live` never publishes to `.../set`. The app's fast stream (~2–3 s) needs the protobuf
+frame `EnergyStreamSwitch` there, which only `fast` and `ecoflowd --fast` send (see "The
+command for the fast rate"); without it the device reports once a minute.
 
 **Format:** on the PowerOcean the push is **protobuf**, not JSON – `jq` does not help there.
 `live` therefore prints every message as hex and additionally writes out the text only
@@ -516,11 +478,10 @@ minute. `ecoflow-frames.py` and `ecoflowd` therefore suppress a minute report wh
 **exactly its timestamp** has already arrived – in every capture that twin came a few seconds
 earlier – and show it otherwise.
 
-Until 26.09.2026 the rule was “a 33 within the last 90 seconds”. That dropped the first minute
-report after the fast stream ended: it has no twin, only 33s from a few seconds before it. On
-the broker this showed as a minute without a reading right after the phone app – which
-switches the stream on – was closed (23:05 UTC that night). Matching the timestamp suppresses
-the same lines in all captures (the `.golden` files are unchanged) and closes the gap.
+Matching the exact timestamp matters: the first minute report after the fast stream ends
+has no twin and has to be shown. (A rule "any 33 within the last 90 s", used until 26 Sep
+2026, dropped it; on the broker that was a minute without a reading after the phone app was
+closed.)
 
 Independently of this, the device sends some frames **twice**, for both IDs. Two
 identical readings are one reading, so a line identical to the
@@ -546,13 +507,10 @@ The field assignment is the same in both cases:
 hit that. The signs match those of the portal endpoint (see "Signs:
 measured, not assumed").
 
-**Rate:** the device reports the energy stream **exactly every minute** and sends every frame
-**twice**. The device timestamp lies on the full minute (`08:30:00Z`,
-`08:31:00Z`, `08:32:00Z`).
-
-The rate does **not** depend on the wake-up call: a run with `ECOFLOW_LIVE_INTERVAL=5` still
-reported every minute. The app unlocks the faster rhythm via the `.../set` topic
-– see the next section.
+**Rate:** without the switch exactly every minute, device timestamp on the full minute
+(`08:30:00Z`, `08:31:00Z`, …). Asking more often changes nothing: a run with
+`ECOFLOW_LIVE_INTERVAL=5` still reported every minute. The faster rhythm needs the
+switch – next section.
 
 #### The command for the fast rate, captured rather than guessed
 
@@ -585,17 +543,12 @@ The app repeats this about every three seconds; the device then reports just as 
 **The obfuscation only applies device → app.** What the app sends is unencrypted –
 the XOR step is dropped in this direction.
 
-**Why capturing made the difference.** An attempt assembled from the third-party sources
-was wrong in four places: obfuscated instead of plain payload, wrongly nested content
-(`0a020801` instead of `08011001`), a six-digit instead of a single-digit sequence number,
-plus two invented and two missing fields. Only `cmd_func 96` and `cmd_id 97` had been
-guessed right. On a write topic that would have been a shot in the dark – there is no
-reason to guess something like this when you can measure it.
+**Why capture rather than guess:** a version assembled from the third-party sources was
+wrong in four places (obfuscated instead of plain payload, `0a020801` instead of
+`08011001`, a six-digit sequence number, two invented and two missing fields); only
+`cmd_func 96` and `cmd_id 97` were right. On a write topic that is a shot in the dark.
 
-Implemented in `scripts/ecoflow-api.sh fast <SN>`: the same as `live`, plus this one frame
-every `ECOFLOW_FAST_INTERVAL` seconds. It is the **only** command of the script that
-publishes to a `set` topic, it carries no parameters, and it is deliberately a command of
-its own – so that the write access never happens as a side effect of a value query.
+Implemented as `scripts/ecoflow-api.sh fast <SN>` (see the README) and `ecoflowd --fast`.
 
 **Measured on the device (22 September 2026):**
 
@@ -610,10 +563,8 @@ its own – so that the write access never happens as a side effect of a value q
 - Incidentally, `cmd_func 254 / cmd_id 32` also became visible (about twice per second) as
   well as `96/3`, `96/1` and `96/137` at per-second rates – none of them evaluated.
 
-**The price with the script:** it starts a separate `mosquitto_pub` for each switch, i.e.
-a connection setup every 3 seconds – around 28,000 a day. Fine for a measurement,
-not for continuous operation; `mosquitto_pub` cannot hold a standing connection from the
-command line. That is exactly why there is `cmd/ecoflowd`, which holds one.
+The script pays with one `mosquitto_pub` connection per switch – around 28,000 a day;
+`cmd/ecoflowd` holds one standing connection instead.
 
 #### The hourly history: `cmd_func 254 / cmd_id 32`
 
@@ -657,25 +608,37 @@ at night and charges as soon as the sun carries the house.
 Fetchable with `scripts/ecoflow-api.sh fast <SN> | python3 scripts/ecoflow-frames.py --hours`.
 
 The sum matches the device itself – field 23 in `96/1` carries the same sum as a
-float, to within 5.5 Wh in the same one-second window – and **after sunset also
-the portal's `todayElectricityGeneration`**, to within 0.058 %. During the day the two
-drift apart because the portal updates in jumps; see the list of open questions.
+float, to within 5.5 Wh in the same one-second window – and **after sunset also the
+portal's `todayElectricityGeneration`**. On 22 Sep 2026, once the daily value was settled,
+three independent sources agreed:
+
+| Source                   | Daily yield  |
+|--------------------------|--------------|
+| Portal `yield today`     | 17140 Wh     |
+| Hourly history `254/32`  | 17143 Wh     |
+| `96/1` field 23          | 17149.90 Wh  |
+
+Spread 9.9 Wh = **0.058 %**, and the portal rounds to 10 Wh – a rounding digit. The two
+timestamps were four seconds apart (portal `20:13:05Z`, capture from `20:13:09Z`), so the
+portal was **not** frozen. As a check, the daily balance from `96/1` closes to within
+0.04 Wh.
+
+During the day, by contrast, they diverged **in both directions** – in the morning the
+portal read too high (1.74 against 1.26 kWh), in the afternoon too low (14.00 against
+15.96 kWh). So the portal measures the same thing but hands it out in jumps; lag alone
+does not explain the morning, though (open question). **Take daily values from the
+device** (`254/32` or `96/1`), not from the portal.
 
 #### The response to the switch: `96/3` and `96/137`
 
 Both come at per-second rates in fast mode. The switch sets `needAck = 1`, so the
 device answers with both.
 
-> **Limitation.** It said here that they do not come **at all** without the switch ("zero
-> without it"). That did not hold up under a longer observation: over 264 covered minutes
-> without the switch, `96/3` came at 1.29 and `96/137` at 1.08 frames per minute –
-> compared with 21.5 and 18.9 respectively with the switch. So the switch **speeds them
-> up** seventeenfold; it does not switch them on. The earlier zero came from a short
-> control run.
->
-> One caveat remains: during the long observation it cannot be ruled out
-> that **another client** (the phone app) was talking along at times. A clean
-> counter-proof would need a long run with the app demonstrably closed.
+The switch **speeds them up** about seventeenfold, it does not switch them on: over 264
+covered minutes without the switch, `96/3` came at 1.29 and `96/137` at 1.08 frames per
+minute, against 21.5 and 18.9 with it. (The 23-minute control saw none – too short.)
+Caveat: during the long observation another client, the phone app, may have been talking
+along at times; a clean counter-proof needs a long run with the app demonstrably closed.
 
 **`96/137` has an empty payload** – a pure acknowledgement, without content.
 
@@ -703,18 +666,13 @@ Use: serial numbers, number and configuration of the battery without app and wit
 The frame does **not** deliver firmware versions and activation date, though – those are
 still only available in the portal.
 
-This is evaluated by `scripts/ecoflow-frames.py`, which takes the output of `live` on
-stdin. The faster ~3-second rate that the app unlocks via `.../set`
-is thus not reached for `live` – that is what `fast` or `ecoflowd --fast` are for. For
-a minute rate it is not needed anyway.
-
 #### The remaining IDs: `96/1`, `96/108`–`96/111`, `96/136`
 
 From a capture on 22 Sep 2026, 14:21–14:31Z (5 min `fast`, then 6 min just
 listening). All six carry an XOR-obfuscated payload like the others. `96/1` comes about nine
 times as often with the stream switch; `96/108`–`96/111` and `96/136`, on the other hand, run
 **independently of the switch** at their own rate (1–2 frames per minute, measured over
-264 covered minutes).
+264 covered minutes; for `96/109`/`96/110` 2.03 with the switch, 2.06 without).
 
 **`96/1` is the system report** and carries the **running daily totals as floats**. That
 is the finding that can be established best – the same six flows as the
@@ -817,21 +775,10 @@ level as `96/109`), 18, 19, 24, 28, 32 and 48. Field 48 comes with a warning:
 > With a power of around 2000 W the day before, that is incompatible. **Field 48 is thus
 > presumably not a power at all**; what it is remains open.
 
-**What helps here** is therefore not a longer but a *differently placed*
-capture: one in which PV, grid, house and battery move independently. Most
-easily in the evening, when PV power falls, the house keeps drawing and the battery
-takes over.
-
-> **Correction.** It said here that `96/109` and `96/110` come *six times more often*
-> without the stream switch. That was wrong and has been withdrawn. The figure arose
-> because a still growing capture file was read twice at different times: the frame count
-> came from the later read, the time span from the earlier one. Recalculated over 264
-> covered minutes, the rate is **the same**: 2.03 frames per minute with the switch, 2.06
-> without.
-
-For the choice between `live` and `fast`, `live` nevertheless remains the tool of choice – not
-because of the rate, but because it **sends nothing to the device**. Only for pairing with an
-energy report to the second is a short `fast` phase useful.
+What helps is a capture in which PV, grid, house and battery move independently – most
+easily in the evening, when PV falls, the house keeps drawing and the battery takes over.
+`live` is the tool for it, because it **sends nothing to the device**; a short `fast` phase
+only helps for pairing with an energy report to the second.
 
 **`96/136` is a constant.** The same two bytes across all samples: `08 0b`, i.e.
 field 1 = 11. Not a reading.
@@ -845,26 +792,18 @@ blocked models. **A community path without any commitment from EcoFlow**: it can
 any time, and the account credentials sit in plain text in the configuration.
 (Source: https://github.com/shuette42/ecoflow-energy-ha)
 
-On the rate of "~2–4 s" named there: it only applies with an active stream switch. Without it
-the device reports **every minute** — measured, see "Measured on the DC Fit".
-
-This repo goes the whole way: `scripts/ecoflow-api.sh live` or `fast` fetches the
-frames, `scripts/ecoflow-frames.py` unpacks them, and `cmd/ecoflowd` does both in one
-service and passes the values on to a local MQTT broker.
+The "~2–4 s" rate named there only applies with the stream switch; without it the device
+reports every minute.
 
 ## 4. Local Modbus TCP
 
-- Not REST, but the classic Modbus TCP protocol on port 502
-- Must be unlocked by the **EcoFlow installer/partner** via the EcoFlow **Pro app**
-  – disabled by default (source: https://docs.evcc.io/en/meters/ecoflow-powerocean-modbus)
-- No official register mapping from EcoFlow; existing mappings are
-  community-reverse-engineered (see `modbus-registers.md`)
-- Already in productive use in:
-    - Home Assistant integrations (`MaxGrmm/EF-PowerOcean-TcpModbus`,
-      `windmark/EF-PowerOcean-TcpModbus`, `harduser-gnk/EF-PowerOcean-TcpModbus` – fork
-      with write access)
-    - evcc (charging infrastructure software) via its own meter template
-      `ecoflow-powerocean-modbus`
+Modbus TCP on port 502, disabled by default and unlocked only by the **EcoFlow
+installer/partner** via the **Pro app** (source:
+https://docs.evcc.io/en/meters/ecoflow-powerocean-modbus). Connection parameters, unlocking
+path and the community-derived register map are in `modbus-registers.md`. Already in
+productive use in the Home Assistant integrations `MaxGrmm/EF-PowerOcean-TcpModbus`,
+`windmark/EF-PowerOcean-TcpModbus` and `harduser-gnk/EF-PowerOcean-TcpModbus` (a fork with
+write access), and in evcc's meter template `ecoflow-powerocean-modbus`.
 
 ## 4a. Access to the EcoFlow Pro app
 
@@ -986,120 +925,54 @@ REST interface – but there is no explicit confirmation of this.
 
 ## Open questions / still to be clarified
 
-- [ ] Does the Modbus register mapping apply 1:1 to the DC Fit? → `models.py` in
+Open:
+
+- [ ] Does the Modbus register mapping apply 1:1 to the DC Fit? `models.py` in
   `MaxGrmm/EF-PowerOcean-TcpModbus` is checked: the current source treats the DC Fit as
   the normal case, the only model-dependent address concerns the Plus
   (`feed_in_power_max`). **Not yet measured on the device**; the contradictions between
   the sources in `modbus-registers.md` are the measurement plan
-- [ ] Exact menu path to the Modbus switch in the EcoFlow Pro app. Known from a
-  third-party source (`MaxGrmm/EF-PowerOcean-TcpModbus`): select the inverter, switch
-  Control Mode to **"Modbus control"** – so a change of operating mode, not a hidden
-  switch. **Unconfirmed on the device**, hence no tick; listed as a task in 4b
-- [ ] Does the "Modbus control" mode affect the internal scheduling? With purely
-  reading access presumably without consequence, but that is not established
-- [ ] What does field 2 of the energy report (`dcdc`) measure? The name comes from
-  `foxthefox/ioBroker.ecoflow-mqtt` (`dcdc_pwr`). Measured against the captures
-  (26 Sep 2026): not part of the energy balance, same sign as the battery, 63–103 %
-  of its value without a fixed ratio. Until that is clear, `ecoflowd` does not publish it
-  (`mqtt-output.md`, §3)
-- [x] Does a missing power field mean "0" or "unknown"? → **"0".** `grid` is missing in
-  100 of 191 energy reports, an explicit `0.0` appears in none, and without `grid` the
-  balance adds up exactly – the proto3 behaviour of omitting fields with the default value
-  (26 Sep 2026, `mqtt-output.md`, §3). It remains open whether for this reason at night,
-  at PV = 0, no reports at all get through the decoders
-- [x] Does the prefix `HC31` (DC Fit) return error 1006? → **Yes, for `quota/all`**;
-  `device/list`, by contrast, lists the device normally (September 2026)
-- [x] Do messages arrive on the MQTT topic `/open/<acct>/<SN>/quota`? → **No**,
-  subscription is granted, connection stays up, nothing is published (short observation,
-  September 2026)
-- [x] Does the documented request path via `.../get` help? → **No**, the publish is
-  rejected with PUBACK 0x87 "Not authorized", the subscription to `.../get_reply` with
-  SUBACK 0x80. This fully measures out the **Open API** MQTT channel. The
-  app channel is a different one, and it delivers – see the next points and section 3.
-- [x] Does `/iot-auth/app/certification` answer with the consumer token, and does the
-  broker allow the client ID form `ANDROID_<hex>_<userId>`? → **Yes, both** (22 Sep 2026);
-  frames arrive on `/app/device/property/<SN>`
-- [x] Does `.../thing/property/get_reply` deliver JSON on the DC Fit? → **Nothing came at
-  all**; the push runs anyway. The values are exclusively in the protobuf frames
-- [x] Does `measured` in the REST endpoint become fresh again while `live` is running? →
-  **No.** Unchanged over two and a half minutes, while the frames were an hour further on.
-  The REST path is thus done with as a live source
-- [x] Does a more frequent wake-up call change the reporting rate? → **No.** With
-  `ECOFLOW_LIVE_INTERVAL=5` the energy stream still came exactly every minute. The rate
-  belongs to the device, not to the one asking
-- [x] Is the wake-up call needed at all, or is the subscription alone enough? → **The
-  subscription is enough.** 23 minutes without a single publish, minute values throughout.
-  See section 3
-- [x] What does the command for the fast rate really look like? → **Captured** on the
-  `set` topic while the app was running (22 Sep 2026). Bytes and field assignment see above;
-  implemented as the command `fast`
-- [x] Does the fast rate hold up? → **Yes, with a 3 s repeat**; at 10 s the
-  device falls back to the minute rate
-- [x] How long does the switch keep working afterwards? → **About 25 seconds**, cleanly
-  measured: on 22 Sep 2026 the last switch ended at 14:25:57Z, after that came exactly six
-  more `96/33` at a **4-second rate** (14:26:01 to 14:26:21Z), then nothing more over five
-  further minutes of listening. The rate is remarkable: while the switch is running, the
-  reports come at 1–3-second intervals, in the run-on evenly every 4 s. **The earlier
-  figure of "about four minutes" is thus not confirmed.** One difference between the two
-  runs is known and could be the explanation: here the MQTT client was **reconnected**
-  between the two phases (the broker demands a fresh client ID anyway). Whether the end of
-  the stream depended on time or on the disconnect, this measurement does **not** separate
-  – for that the same connection would have to stay up and only the switching stop.
-  That part is kept as an open point of its own, next
+- [ ] The menu path to the Modbus switch in the Pro app ("Modbus control", from
+  `MaxGrmm/EF-PowerOcean-TcpModbus`) – **unconfirmed on the device**; a task in 4b
+- [ ] Does the "Modbus control" mode affect the internal scheduling? With purely reading
+  access presumably not, but that is not established
+- [ ] What does field 2 of the energy report (`dcdc`) measure? Not part of the energy
+  balance, same sign as the battery, 63–103 % of its value (26 Sep 2026); `ecoflowd` does
+  not publish it until it is clear – details in `mqtt-output.md`, §3
+- [ ] Do energy reports get through the decoders at night? The device omits fields with
+  the value 0 (`mqtt-output.md`, §3), so at PV = 0 the PV field is missing too
 - [ ] Does the fast stream end after the last switch for reasons of time, or because the
-  MQTT connection dropped? → The measurement above does not separate the two. To be
-  measured with one connection that stays up while only the switching stops
-- [x] Does the device ever switch the fast stream on by itself? → **No.** The control
-  with the app and the portal closed showed **not a single** `96/33` over 23 minutes.
-  In an earlier run it had appeared without our doing anything; the cause was
-  therefore **presumably** another client – only the negative control is established
-- [x] What does `cmd_func 254 / cmd_id 32` carry? → **The hourly history of the current day**,
-  six flows of 24 hourly values each in Wh. Broken down in section 3, fetchable with
-  `ecoflow-frames.py --hours`
-- [x] What do `96/3` and `96/137` carry? → `96/3` is a **component list** with four
-  serial numbers, `96/137` has an **empty payload** and is the acknowledgement of the
-  stream switch. The switch speeds both up about seventeenfold, but does not
-  switch them on. See section 3
-- [x] What role do the components from field 2 of the list onwards have? → Resolved via
-  *System information → Component information* in the portal: field 2 is the
-  PV Storage Converter, the `HJ3A` entries are the battery modules
-- [x] Why does the daily total of the hourly history differ from the portal's
-  `todayElectricityGeneration`? → **It does not differ. It is a question of timing.**
+  MQTT connection dropped? Measured on 22 Sep 2026: the last switch at 14:25:57Z, then
+  exactly six more `96/33` at an even **4-second rate** (14:26:01 to 14:26:21Z), then
+  nothing for five minutes – **about 25 seconds** of run-on (an earlier figure of "about
+  four minutes" was not confirmed). But the client was reconnected in between, so this
+  does not separate the two; that needs one connection that stays up while only the
+  switching stops
+- [ ] Why is the portal's daily yield off **during the day**, and too high in the morning?
+  Lag alone does not explain it (see "The hourly history"). Suspicion, not established:
+  `measured` dates the power value, not the energy counter
+- [ ] The remaining fields of `96/110` (see section 3)
 
-  After sunset on 22 Sep 2026, when the daily value was settled, three
-  independent sources agreed:
+Answered – the evidence is in the sections named:
 
-  | Source                   | Daily yield  |
-  |--------------------------|--------------|
-  | Portal `yield today`     | 17140 Wh     |
-  | Hourly history `254/32`  | 17143 Wh     |
-  | `96/1` field 23          | 17149.90 Wh  |
-
-  Spread 9.9 Wh = **0.058 %** – and the portal rounds to 0.01 kWh, i.e. to 10 Wh.
-  The spread is thus a rounding digit. The two timestamps were four seconds
-  apart (portal `20:13:05Z`, capture from `20:13:09Z`), so the portal was
-  **not** frozen. As a check, the daily balance from `96/1` closes to within
-  0.04 Wh: PV + battery out + grid import = house + battery in + feed-in.
-
-  During the day, by contrast, they diverged, and **in both directions** –
-  in the morning the portal read too high (1.74 against 1.26 kWh), in the afternoon too low
-  (14.00 against 15.96 kWh). So the portal measures the same thing, but hands it out
-  **in jumps and at its own rate**.
-
-  **What is still open about it** (kept as its own point, next): pure lag does not explain
-  the too-high reading in the morning. A suspicion, not established: the timestamp
-  `measured` belongs to the power value; when the energy counter was last updated
-  it possibly does not say at all. **In practice this means: whoever wants daily values
-  takes those from the device** (`254/32` or `96/1`), not those from the portal
-- [ ] Why is the portal's daily yield off in both directions **during the day**, and in
-  particular too high in the morning? → Not explained by lag alone; see the point above.
-  Suspicion, not established: `measured` dates the power value, not the energy counter
-- [x] What do the remaining `cmd_id` (1, 108, 109, 110, 111, 136) carry? → **Broken
-  down**, see section 3. In short: `96/1` is the system report and carries the daily
-  totals as floats (established against the hourly history to within a few Wh), `96/108`
-  the per-battery-module report, `96/111` one module in detail including serial number and
-  16 cell voltages, `96/136` a constant, `96/109` the PV string report (two strings,
-  voltage times current gives the PV power to within 3 %). Only `96/110` remains open
+- [x] `HC31` (DC Fit) gets error 1006 on `quota/all`, while `device/list` lists it
+  (section 1)
+- [x] The Open API's MQTT channel is silent and forbids requests (PUBACK 0x87, SUBACK
+  0x80) – fully measured out (section 1, "MQTT path of the Open API")
+- [x] The app channel works with the consumer token and client IDs of the form
+  `ANDROID_<hex>_<userId>`; `get_reply` stays empty, the values are only in the protobuf
+  frames (section 3)
+- [x] The REST `measured` stays frozen even while `live` runs (section 3, finding 2)
+- [x] The wake-up call is not needed and asking more often does not change the rate; the
+  subscription alone is enough (section 3, finding 1)
+- [x] The fast-rate command is captured, not guessed, and needs a 3 s repeat (section 3,
+  "The command for the fast rate")
+- [x] The device does not switch the fast stream on by itself: none in the 23-minute
+  control. Once it had appeared without our doing anything – **presumably** another
+  client; only the negative control is established
+- [x] A missing power field means "0" (`mqtt-output.md`, §3)
+- [x] `254/32`, `96/3`, `96/137`, `96/1`, `96/108`, `96/109`, `96/111`, `96/136` are decoded,
+  including the component roles and the daily yield against the portal (section 3)
 
 ## Sources
 

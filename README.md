@@ -834,7 +834,7 @@ it works is shown only by whether fast reports arrive.
   still unclear are, among others, 2, 3, 5, 18, 19, 24, 28, 32 and 48. `cmd_id` 1, 108,
   109, 111 and 136 are decoded
 - Whether energy reports **arrive at all at night** on the DC Fit. The device leaves out
-  fields with the value 0 (see "Why `grid` is 0" above); with PV = 0 the PV field was then
+  fields with the value 0 (see "`grid` is 0, not missing" above); with PV = 0 the PV field was then
   missing too, and both decoders discard a frame without PV
   (`internal/frames/energy.go`, `scripts/ecoflow-frames.py`). The captures in the repo are
   daytime recordings only (PV ≥ 948 W) and do not settle it. To be checked with a
