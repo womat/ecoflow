@@ -496,14 +496,19 @@ Zugangsdaten kommen ausschließlich aus der Umgebung — `ECOFLOW_EMAIL`, `ECOFL
 wahlweise `ECOFLOW_HOST` und `MQTT_PASSWORD`. Nie aus Flags: Was in der Kommandozeile
 steht, kann jeder auf dem Rechner in der Prozessliste lesen.
 
-Vier Exit-Codes, und einer davon ist für den Dauerbetrieb entscheidend:
+Drei Exit-Codes, und einer davon ist für den Dauerbetrieb entscheidend:
 
 | Code | Bedeutung |
 |---|---|
 | `0` | auf ein Signal hin beendet |
 | `1` | Bedienungs- oder Konfigurationsfehler |
-| `2` | nach einem wiederholten Fehlschlag aufgegeben |
 | `78` | **die Zugangsdaten wurden abgelehnt** — Warten hilft hier nie |
+
+Einen Code für „nach wiederholtem Fehlschlag aufgegeben" gibt es nicht: Der Dienst gibt bei
+Netz- und Brokerfehlern nie auf, sondern versucht es mit wachsender Pause weiter (siehe
+[So kommt ecoflowd an die Daten](#so-kommt-ecoflowd-an-die-daten)). Die Konstante
+`exitRuntime = 2` in `cmd/ecoflowd/main.go` ist reserviert, wird aber derzeit nirgends
+zurückgegeben.
 
 Die systemd-Unit führt die `78` in `RestartPreventExitStatus`, damit ein Tippfehler in der
 Zugangsdatei nicht endlos Anmeldeversuche gegen einen inoffiziellen Endpunkt fährt.
@@ -528,6 +533,60 @@ connected to mqtt-e.ecoflow.com:8883, subscribed to 3 topics
 das Gerät braucht: Das Abo allein hält es am Reden, gemessen über 23 Minuten ohne eine
 einzige an die Cloud gesendete Nachricht. An deinen lokalen Broker gehen die Messwerte
 trotzdem — nur im Minutentakt statt alle zwei bis drei Sekunden.
+
+### So kommt ecoflowd an die Daten
+
+Nicht über die Developer-API — die lehnt den PowerOcean mit Fehler 1006 ab, siehe
+[`api-status.md`](api-status.md) —, sondern auf dem Weg, den die App nimmt: zwei REST-Aufrufe,
+um hineinzukommen, dann ein MQTT-Abo, über das das Gerät von selbst liefert.
+
+```mermaid
+sequenceDiagram
+    participant D as ecoflowd
+    participant P as EcoFlow-Portal (REST)
+    participant B as EcoFlow-MQTT-Broker
+    participant G as PowerOcean
+    participant L as lokaler Broker
+
+    D->>P: POST /auth/login (E-Mail, Passwort base64)
+    P-->>D: Token, userId
+    D->>P: GET /iot-auth/app/certification?userId=…
+    P-->>D: Host, Port, MQTT-Account, MQTT-Passwort
+    D->>B: TLS-Connect, Client-ID ANDROID_{hex}_{userId}
+    D->>B: Subscribe /app/device/property/{SN}, …/get_reply, /app/device/status/{SN}
+    loop ohne Anfrage, solange das Abo steht
+        G->>B: Protobuf-Frame
+        B->>D: Protobuf-Frame
+        Note over D: XOR mit Low-Byte der Seq,<br/>dann cmd_func/cmd_id:<br/>96/34 minütlich, 254/32 Stundenhistorie
+        D->>L: {topic}/state bzw. {topic}/energy
+    end
+    opt nur mit --fast
+        loop alle 3 s (--switch-every)
+            D->>B: Stream-Schalter auf …/set
+            B->>G: Stream-Schalter
+        end
+        G->>B: 96/33 alle 2–3 s
+        B->>D: 96/33
+    end
+```
+
+Wenn etwas schiefgeht, unterscheidet der Dienst drei Fälle — danach, ob Warten hilft:
+
+- **Verbindung weg** (Netz, Broker, Timeout): Er wartet und beginnt neu bei der
+  Certification. Die Wartezeit startet bei 5 s und verdoppelt sich bis höchstens 15 min;
+  hat die Verbindung zwischendurch gestanden, fängt sie wieder bei 5 s an. Das Token bleibt,
+  es gibt also keinen neuen Login. Die Client-ID ist bei jedem Versuch neu, weil der Broker
+  eine schon gesehene ablehnt — deshalb verbindet sich paho auch nicht selbst neu.
+- **Token abgelehnt** (`401`/`403` oder ein `code` ungleich `0` bei der Certification): Das
+  Token wird verworfen, der nächste Versuch beginnt mit einem Login.
+- **Zugangsdaten abgelehnt**: Exit `78`, siehe oben — kein Neustart durch systemd.
+
+Dazu bei `--fast`: Nimmt der Broker den Schalter an, ohne dass schnelle Berichte kommen, meldet
+der Dienst das nach etwa 60 s ein einziges Mal und läuft im Minutentakt weiter.
+
+Im Code: der Ablauf in [`cmd/ecoflowd/serve.go`](cmd/ecoflowd/serve.go), Login, Certification
+und Topics in [`internal/ecoflow/`](internal/ecoflow/), das Auspacken der Frames in
+[`internal/frames/frame.go`](internal/frames/frame.go).
 
 ### Auf dem Raspberry Pi
 
