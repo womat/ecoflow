@@ -454,8 +454,9 @@ Three findings from the same measurement:
 
 **1. The wake-up call is not answered – and it is superfluous.** In two and a half minutes
 not a single message arrived on `.../thing/property/get_reply`; the push ran anyway.
-Re-measured on 22 September 2026 with `ECOFLOW_LIVE_INTERVAL=0`, that is **without a
-single publish**, with the app and the portal closed:
+Re-measured later the same day in a **separate, longer measurement** with
+`ECOFLOW_LIVE_INTERVAL=0`, that is **without a single publish**, with the app and the
+portal closed:
 
 | | |
 |---|---|
@@ -470,7 +471,8 @@ wake-up call, no stream switch, no publish at all – a purely reading client
 is enough. The loop that `live` brings along was thus taken over from third-party projects and
 has no effect for this model; `ECOFLOW_LIVE_INTERVAL=0` switches it off.
 
-**2. The REST endpoint does not get fresh from this.** Throughout the whole time `status`
+**2. The REST endpoint does not get fresh from this.** Throughout the same two-and-a-half-minute
+measurement (not the 23-minute one above) `status`
 returned an unchanged `measured : 2026-09-22T07:13:28Z`, while the MQTT frames already
 carried `08:19Z` – over an hour's difference. **The detour through `provider-service` is
 therefore not a live source, not even with a listener running.** Whoever wants current
