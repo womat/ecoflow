@@ -1,208 +1,209 @@
-# EcoFlow PowerOcean DC Fit – API & Modbus Notizen
+# EcoFlow PowerOcean DC Fit – API & Modbus notes
 
-Persönliche Recherche-Notizen zu Integrationsmöglichkeiten (REST-API, lokales
-Modbus TCP) für den EcoFlow PowerOcean DC Fit.
+Personal research notes on ways to integrate the EcoFlow PowerOcean DC Fit (REST API,
+local Modbus TCP), and the tools that came out of them.
 
-> **Disclaimer:** Diese Doku basiert größtenteils auf Community-Reverse-Engineering,
-> nicht auf offizieller EcoFlow-Dokumentation. EcoFlow unterstützt oder bestätigt
-> die hier beschriebenen Modbus-Register nicht offiziell. Nutzung auf eigenes
-> Risiko, insbesondere bei Schreibzugriffen auf Register.
+> **Disclaimer:** These notes are mostly based on community reverse engineering, not on
+> official EcoFlow documentation. EcoFlow does not officially support or confirm the
+> Modbus registers described here. Use at your own risk, especially when writing to
+> registers.
 
-## Inhalt
+This README and all tools (output, `--help`, code comments) are in English. The three
+research notes it links to are written in **German**.
 
-| Datei                                                | Beschreibung                                                                                          |
-|------------------------------------------------------|-------------------------------------------------------------------------------------------------------|
-| [`api-status.md`](./api-status.md)                   | Überblick: Cloud-REST-API vs. lokales Modbus TCP, bekannte Probleme (z.B. Fehler 1006), Freischaltung |
-| [`modbus-registers.md`](./modbus-registers.md)       | Register-Map (SOC, Batterie, PV, Netz, Energiezähler, Steuerregister) inkl. Decoding-Beispielen       |
-| [`mqtt-ausgabe.md`](./mqtt-ausgabe.md)               | Das Ausgabeformat von `ecoflowd` am lokalen Broker – warum zwei JSON-Telegramme und wie sie aussehen  |
-| [`cmd/modbusread`](./cmd/modbusread)                 | Kleines Go-CLI zum Nachmessen der Register am Gerät (s.u.)                                            |
-| [`scripts/ecoflow-api.sh`](./scripts/ecoflow-api.sh) | Shell-Skript für alle vier Cloud-Wege: Developer-API, Portal, App-MQTT, Stream-Schalter (s.u.)        |
-| [`scripts/ecoflow-frames.py`](./scripts/ecoflow-frames.py) | Packt die Live-Frames aus `ecoflow-api.sh live` aus – aktuelle Messwerte und Stundenbilanz (s.u.) |
-| [`cmd/ecoflowd`](./cmd/ecoflowd)                     | Go-Dienst, der denselben Kanal dauerhaft liest und auf einen MQTT-Broker publiziert (s.u.)             |
+## Contents
+
+| File                                                 | Description                                                                                            |
+|------------------------------------------------------|--------------------------------------------------------------------------------------------------------|
+| [`api-status.md`](./api-status.md)                   | Overview: cloud REST API vs. local Modbus TCP, known problems (e.g. error 1006), unlocking (German)     |
+| [`modbus-registers.md`](./modbus-registers.md)       | Register map (SOC, battery, PV, grid, energy counters, control registers) with decoding examples (German) |
+| [`mqtt-ausgabe.md`](./mqtt-ausgabe.md)               | The output format of `ecoflowd` on the local broker – why two JSON telegrams and what they look like (German) |
+| [`cmd/modbusread`](./cmd/modbusread)                 | Small Go CLI for checking the registers on the device (see below)                                      |
+| [`scripts/ecoflow-api.sh`](./scripts/ecoflow-api.sh) | Shell script for all four cloud paths: Developer API, portal, app MQTT, stream switch (see below)       |
+| [`scripts/ecoflow-frames.py`](./scripts/ecoflow-frames.py) | Unpacks the live frames from `ecoflow-api.sh live` – current readings and hourly balance (see below) |
+| [`cmd/ecoflowd`](./cmd/ecoflowd)                     | Go service that reads the same channel continuously and publishes to an MQTT broker (see below)         |
 
 ## `modbusread`
 
-Ein universeller, **rein lesender** Modbus-Reader – Adresse, Register und Typ rein,
-Wert raus. Kein EcoFlow-Wissen im Tool, keine eingebaute Register-Map; damit auch für
-beliebige andere Modbus-Geräte brauchbar. Gedacht, um die community-ermittelten Register
-aus `modbus-registers.md` am eigenen Gerät zu überprüfen.
+A universal, **read-only** Modbus reader – address, register and type in, value out. No
+EcoFlow knowledge in the tool, no built-in register map; so it is just as useful for any
+other Modbus device. Meant for checking the community-derived registers from
+`modbus-registers.md` against your own device.
 
 ```
 go build ./cmd/modbusread
 
-modbusread <ziel> <address> <type> [flags]
+modbusread <target> <address> <type> [flags]
 ```
 
-Adresse dezimal (`42082`) oder hex (`0xA462`), Typ `raw`, `uint16`, `int16`, `uint32`,
-`int32`, `float32`, `float64` oder `string`.
+Address in decimal (`42082`) or hex (`0xA462`), type `raw`, `uint16`, `int16`, `uint32`,
+`int32`, `float32`, `float64` or `string`.
 
-Das **Ziel** entscheidet über den Transport, ohne zusätzliches Flag:
+The **target** decides the transport, without an extra flag:
 
-| Eingabe                                           | Transport                            |
+| Input                                             | Transport                            |
 |---------------------------------------------------|--------------------------------------|
-| `192.168.1.50`, `plc.local:1502`                  | Modbus TCP (Port-Default 502)        |
-| `/dev/ttyUSB0`, `/dev/tty.usbserial-…`, `COM3`    | Modbus RTU über die serielle Leitung |
-| `rtu://…`, `tcp://…`, `udp://…`, `rtuovertcp://…`, `rtuoverudp://…` | explizit, schlägt die Erkennung |
+| `192.168.1.50`, `plc.local:1502`                  | Modbus TCP (port defaults to 502)    |
+| `/dev/ttyUSB0`, `/dev/tty.usbserial-…`, `COM3`    | Modbus RTU over the serial line      |
+| `rtu://…`, `tcp://…`, `udp://…`, `rtuovertcp://…`, `rtuoverudp://…` | explicit, overrides the detection |
 
-`tcp+tls://` wird ausdrücklich abgelehnt statt stillschweigend ignoriert – die Bibliothek
-könnte es, aber ungeprüft anzubieten wäre eine Zusage ohne Deckung.
+`tcp+tls://` is rejected outright rather than silently ignored – the library could do
+it, but offering it untested would be a promise with nothing behind it.
 
 ```console
 $ modbusread 192.168.1.50 42082 uint16
 addr     raw                  value
 42082    0x0064               100
 
-# PV-Gesamtleistung: Float mit vertauschten Words (EcoFlow-Konvention)
+# Total PV power: float with swapped words (EcoFlow convention)
 $ modbusread 192.168.1.50 40574 float32 --word-order low
 
-# Bereich dumpen, um unbekannte Register zu finden
+# Dump a range to find unknown registers
 $ modbusread 192.168.1.50 40520 raw --count 120 --out hex
 
-# Herausfinden, welches Register auf eine Änderung in der App reagiert
+# Find out which register reacts to a change in the app
 $ modbusread 192.168.1.50 40520 raw --count 120 --interval 1s --on-change
 ```
 
-Wichtig: **Adressen werden nicht umgerechnet** – sie gehen so auf den Draht, wie sie
-getippt werden (0-based). Ob die Tabellen in `modbus-registers.md` 1-based oder 0-based
-gemeint sind, ist ungeklärt; die Datei selbst zweifelt ihre frühere 1-based-Angabe
-inzwischen an. Das Umrechnen bleibt deshalb beim Menschen, damit das Werkzeug keine
-Annahme versteckt.
+Important: **addresses are never converted** – they go on the wire exactly as typed
+(0-based). Whether the tables in `modbus-registers.md` are meant 1-based or 0-based is
+unresolved; the file itself now doubts its earlier 1-based claim. Converting is
+therefore left to the human, so the tool does not hide an assumption.
 
-Bei einem seriellen Ziel kommen die Leitungsparameter dazu – `--baud` (19200),
-`--databits` (8), `--parity` (none) und `--stopbits`. Letzteres folgt bei `0` der
-Modbus-Regel: zwei Stoppbits ohne Parität, eines mit. Sie müssen exakt zum Gerät passen,
-sonst kommt Datenmüll oder gar nichts. Am Bus hängen typischerweise mehrere Geräte, dort
-ist `--unit` kein Formalismus mehr:
+With a serial target the line parameters come in – `--baud` (19200), `--databits` (8),
+`--parity` (none) and `--stopbits`. For the latter, `0` follows the Modbus rule: two stop
+bits without parity, one with. They have to match the device exactly, otherwise you get
+garbage or nothing at all. A bus typically has several devices on it, so `--unit` is no
+longer a formality there:
 
 ```console
 $ modbusread /dev/ttyUSB0 40069 uint16 --baud 9600 --parity even --unit 3
 ```
 
-An einem TCP-Ziel werden diese Flags **abgelehnt** statt ignoriert – eine Baudrate, die
-stillschweigend wirkungslos bleibt, schickt einen sonst auf Fehlersuche an der Verkabelung.
+On a TCP target these flags are **rejected** rather than ignored – a baud rate that
+silently has no effect sends you off debugging the wiring.
 
-Weitere Flags: `--unit`, `--fc holding|input`, `--byte-order`, `--timeout`, `--json`,
-`--samples`. `modbusread --help` zeigt alles.
+More flags: `--unit`, `--fc holding|input`, `--byte-order`, `--timeout`, `--json`,
+`--samples`. `modbusread --help` shows everything.
 
 ### Installation
 
-Mit vorhandener Go-Toolchain direkt aus dem Repo:
+With a Go toolchain, straight from the repo:
 
 ```
 go install github.com/womat/ecoflow/cmd/modbusread@latest
 ```
 
-Für Maschinen **ohne Go** – etwa den Raspberry Pi neben der Anlage – liegen fertige
-Binaries unter [Releases](https://github.com/womat/ecoflow/releases). Sie sind statisch
-gelinkt (`CGO_ENABLED=0`), es ist also nichts zu installieren: entpacken und ausführen.
+For machines **without Go** – such as the Raspberry Pi next to the system – ready-made
+binaries are under [Releases](https://github.com/womat/ecoflow/releases). They are
+statically linked (`CGO_ENABLED=0`), so there is nothing to install: unpack and run.
 
 ```bash
-VERSION=v0.5.0   # oder die neueste, siehe Releases-Seite
-ARCH=linux-arm64 # siehe Tabelle unten
+VERSION=v0.5.0   # or the latest, see the releases page
+ARCH=linux-arm64 # see the table below
 
 curl -LO "https://github.com/womat/ecoflow/releases/download/$VERSION/modbusread-$VERSION-$ARCH.tar.gz"
 tar -xzf "modbusread-$VERSION-$ARCH.tar.gz"
 ./modbusread --version
 ```
 
-| Maschine                                        | `ARCH`          |
+| Machine                                         | `ARCH`          |
 |-------------------------------------------------|-----------------|
-| Raspberry Pi 3/4/5 mit 64-bit Raspberry Pi OS   | `linux-arm64`   |
-| Raspberry Pi mit 32-bit OS, inkl. Zero und Pi 1 | `linux-arm`     |
-| gewöhnlicher Linux-PC/Server, NAS               | `linux-amd64`   |
-| Mac mit Apple Silicon                           | `darwin-arm64`  |
-| Mac mit Intel                                   | `darwin-amd64`  |
+| Raspberry Pi 3/4/5 with 64-bit Raspberry Pi OS  | `linux-arm64`   |
+| Raspberry Pi with a 32-bit OS, incl. Zero and Pi 1 | `linux-arm`  |
+| ordinary Linux PC/server, NAS                   | `linux-amd64`   |
+| Mac with Apple Silicon                          | `darwin-arm64`  |
+| Mac with Intel                                  | `darwin-amd64`  |
 | Windows                                         | `windows-amd64` |
 
-Das 32-bit-Archiv ist mit `GOARM=6` gebaut und läuft deshalb auch auf den älteren
-ARMv6-Modellen. Prüfen lässt sich der Download gegen die `checksums.txt` desselben
-Release:
+The 32-bit archive is built with `GOARM=6` and therefore also runs on the older ARMv6
+models. The download can be checked against the `checksums.txt` of the same release:
 
 ```bash
 curl -LO "https://github.com/womat/ecoflow/releases/download/$VERSION/checksums.txt"
 sha256sum -c checksums.txt --ignore-missing
 ```
 
-`modbusread --version` meldet Commit und Go-Version aus den Build-Infos, die Go beim
-`go build` selbst einstempelt; Release-Binaries tragen die Tag-Nummer.
+`modbusread --version` reports the commit and Go version from the build info that Go
+stamps in by itself during `go build`; release binaries carry the tag number.
 
-Ein Release entsteht aus einem Tag `vX.Y.Z` auf `main`; der Workflow baut alle Ziele und
-hängt sie samt Checksummen an das GitHub-Release.
+A release is made from a tag `vX.Y.Z` on `main`; the workflow builds all targets and
+attaches them, with checksums, to the GitHub release.
 
 ## `scripts/ecoflow-api.sh`
 
-Gegenstück zu `modbusread` für den Cloud-Weg: ein kleines Shell-Skript, das die
-HMAC-Signatur der EcoFlow Developer/Open API baut und die Antwort roh ausgibt.
+The counterpart to `modbusread` for the cloud path: a small shell script that builds the
+HMAC signature of the EcoFlow Developer/Open API and prints the answer raw.
 
-**Bis auf eine Ausnahme liest es nur.** Die Ausnahme gehört benannt statt verschwiegen:
-`fast` publiziert auf ein `.../set`-Topic und kann damit als einziges Kommando das Gerät
-umstellen (s.u.). `values` und `login` benutzen POST — das sind trotzdem Lesezugriffe, die
-Endpunkte wollen es nur so; das schreibende PUT-Gegenstück kennt das Skript nicht.
+**With one exception it only reads.** The exception deserves naming rather than hiding:
+`fast` publishes to a `.../set` topic and is thus the only command that can change the
+device (see below). `values` and `login` use POST — they are still reads, the endpoints
+just want it that way; the script does not know the writing PUT counterpart.
 
-Braucht `bash`, `curl` und `openssl`. **`jq` ist für die meisten Kommandos Pflicht** — ohne
-es kommen nur `devices`, `quota`, `get`, `cert`, `portal`, `portal-get` und `selftest` aus,
-dort verschönert es die Ausgabe. Die übrigen neun brechen ohne `jq` ab.
+Needs `bash`, `curl` and `openssl`. **`jq` is required for most commands** — only
+`devices`, `quota`, `get`, `cert`, `portal`, `portal-get` and `selftest` get by without
+it, and there it just prettifies the output. The other nine abort without `jq`.
 
-Zugangsdaten kommen aus der Umgebung, nie aus dem Repo. **Es gibt zwei Sorten, und die
-meisten Kommandos brauchen die zweite:** Das API-Schlüsselpaar gilt nur für die
-Developer-API (`devices`, `quota`, `get`, `values`, `cert`, `mqtt`, `request`) — und genau
-die verweigert dem DC Fit die Messwerte. Alles, was tatsächlich Daten liefert, läuft über
-den Portal-Token (`login`, `portal`, `status`, `portal-get`, `app-cert`, `app-mqtt`,
-`live`, `fast`); dafür braucht es **kein** Schlüsselpaar.
+Credentials come from the environment, never from the repo. **There are two kinds, and
+most commands need the second:** the API key pair only works for the Developer API
+(`devices`, `quota`, `get`, `values`, `cert`, `mqtt`, `request`) — and that is exactly
+the one that refuses the DC Fit its readings. Everything that actually delivers data goes
+through the portal token (`login`, `portal`, `status`, `portal-get`, `app-cert`,
+`app-mqtt`, `live`, `fast`); that needs **no** key pair.
 
 ```bash
 export ECOFLOW_ACCESS_KEY='…'   # developer-eu.ecoflow.com → Security
 export ECOFLOW_SECRET_KEY='…'
-# ECOFLOW_HOST setzt den Host, Default https://api-e.ecoflow.com (EU)
+# ECOFLOW_HOST sets the host, default https://api-e.ecoflow.com (EU)
 
-scripts/ecoflow-api.sh devices                    # Geräte des Kontos
-scripts/ecoflow-api.sh quota <SN>                  # alle Werte eines Geräts
-scripts/ecoflow-api.sh -v get /iot-open/sign/device/list   # beliebiger GET, mit Debug
-scripts/ecoflow-api.sh values <SN> bpSoc bpPwr     # gezielte Werte (POST-Endpunkt)
-scripts/ecoflow-api.sh cert                       # MQTT-Zugangsdaten des Kontos
-scripts/ecoflow-api.sh mqtt <SN>                  # Topic abonnieren (Ctrl-C beendet)
-scripts/ecoflow-api.sh request <SN> bpSoc         # Werte per MQTT anfordern
-export ECOFLOW_PORTAL_TOKEN="$(scripts/ecoflow-api.sh login)"   # Token per Login holen
-scripts/ecoflow-api.sh portal <SN>                # Endkunden-Portal statt Developer-API
-scripts/ecoflow-api.sh status <SN>                # dieselben Daten als Kurzübersicht
-scripts/ecoflow-api.sh portal-get <pfad>          # beliebiger GET gegen die Portal-API
-scripts/ecoflow-api.sh app-cert                   # MQTT-Zugangsdaten des App-Kanals
-scripts/ecoflow-api.sh live <SN>                  # App-Kanal abonnieren und wachhalten
-scripts/ecoflow-api.sh fast <SN>                  # dasselbe mit schnellem Takt (schreibt!)
-scripts/ecoflow-api.sh app-mqtt <SN>              # mitlesen, was die App ans Geraet sendet
-scripts/ecoflow-api.sh selftest                   # Signatur und Stream-Schalter-Frame
+scripts/ecoflow-api.sh devices                    # devices on the account
+scripts/ecoflow-api.sh quota <SN>                  # all values of a device
+scripts/ecoflow-api.sh -v get /iot-open/sign/device/list   # any GET, with debug output
+scripts/ecoflow-api.sh values <SN> bpSoc bpPwr     # selected values (POST endpoint)
+scripts/ecoflow-api.sh cert                       # MQTT credentials of the account
+scripts/ecoflow-api.sh mqtt <SN>                  # subscribe to a topic (Ctrl-C ends)
+scripts/ecoflow-api.sh request <SN> bpSoc         # request values over MQTT
+export ECOFLOW_PORTAL_TOKEN="$(scripts/ecoflow-api.sh login)"   # get a token by logging in
+scripts/ecoflow-api.sh portal <SN>                # consumer portal instead of Developer API
+scripts/ecoflow-api.sh status <SN>                # the same data as a short overview
+scripts/ecoflow-api.sh portal-get <path>          # any GET against the portal API
+scripts/ecoflow-api.sh app-cert                   # MQTT credentials of the app channel
+scripts/ecoflow-api.sh live <SN>                  # subscribe to the app channel, keep it alive
+scripts/ecoflow-api.sh fast <SN>                  # the same at the fast rate (writes!)
+scripts/ecoflow-api.sh app-mqtt <SN>              # listen to what the app sends the device
+scripts/ecoflow-api.sh selftest                   # signature and stream switch frame
 ```
 
-`values` nutzt `POST /iot-open/sign/device/quota`, den in EcoFlows PowerOcean-Doku
-beschriebenen Weg für gezielte Größen (`bpSoc`, `bpPwr`, `mpptPwr`, `sysLoadPwr`,
-`sysGridPwr`, `pcsAPhase` …). POST ist hier der *Lese*-Endpunkt; das PUT-Gegenstück, das
-Werte setzt, kennt das Skript bewusst nicht.
+`values` uses `POST /iot-open/sign/device/quota`, the way EcoFlow's PowerOcean docs
+describe for selected quantities (`bpSoc`, `bpPwr`, `mpptPwr`, `sysLoadPwr`,
+`sysGridPwr`, `pcsAPhase` …). POST is the *read* endpoint here; the script deliberately
+does not know the PUT counterpart that sets values.
 
-`mqtt` holt sich die Zugangsdaten über `/iot-open/sign/certification` und abonniert
-`/open/<certificateAccount>/<SN>/quota` (zweites Argument wechselt das Suffix, z.B.
-`status`, `get_reply` oder `#`). Jede Nachricht bekommt einen Zeitstempel – eine stille
-Aufzeichnung ist nur dann ein Beleg, wenn man weiß, wann sie still war. Braucht
-zusätzlich `jq` und `mosquitto_sub` (`brew install mosquitto` bzw.
-`apt install mosquitto-clients`).
+`mqtt` fetches the credentials via `/iot-open/sign/certification` and subscribes to
+`/open/<certificateAccount>/<SN>/quota` (a second argument changes the suffix, e.g.
+`status`, `get_reply` or `#`). Every message gets a timestamp – a silent recording is only
+evidence if you know when it was silent. Additionally needs `jq` and `mosquitto_sub`
+(`brew install mosquitto` or `apt install mosquitto-clients`).
 
-`portal` geht einen anderen Weg: Es fragt `provider-service/user/device/detail` ab – den
-Endpunkt, den das Endkunden-Portal selbst benutzt. Der antwortet auch für Geräte, die die
-Developer-API mit 1006 sperrt, und liefert SOC, Live-Leistungen, Energiezähler sowie die
-Rohblöcke der Firmware (69 EMS-Felder, DCDC-Status, Energy-Stream). Authentifiziert wird nicht mit den API-Keys, sondern
-mit dem **Session-Token des Portals** in `ECOFLOW_PORTAL_TOKEN`. Der Token läuft ab; bei HTTP 401
-neu holen. Nicht ins Repo und möglichst nicht in die Shell-History.
+`portal` takes a different path: it queries `provider-service/user/device/detail` – the
+endpoint the consumer portal itself uses. It answers even for devices the Developer API
+blocks with 1006, and returns SOC, live power, energy counters and the firmware's raw
+blocks (69 EMS fields, DCDC status, energy stream). Authentication is not with the API
+keys but with the **portal's session token** in `ECOFLOW_PORTAL_TOKEN`. The token
+expires; fetch a new one on HTTP 401. Keep it out of the repo and, where possible, out of
+the shell history.
 
-### Live-Werte abrufen
+### Fetching live values
 
-Für `status` und `portal` braucht es **kein** API-Schlüsselpaar – nur den Portal-Token.
-Einmalabruf aus einer frischen Shell, Login und Abfrage in einem Kommando:
+`status` and `portal` need **no** API key pair – only the portal token. A one-off query
+from a fresh shell, login and query in one command:
 
 ```console
-$ ECOFLOW_PORTAL_TOKEN="$(scripts/ecoflow-api.sh login vorname.nachname@example.com)" \
+$ ECOFLOW_PORTAL_TOKEN="$(scripts/ecoflow-api.sh login first.last@example.com)" \
     scripts/ecoflow-api.sh status HC31XXXXXXXXXXXX
 Password (not echoed):
 logged in as user 1000000000000…
-device   : Mathe (online)
+device   : Home (online)
 SoC      : 18 %
 PV       : 1045 W
 grid     : 0 W (idle)
@@ -213,23 +214,23 @@ yield    : today 1.90 | month 282.67 | year 4548.79 | total 5236.71 kWh
 measured : 2026-09-17T08:39:26Z
 ```
 
-`measured` ist der Zeitstempel aus dem Energy-Stream-Block der Firmware – der
-**Messzeitpunkt, nicht der Abrufzeitpunkt**. Steht er bei mehreren Aufrufen still, ist die
-Anzeige ein Standbild: Der Endpunkt gibt heraus, was zuletzt in die Cloud gepusht wurde,
-und gepusht wird nur, solange ein Client nachfragt. Genau dafür gibt es `live`.
+`measured` is the timestamp from the firmware's energy stream block – the **time of
+measurement, not the time of the query**. If it stands still across several calls, the
+display is a still image: the endpoint hands out whatever was last pushed to the cloud,
+and pushing only happens while a client is asking. That is exactly what `live` is for.
 
-Die vorangestellte Zuweisung **ohne `export`** gilt nur für dieses eine Kommando: Danach
-kennt die Shell die Variable nicht, der Token steht in keiner weiteren Prozessumgebung, und
-es gibt nichts aufzuräumen – auch nicht nach einem Fehler oder Ctrl-C. Die Passwortabfrage
-kommt aus dem Terminal (`/dev/tty`) und funktioniert deshalb auch in der
-Kommandosubstitution: `login` schreibt **nur** den Token nach stdout, alles andere nach
-stderr. Die E-Mail darf fehlen, dann wird sie gefragt oder aus `ECOFLOW_EMAIL` genommen.
-Braucht `jq` (`brew install jq`).
+The assignment in front **without `export`** only applies to this one command: afterwards
+the shell does not know the variable, the token is in no other process environment, and
+there is nothing to clean up – not even after an error or Ctrl-C. The password prompt
+comes from the terminal (`/dev/tty`) and therefore also works inside the command
+substitution: `login` writes **only** the token to stdout, everything else to stderr.
+The e-mail may be left out; it is then asked for or taken from `ECOFLOW_EMAIL`. Needs
+`jq` (`brew install jq`).
 
-Für mehrere Abfragen, ohne jedes Mal das Passwort zu tippen, den Token einmal exportieren –
-dann aber am Ende **`unset`**, und mit `;` statt `&&`, sonst bleibt er gerade im Fehlerfall
-stehen. `export ECOFLOW_PORTAL_TOKEN=` löscht ihn nicht, es setzt ihn leer und lässt ihn
-exportiert:
+For several queries without typing the password each time, export the token once – but
+**`unset`** it at the end, and with `;` rather than `&&`, otherwise it stays around
+precisely when something fails. `export ECOFLOW_PORTAL_TOKEN=` does not delete it; it
+sets it empty and leaves it exported:
 
 ```bash
 export ECOFLOW_PORTAL_TOKEN="$(scripts/ecoflow-api.sh login)"
@@ -238,70 +239,70 @@ scripts/ecoflow-api.sh portal HC31XXXXXXXXXXXX
 unset ECOFLOW_PORTAL_TOKEN
 ```
 
-Eine Subshell nimmt den Token beim Verlassen von selbst mit, das erspart das Aufräumen:
+A subshell takes the token with it when it exits, which saves the cleanup:
 
 ```bash
 ( export ECOFLOW_PORTAL_TOKEN="$(scripts/ecoflow-api.sh login)"
   scripts/ecoflow-api.sh status HC31XXXXXXXXXXXX )
 ```
 
-Der Token gilt, bis er abläuft; bei HTTP 401 neu einloggen.
+The token is valid until it expires; on HTTP 401, log in again.
 
-`status` rendert die Antwort von `portal` als Übersicht. Das Portal meldet Haus- und
-Batterieleistung **negativ**, während seine eigene Oberfläche sie positiv anzeigt. `status`
-gibt deshalb den Betrag aus und schreibt die Richtung dazu, statt ein Vorzeichen
-durchzureichen, das man erst deuten muss. Kommt statt der Übersicht *„the response carried
-no data"*, passt `ECOFLOW_PRODUCT_TYPE` nicht zum Gerät (Default `85` = PowerOcean).
+`status` renders the answer of `portal` as an overview. The portal reports house and
+battery power as **negative**, while its own UI shows them as positive. `status` therefore
+prints the magnitude and writes the direction next to it, instead of passing on a sign you
+would first have to interpret. If you get *"the response carried no data"* instead of the
+overview, `ECOFLOW_PRODUCT_TYPE` does not match the device (default `85` = PowerOcean).
 
-Zwei Wege zum Token:
+Two ways to the token:
 
-- **Aus dem Browser:** im eingeloggten Portal unter *Local Storage → `S1_JWT`*.
-- **Per `login`:** fragt E-Mail und Passwort ab (Passwort ohne Echo, wahlweise aus
-  `ECOFLOW_PASSWORD` – besser nicht, eine exportierte Variable überlebt die Shell, die sie
-  gesetzt hat, und landet in Prozessumgebungen).
+- **From the browser:** in the logged-in portal under *Local Storage → `S1_JWT`*.
+- **With `login`:** asks for e-mail and password (password without echo, optionally from
+  `ECOFLOW_PASSWORD` – better not, an exported variable outlives the shell that set it and
+  ends up in process environments).
 
-Zur Abwägung: `login` benutzt den Login-Endpunkt der Endkunden-App, der das Passwort **base64-kodiert, nicht gehasht**
-überträgt – Base64 ist Kodierung, keine Verschlüsselung,
-geschützt ist allein der TLS-Kanal. Der Browser-Token ist das kleinere Geheimnis und läuft
-von selbst ab; das Passwort ist der bequemere Weg. Beides sind inoffizielle Schnittstellen.
+To weigh it up: `login` uses the consumer app's login endpoint, which sends the password
+**base64-encoded, not hashed** – base64 is encoding, not encryption; only the TLS channel
+protects it. The browser token is the smaller secret and expires by itself; the password
+is the more convenient way. Both are unofficial interfaces.
 
-### Den Kanal wachhalten: `live`
+### Keeping the channel alive: `live`
 
-`status` liefert nur dann frische Zahlen, wenn das Gerät kurz zuvor etwas in die Cloud
-geschoben hat – und das tut es offenbar nur, solange jemand nachfragt. Ohne offene App
-bleibt `measured` stehen, teils stundenlang. `live` übernimmt die Rolle der App:
+`status` only returns fresh numbers if the device pushed something to the cloud shortly
+before – and apparently it only does that while someone is asking. Without an open app,
+`measured` stands still, sometimes for hours. `live` takes over the app's role:
 
 ```bash
 export ECOFLOW_PORTAL_TOKEN="$(scripts/ecoflow-api.sh login)"
-export ECOFLOW_USER_ID=1000000000000000000   # gibt "login" fertig zum Exportieren aus
+export ECOFLOW_USER_ID=1000000000000000000   # "login" prints this ready to export
 scripts/ecoflow-api.sh live HC31XXXXXXXXXXXX
 ```
 
-Es holt sich über `app-cert` die Zugangsdaten des App-MQTT-Kanals, abonniert die drei
-Topics des Geräts und schickt alle `ECOFLOW_LIVE_INTERVAL` Sekunden (Default 30) eine
-Anfrage hinterher. Läuft bis Ctrl-C. Braucht `jq`, `mosquitto_sub` und `mosquitto_pub`.
+It fetches the app MQTT channel's credentials via `app-cert`, subscribes to the device's
+three topics and sends a request every `ECOFLOW_LIVE_INTERVAL` seconds (default 30). Runs
+until Ctrl-C. Needs `jq`, `mosquitto_sub` and `mosquitto_pub`.
 
-**Diese Anfrage ist allerdings überflüssig** — am Gerät nachgemessen: Mit
-`ECOFLOW_LIVE_INTERVAL=0`, also ganz ohne Publish, kamen 23 Minuten lang lückenlos
-Minutenwerte. Das Abo allein hält das Gerät am Reden. Der Default 30 bleibt vorerst
-stehen, weil andere Modelle ihn womöglich brauchen; wer rein lesend arbeiten will, setzt
-`ECOFLOW_LIVE_INTERVAL=0` — dann publiziert `live` überhaupt nichts mehr:
+**That request is unnecessary, though** — measured at the device: with
+`ECOFLOW_LIVE_INTERVAL=0`, i.e. without any publish at all, minute values kept coming
+without a gap for 23 minutes. The subscription alone keeps the device talking. The
+default of 30 stays for now, because other models may need it; if you want to work
+strictly read-only, set `ECOFLOW_LIVE_INTERVAL=0` — then `live` publishes nothing at all:
 
 ```bash
 ECOFLOW_LIVE_INTERVAL=0 scripts/ecoflow-api.sh live HC31XXXXXXXXXXXX
 ```
 
-Die Ausgabe von `live` ist **roh** – Zeitstempel, Topic, Länge und Nutzlast als Hex, weil
-der Push Protobuf ist und nicht JSON:
+The output of `live` is **raw** – timestamp, topic, length and payload as hex, because the
+push is protobuf, not JSON:
 
 ```console
 2026-09-22T10:18:05+0200 /app/device/property/HC31... 74 0a480a26f6ddf1e70b98...
 ```
 
-### Aktuelle Messwerte: `ecoflow-frames.py`
+### Current readings: `ecoflow-frames.py`
 
-Zum Lesen gibt es `scripts/ecoflow-frames.py`, das die Frames auspackt. Es braucht nur
-`python3`, keine weiteren Pakete:
+For reading there is `scripts/ecoflow-frames.py`, which unpacks the frames. It only needs
+`python3`, no further packages:
 
 ```console
 $ scripts/ecoflow-api.sh live HC31XXXXXXXXXXXX | python3 scripts/ecoflow-frames.py
@@ -309,39 +310,39 @@ $ scripts/ecoflow-api.sh live HC31XXXXXXXXXXXX | python3 scripts/ecoflow-frames.
 08:19:00Z  PV     976 W | house    349 W | battery    540 W (charging) | grid     87 W (export) | SoC 61 %
 ```
 
-Das ist der Weg zu aktuellen Werten – **nicht** `status`. Am Gerät gemessen (22. September
-2026): Während `live` lief und Frames mit `08:19Z` ankamen, meldete `status` unverändert
-`measured : 07:13:28Z`. Der Cloud-Umweg wird also auch von einem laufenden Zuhörer nicht
-aufgefrischt.
+This is the way to current values – **not** `status`. Measured at the device
+(22 September 2026): while `live` was running and frames stamped `08:19Z` were arriving,
+`status` kept reporting `measured : 07:13:28Z`. So the detour through the cloud is not
+refreshed even by a running listener.
 
-Der Zeitstempel links ist der des Geräts (UTC). Das Gerät schickt manche Frames doppelt;
-identische Folgezeilen werden unterdrückt, zwei verschiedene Werte in derselben Sekunde
-dagegen nicht — die kommen vor. Wie die Frames aufgebaut sind, warum die Nutzlast
-XOR-verschleiert ist und woran die Feldzuordnung hängt, steht in `api-status.md`.
+The timestamp on the left is the device's (UTC). The device sends some frames twice;
+identical consecutive lines are suppressed, but two different values within the same
+second are not — those happen. How the frames are built, why the payload is
+XOR-obfuscated and what the field assignment rests on is in `api-status.md`.
 
-### Schneller Takt: `fast`
+### Fast rate: `fast`
 
-Statt minütlich alle paar Sekunden – dafür gibt es `fast` anstelle von `live`. Es braucht
-dieselben zwei Variablen wie `live`:
+Every few seconds instead of every minute – that is what `fast` is for, in place of
+`live`. It needs the same two variables as `live`:
 
 ```bash
 export ECOFLOW_PORTAL_TOKEN="$(scripts/ecoflow-api.sh login)"
-export ECOFLOW_USER_ID=1000000000000000000     # gibt "login" fertig zum Exportieren aus
+export ECOFLOW_USER_ID=1000000000000000000     # "login" prints this ready to export
 
 scripts/ecoflow-api.sh fast HC31XXXXXXXXXXXX | python3 scripts/ecoflow-frames.py
 ```
 
-Es tut alles, was `live` tut, und schaltet zusätzlich den schnellen Datenstrom ein.
+It does everything `live` does and additionally switches on the fast data stream.
 
-**Das ist das einzige Kommando im Skript, das auf ein `.../set`-Topic schreibt** – also
-auf den Weg, über den sich das Gerät auch verstellen ließe. Deshalb ist es ein eigenes
-Kommando: Der Schreibzugriff passiert nie nebenbei, sondern nur, wenn man `fast` tippt.
+**This is the only command in the script that writes to a `.../set` topic** – that is, to
+the path through which the device could also be reconfigured. That is why it is a command
+of its own: the write never happens on the side, only when you type `fast`.
 
-Was dabei gesendet wird, ist **nicht geraten**. Der Befehl wurde mitgelesen, indem das
-`set`-Topic abonniert und dabei die Handy-App bedient wurde (`app-mqtt`, s.u.); das Skript
-gibt diese Bytes unverändert wieder und ändert nur die laufende Nummer. Er trägt keine
-Parameter. Ein früherer Versuch, ihn aus Fremdquellen zusammenzusetzen, lag an vier
-Stellen daneben — siehe `api-status.md`.
+What gets sent is **not guessed**. The command was captured by subscribing to the `set`
+topic while operating the phone app (`app-mqtt`, see below); the script replays those
+bytes unchanged and only changes the sequence number. It carries no parameters. An earlier
+attempt to assemble it from third-party sources was wrong in four places — see
+`api-status.md`.
 
 ```console
 09:13:19Z  PV     970 W | house    415 W | battery    482 W (charging) | grid     72 W (export) | SoC 63 %
@@ -349,26 +350,25 @@ Stellen daneben — siehe `api-status.md`.
 09:13:22Z  PV     967 W | house    403 W | battery    472 W (charging) | grid     92 W (export) | SoC 63 %
 ```
 
-Gemessen: 131 Werte über gut vier Minuten, im Schnitt alle 1,9 s — statt vier. Der
-Zeitstempel ist hier **sekundengenau**,
-beim Minutenbericht ist er auf die Minute gerundet.
+Measured: 131 values over a little more than four minutes, on average every 1.9 s —
+instead of four. The timestamp here is **accurate to the second**; in the minute report it
+is rounded to the minute.
 
-Solange der schnelle Strom läuft, wird der Minutenbericht **nicht** mit angezeigt: Er
-trägt denselben Zeitstempel wie ein Sekundenbericht, den es ohnehin gab, und sähe mit
-seiner gerundeten Uhrzeit wie ein Stillstand aus. Versiegt der schnelle Strom, erscheint
-er wieder.
+While the fast stream is running, the minute report is **not** shown as well: it carries
+the same timestamp as a per-second report that already existed, and with its rounded time
+it would look like a standstill. When the fast stream dries up, it appears again.
 
-`ECOFLOW_FAST_INTERVAL` setzt die Wiederholrate, Default 3 Sekunden — der Rhythmus der
-App. **Länger ist nicht sparsamer, sondern wirkungslos:** Bei 10 Sekunden fiel das Gerät
-auf den Minutentakt zurück. Der Schalter hält nur wenige Sekunden vor.
+`ECOFLOW_FAST_INTERVAL` sets the repeat rate, default 3 seconds — the app's rhythm.
+**Longer is not more economical, it simply does not work:** at 10 seconds the device fell
+back to the minute rate. The switch only lasts a few seconds.
 
-Dafür kostet es: Für jeden Schalter startet ein eigener `mosquitto_pub`, also alle drei
-Sekunden ein Verbindungsaufbau. Für eine Messung in Ordnung, für Dauerbetrieb nicht schön.
+It has a cost: each switch starts its own `mosquitto_pub`, i.e. a new connection every
+three seconds. Fine for a measurement, not nice for continuous operation.
 
-### Stundenwerte des Tages: `--hours`
+### Today's hourly values: `--hours`
 
-Das Gerät schickt nebenbei die **Energiebilanz des laufenden Tages, stundenweise**. Sie
-steht im häufigsten Frame überhaupt, kommt aber nur im schnellen Betrieb:
+On the side, the device sends the **energy balance of the current day, hour by hour**. It
+is in the most frequent frame of all, but only arrives in fast mode:
 
 ```console
 $ scripts/ecoflow-api.sh fast HC31XXXXXXXXXXXX | python3 scripts/ecoflow-frames.py --hours
@@ -384,16 +384,16 @@ house          262   246   249   308   427   352   383   473   415    91    3206
 balance          0    -1    -1     0     1     0     0    -1     0     1
 ```
 
-Es wartet auf eine vollständige Meldung, gibt die Tabelle aus und **endet dann** — der
-Datenstrom stoppt von selbst mit. Die Stunden sind UTC, die laufende füllt sich noch.
+It waits for a complete report, prints the table and **then exits** — the data stream
+stops along with it. The hours are UTC; the current one is still filling up.
 
-Die `balance`-Zeile ist die Probe und gehört zur Ausgabe: In jeder Stunde muss
-`PV + Batterie raus + Netzbezug` gleich `Haus + Batterie rein + Einspeisung` sein. Steht
-dort etwas anderes als eine Rundungsdifferenz, stimmt die Feldzuordnung nicht mehr — etwa
-weil eine Firmware die Nummern verschoben hat. Genau daran wurde sie ursprünglich belegt;
-Einzelheiten in `api-status.md`.
+The `balance` row is the check and belongs to the output: in every hour,
+`PV + battery out + grid in` must equal `house + battery in + grid out`. If it shows
+anything other than a rounding difference, the field assignment no longer holds — for
+instance because a firmware shifted the numbers. That is exactly how it was established in
+the first place; details in `api-status.md`.
 
-### Welche Komponenten die Anlage meldet: `--modules`
+### Which components the system reports: `--modules`
 
 ```console
 $ scripts/ecoflow-api.sh fast HC31XXXXXXXXXXXX | python3 scripts/ecoflow-frames.py --modules
@@ -405,121 +405,121 @@ modules reported by the system
   battery    HJ3AYYYYYYYYYYYY
 ```
 
-Seriennummern und Bestückung ohne App und ohne Portal — hier also ein 5-kW-Konverter mit
-zwei Batteriemodulen. Wie `--hours` wartet es auf die erste Meldung und endet dann.
+Serial numbers and configuration without app or portal — here a 5 kW converter with two
+battery modules. Like `--hours`, it waits for the first report and then exits.
 
-Die Bezeichnungen sind **nicht aus den Präfixen geraten**, sondern gegen die Anzeige des
-Portals geprüft: `user-portal.ecoflow.com` führt unter *System information → Component
-information* dieselben Seriennummern mit Typ und Modell. Firmware-Stände und
-Aktivierungsdatum stehen allerdings nur dort, nicht im Frame.
+The labels are **not guessed from the prefixes** but checked against the portal's display:
+`user-portal.ecoflow.com` lists the same serial numbers with type and model under
+*System information → Component information*. Firmware versions and activation date are
+only there, though, not in the frame.
 
-### Mitlesen, was die App sendet: `app-mqtt`
+### Listening to what the app sends: `app-mqtt`
 
 ```bash
-scripts/ecoflow-api.sh app-mqtt HC31XXXXXXXXXXXX        # Default-Topic: set
+scripts/ecoflow-api.sh app-mqtt HC31XXXXXXXXXXXX        # default topic: set
 ```
 
-Abonniert eines der App-Topics unter `/app/<userId>/<SN>/thing/property/` und zeigt, was
-dort ankommt. Voreingestellt ist `set` — das Topic, auf das das Skript sonst nichts
-schreibt. Wer die Handy-App bedient, während das läuft, sieht ihre Befehle im Original.
-Reines Abonnieren, kein Schreibzugriff.
+Subscribes to one of the app topics under `/app/<userId>/<SN>/thing/property/` and shows
+what arrives there. The default is `set` — the topic the script otherwise writes nothing
+to. Operate the phone app while this is running and you see its commands in the original.
+Pure subscription, no write access.
 
-**Vorbehalt:** Die Feldnummern gelten für den **DC Fit**. Beim PowerOcean Plus liegen
-dieselben Größen auf anderen Nummern – dort lieferte das Skript plausible Zahlen an den
-falschen Namen. Belegt ist die Zuordnung hier über die Energiebilanz: In jedem Frame geht
-`PV = Batterie + Haus + Netz` auf zwei Nachkommastellen auf.
+**Caveat:** the field numbers apply to the **DC Fit**. On the PowerOcean Plus the same
+quantities sit on different numbers – there the script produced plausible numbers under
+the wrong names. The assignment here is backed by the energy balance: in every frame,
+`PV = battery + house + grid` adds up to two decimal places.
 
-**Warum Python und nicht Go:** Das ist eine Zwischenstufe zum Ausprobieren, keine
-Festlegung. Python3 liegt auf Mac und Raspberry Pi ohnehin bereit, und der
-Protobuf-Rahmen lässt sich mit der Standardbibliothek lesen – für acht Felder kostet eine
-Protobuf-Werkzeugkette mehr, als sie bringt. Bewährt sich das Auswerten im Alltag, gehört
-es als Go-Werkzeug ins Repo: dann läuft es in der CI mit, ist ohne Gerät testbar wie
-`internal/decode`, und die Binaries der Releases decken es mit ab.
+**Why Python and not Go:** this is an intermediate stage for trying things out, not a
+commitment. Python 3 is already there on the Mac and the Raspberry Pi, and the protobuf
+wrapper can be read with the standard library – for eight fields a protobuf toolchain
+costs more than it brings. If the decoding proves itself in everyday use, it belongs in
+the repo as a Go tool: then it runs in CI, is testable without a device like
+`internal/decode`, and the release binaries cover it too.
 
-**Drei Kommandos publizieren, alle übrigen abonnieren nur.** Zwei davon auf ein
-`get`-Topic, also Leseanfragen: `request` und `live`. Das dritte, `fast`, publiziert auf
-`.../set` — der einzige Weg im Skript, über den sich das Gerät umstellen ließe. Dass es
-ein eigenes Kommando ist und kein Schalter an `live`, ist Absicht: Wer Werte abfragt, soll
-dabei nicht unbemerkt schreiben.
+**Three commands publish, all others only subscribe.** Two of them to a `get` topic, i.e.
+read requests: `request` and `live`. The third, `fast`, publishes to `.../set` — the only
+path in the script through which the device could be reconfigured. That it is a command of
+its own and not a switch on `live` is intentional: whoever queries values should not be
+writing without noticing.
 
-`request` abonniert **zwei** Topics — `.../get_reply` und `.../quota` —, schickt die
-Anfrage an `.../get` und wartet `ECOFLOW_WAIT` Sekunden (Default 15). Auf beiden zu
-lauschen ist kein Übereifer: Die ACL verweigert an manchen Konten `.../get_reply`, während
-sie `.../quota` gewährt. Das Suffix ist fest verdrahtet, es gibt kein freies
-Topic-Argument. Braucht zusätzlich `mosquitto_pub`.
+`request` subscribes to **two** topics — `.../get_reply` and `.../quota` —, sends the
+request to `.../get` and waits `ECOFLOW_WAIT` seconds (default 15). Listening on both is
+not overeagerness: on some accounts the ACL refuses `.../get_reply` while granting
+`.../quota`. The suffix is hard-wired; there is no free topic argument. Additionally needs
+`mosquitto_pub`.
 
-Vier Exit-Codes, nicht zwei — wer auf „ungleich 0" prüft, hält sonst einen Netzfehler für
-eine API-Antwort:
+Four exit codes, not two — if you only check for "non-zero", you mistake a network error
+for an API answer:
 
-| Code | Bedeutung                                                  |
+| Code | Meaning                                                    |
 |------|------------------------------------------------------------|
-| `0`  | die API antwortete mit `code 0`                            |
-| `1`  | Bedienungs- oder Konfigurationsfehler (fehlende Variable …) |
-| `2`  | die API antwortete mit einem anderen Code                  |
-| `3`  | die Anfrage selbst scheiterte — Netz, TLS, Namensauflösung |
+| `0`  | the API answered with `code 0`                             |
+| `1`  | usage or configuration error (missing variable …)          |
+| `2`  | the API answered with a different code                     |
+| `3`  | the request itself failed — network, TLS, name resolution  |
 
-**`2` mit Code 1006** ist die interessante Antwort: Dann ist das Modell von der
-Developer-API ausgeschlossen (siehe `api-status.md`) und nur der App-MQTT-Kanal oder
-lokales Modbus bleibt. Das Gerät muss an das eigene EcoFlow-Konto gebunden sein, sonst
-bleibt die Liste leer.
+**`2` with code 1006** is the interesting answer: it means the model is excluded from the
+Developer API (see `api-status.md`) and only the app MQTT channel or local Modbus remain.
+The device has to be bound to your own EcoFlow account, otherwise the list stays empty.
 
 ## `ecoflowd`
 
-Das Gegenstück zu `modbusread` für den Dauerbetrieb: ein Go-Dienst, der den App-MQTT-Kanal
-liest, statt ihn für eine Messung zu öffnen. Gedacht für einen Raspberry Pi unter systemd.
+The counterpart to `modbusread` for continuous operation: a Go service that reads the app
+MQTT channel instead of opening it for a single measurement. Meant for a Raspberry Pi
+under systemd.
 
-Er verbindet sich, verbindet sich bei Abbruch neu, gibt die Messwerte auf stdout aus und
-reicht sie an einen lokalen MQTT-Broker weiter.
+It connects, reconnects after a drop, prints the readings to stdout and passes them on to
+a local MQTT broker.
 
 ```bash
-export ECOFLOW_EMAIL='vorname.nachname@example.com'
+export ECOFLOW_EMAIL='first.last@example.com'
 export ECOFLOW_PASSWORD='…'
 
 go build ./cmd/ecoflowd
 ./ecoflowd --sn HC31XXXXXXXXXXXX --stdout
 ```
 
-| Flag | Bedeutung |
+| Flag | Meaning |
 |---|---|
-| `--sn` | Seriennummer des Geräts (Pflicht) |
-| `--broker` | lokaler MQTT-Broker, z.B. `tcp://127.0.0.1:1883` |
-| `--topic` | Präfix am lokalen Broker, Default `ecoflow` |
-| `--mqtt-user` | Benutzer für den lokalen Broker; Passwort über `MQTT_PASSWORD` |
-| `--stdout` | jeden Messwert auch auf stdout schreiben |
-| `--fast` | den schnellen Strom einschalten — **schreibt**, s.u. |
-| `--switch-every` | Wiederholrate dafür, Default 3s; unter 1s wird abgelehnt |
-| `--host` | abweichender API-Host; für US-Konten `https://api-a.ecoflow.com` |
-| `-v` | jeden eintreffenden Frame melden |
-| `--version` | Version ausgeben und beenden |
+| `--sn` | serial number of the device (required) |
+| `--broker` | local MQTT broker, e.g. `tcp://127.0.0.1:1883` |
+| `--topic` | prefix on the local broker, default `ecoflow` |
+| `--mqtt-user` | user for the local broker; password via `MQTT_PASSWORD` |
+| `--stdout` | also write every reading to stdout |
+| `--fast` | switch on the fast stream — **writes**, see below |
+| `--switch-every` | repeat rate for it, default 3s; below 1s is rejected |
+| `--host` | different API host; for US accounts `https://api-a.ecoflow.com` |
+| `-v` | report every incoming frame |
+| `--version` | print the version and exit |
 
-Zugangsdaten kommen ausschließlich aus der Umgebung — `ECOFLOW_EMAIL`, `ECOFLOW_PASSWORD`,
-wahlweise `ECOFLOW_HOST` und `MQTT_PASSWORD`. Nie aus Flags: Was in der Kommandozeile
-steht, kann jeder auf dem Rechner in der Prozessliste lesen.
+Credentials come exclusively from the environment — `ECOFLOW_EMAIL`, `ECOFLOW_PASSWORD`,
+optionally `ECOFLOW_HOST` and `MQTT_PASSWORD`. Never from flags: whatever is on the
+command line, anyone on the machine can read in the process list.
 
-Drei Exit-Codes, und einer davon ist für den Dauerbetrieb entscheidend:
+Three exit codes, and one of them matters for continuous operation:
 
-| Code | Bedeutung |
+| Code | Meaning |
 |---|---|
-| `0` | auf ein Signal hin beendet |
-| `1` | Bedienungs- oder Konfigurationsfehler |
-| `78` | **die Zugangsdaten wurden abgelehnt** — Warten hilft hier nie |
+| `0` | stopped on a signal |
+| `1` | usage or configuration error |
+| `78` | **the credentials were rejected** — waiting never helps here |
 
-Einen Code für „nach wiederholtem Fehlschlag aufgegeben" gibt es nicht: Der Dienst gibt bei
-Netz- und Brokerfehlern nie auf, sondern versucht es mit wachsender Pause weiter (siehe
-[So kommt ecoflowd an die Daten](#so-kommt-ecoflowd-an-die-daten)).
+There is no code for "gave up after repeated failure": on network and broker errors the
+service never gives up, it keeps trying with a growing pause (see
+[How ecoflowd gets its data](#how-ecoflowd-gets-its-data)).
 
-Die systemd-Unit führt die `78` in `RestartPreventExitStatus`, damit ein Tippfehler in der
-Zugangsdatei nicht endlos Anmeldeversuche gegen einen inoffiziellen Endpunkt fährt.
+The systemd unit lists `78` in `RestartPreventExitStatus`, so that a typo in the
+credentials file does not keep firing login attempts at an unofficial endpoint forever.
 
-Was als Ablehnung zählt, ist bewusst eng gefasst, weil die `78` den Dienst endgültig
-anhält: Nur eine Antwort, die die Cloud selbst gebildet hat und die einen `code` ungleich
-`0` trägt. Eine Anfrage ohne Antwort, eine Antwort, die kein JSON ist, und ein `429` oder
-`5xx` sind es **nicht** — die werden wie jeder andere Fehlschlag wiederholt.
+What counts as a rejection is deliberately narrow, because `78` stops the service for
+good: only an answer the cloud formed itself that carries a `code` other than `0`. A
+request without an answer, an answer that is not JSON, and a `429` or `5xx` are **not** —
+those are retried like any other failure.
 
-**Die bekannte Lücke:** EcoFlow dokumentiert diese Codes nirgends. Ein `code`, der etwas
-anderes bedeutet als „Passwort falsch" — ein gesperrtes Konto etwa —, käme mit `HTTP 200`
-und landete trotzdem auf der `78`. Der Dienst gibt die Meldung der Cloud im Klartext aus;
-wenn E-Mail und Passwort stimmen, ist ein `systemctl start` der Weg zurück.
+**The known gap:** EcoFlow documents these codes nowhere. A `code` that means something
+other than "wrong password" — a locked account, say — would arrive with `HTTP 200` and
+still land on `78`. The service prints the cloud's message verbatim; if e-mail and
+password are right, a `systemctl start` is the way back.
 
 ```console
 connected to mqtt-e.ecoflow.com:8883, subscribed to 3 topics
@@ -527,72 +527,72 @@ connected to mqtt-e.ecoflow.com:8883, subscribed to 3 topics
 10:30:00Z  PV    1544 W | house    618 W | battery    926 W (charging) | grid      0 W (idle) | SoC 74 %
 ```
 
-**Ohne `--fast` sendet er nichts an das Gerät.** Das ist keine Vorsicht, sondern das, was
-das Gerät braucht: Das Abo allein hält es am Reden, gemessen über 23 Minuten ohne eine
-einzige an die Cloud gesendete Nachricht. An deinen lokalen Broker gehen die Messwerte
-trotzdem — nur im Minutentakt statt alle zwei bis drei Sekunden.
+**Without `--fast` it sends nothing to the device.** That is not caution but what the
+device needs: the subscription alone keeps it talking, measured over 23 minutes without a
+single message sent to the cloud. The readings still go to your local broker — just every
+minute instead of every two to three seconds.
 
-### So kommt ecoflowd an die Daten
+### How ecoflowd gets its data
 
-Nicht über die Developer-API — die lehnt den PowerOcean mit Fehler 1006 ab, siehe
-[`api-status.md`](api-status.md) —, sondern auf dem Weg, den die App nimmt: zwei REST-Aufrufe,
-um hineinzukommen, dann ein MQTT-Abo, über das das Gerät von selbst liefert.
+Not through the Developer API — that one refuses the PowerOcean with error 1006, see
+[`api-status.md`](api-status.md) —, but the way the app does it: two REST calls to get in,
+then an MQTT subscription over which the device delivers on its own.
 
 ```mermaid
 sequenceDiagram
     participant D as ecoflowd
-    participant P as EcoFlow-Portal (REST)
-    participant B as EcoFlow-MQTT-Broker
+    participant P as EcoFlow portal (REST)
+    participant B as EcoFlow MQTT broker
     participant G as PowerOcean
-    participant L as lokaler Broker
+    participant L as local broker
 
-    D->>P: POST /auth/login (E-Mail, Passwort base64)
-    P-->>D: Token, userId
+    D->>P: POST /auth/login (e-mail, password base64)
+    P-->>D: token, userId
     D->>P: GET /iot-auth/app/certification?userId=…
-    P-->>D: Host, Port, MQTT-Account, MQTT-Passwort
-    D->>B: TLS-Connect, Client-ID ANDROID_{hex}_{userId}
-    D->>B: Subscribe /app/device/property/{SN}, …/get_reply, /app/device/status/{SN}
-    loop ohne Anfrage, solange das Abo steht
-        G->>B: Protobuf-Frame
-        B->>D: Protobuf-Frame
-        Note over D: XOR mit Low-Byte der Seq,<br/>dann cmd_func/cmd_id:<br/>96/34 minütlich, 254/32 Stundenhistorie
-        D->>L: {topic}/state bzw. {topic}/energy
+    P-->>D: host, port, MQTT account, MQTT password
+    D->>B: TLS connect, client id ANDROID_{hex}_{userId}
+    D->>B: subscribe /app/device/property/{SN}, …/get_reply, /app/device/status/{SN}
+    loop unrequested, as long as the subscription stands
+        G->>B: protobuf frame
+        B->>D: protobuf frame
+        Note over D: XOR with low byte of seq,<br/>then cmd_func/cmd_id:<br/>96/34 every minute, 254/32 hourly history
+        D->>L: {topic}/state or {topic}/energy
     end
-    opt nur mit --fast
-        loop alle 3 s (--switch-every)
-            D->>B: Stream-Schalter auf …/set
-            B->>G: Stream-Schalter
+    opt only with --fast
+        loop every 3 s (--switch-every)
+            D->>B: stream switch on …/set
+            B->>G: stream switch
         end
-        G->>B: 96/33 alle 2–3 s
+        G->>B: 96/33 every 2–3 s
         B->>D: 96/33
     end
 ```
 
-Wenn etwas schiefgeht, unterscheidet der Dienst drei Fälle — danach, ob Warten hilft:
+When something goes wrong, the service tells three cases apart — by whether waiting helps:
 
-- **Verbindung weg** (Netz, Broker, Timeout): Er wartet und beginnt neu bei der
-  Certification. Die Wartezeit startet bei 5 s und verdoppelt sich bis höchstens 15 min;
-  hat die Verbindung zwischendurch gestanden, fängt sie wieder bei 5 s an. Das Token bleibt,
-  es gibt also keinen neuen Login. Die Client-ID ist bei jedem Versuch neu, weil der Broker
-  eine schon gesehene ablehnt — deshalb verbindet sich paho auch nicht selbst neu.
-- **Token abgelehnt** (`401`/`403` oder ein `code` ungleich `0` bei der Certification): Das
-  Token wird verworfen, der nächste Versuch beginnt mit einem Login.
-- **Zugangsdaten abgelehnt**: Exit `78`, siehe oben — kein Neustart durch systemd.
+- **Connection gone** (network, broker, timeout): it waits and starts over at the
+  certification. The wait starts at 5 s and doubles up to at most 15 min; if the
+  connection stood in between, it starts at 5 s again. The token is kept, so there is no
+  new login. The client id is new on every attempt, because the broker refuses one it has
+  already seen — which is also why paho does not reconnect on its own.
+- **Token rejected** (`401`/`403` or a `code` other than `0` on the certification): the
+  token is discarded, the next attempt starts with a login.
+- **Credentials rejected**: exit `78`, see above — no restart by systemd.
 
-Dazu bei `--fast`: Nimmt der Broker den Schalter an, ohne dass schnelle Berichte kommen, meldet
-der Dienst das nach etwa 60 s ein einziges Mal und läuft im Minutentakt weiter.
+On top of that, with `--fast`: if the broker accepts the switch but no fast reports
+arrive, the service says so once after about 60 s and carries on at the minute rate.
 
-Im Code: der Ablauf in [`cmd/ecoflowd/serve.go`](cmd/ecoflowd/serve.go), Login, Certification
-und Topics in [`internal/ecoflow/`](internal/ecoflow/), das Auspacken der Frames in
-[`internal/frames/frame.go`](internal/frames/frame.go).
+In the code: the flow in [`cmd/ecoflowd/serve.go`](cmd/ecoflowd/serve.go), login,
+certification and topics in [`internal/ecoflow/`](internal/ecoflow/), unpacking the frames
+in [`internal/frames/frame.go`](internal/frames/frame.go).
 
-### Auf dem Raspberry Pi
+### On the Raspberry Pi
 
-Binary aus den [Releases](https://github.com/womat/ecoflow/releases) holen — dieselben
-Plattformen wie bei `modbusread`, statisch gelinkt, nichts zu installieren:
+Get the binary from the [releases](https://github.com/womat/ecoflow/releases) — the same
+platforms as for `modbusread`, statically linked, nothing to install:
 
 ```bash
-VERSION=v0.5.0   # oder die neueste, siehe Releases-Seite
+VERSION=v0.5.0   # or the latest, see the releases page
 ARCH=linux-arm64
 
 curl -LO "https://github.com/womat/ecoflow/releases/download/$VERSION/ecoflowd-$VERSION-$ARCH.tar.gz"
@@ -600,10 +600,10 @@ tar -xzf "ecoflowd-$VERSION-$ARCH.tar.gz"
 sudo install -m 0755 ecoflowd /usr/local/bin/
 ```
 
-Die Unit liegt als Vorlage bei — eine Instanz je Gerät, die Seriennummer steht hinter dem
-`@`. Im Release-Archiv steckt nur das Binary, die Unit kommt deshalb aus dem Repo, und zwar
-vom selben Tag wie das Binary (mit einem Checkout tut es auch
-`sudo cp contrib/ecoflowd@.service /etc/systemd/system/`):
+The unit comes as a template — one instance per device, the serial number goes after the
+`@`. The release archive only contains the binary, so the unit comes from the repo, from
+the same tag as the binary (with a checkout,
+`sudo cp contrib/ecoflowd@.service /etc/systemd/system/` does it too):
 
 ```bash
 sudo curl -fsSL -o /etc/systemd/system/ecoflowd@.service \
@@ -617,122 +617,123 @@ sudo systemctl enable --now ecoflowd@HC31XXXXXXXXXXXX
 `/etc/ecoflowd/env`:
 
 ```ini
-ECOFLOW_EMAIL=vorname.nachname@example.com
+ECOFLOW_EMAIL=first.last@example.com
 ECOFLOW_PASSWORD=…
 MQTT_PASSWORD=…
 ECOFLOWD_OPTIONS=--broker tcp://127.0.0.1:1883
 ```
 
-**Diese Datei ist das Kontopasswort**, kein Anwendungstoken — `0700` auf das Verzeichnis
-und `0600` auf die Datei sind deshalb nicht übertrieben. Der Login-Endpunkt überträgt es
-base64-kodiert statt gehasht; geschützt ist allein der TLS-Kanal.
+**This file is the account password**, not an application token — `0700` on the
+directory and `0600` on the file are therefore not overdone. The login endpoint sends it
+base64-encoded rather than hashed; only the TLS channel protects it.
 
-Die Unit läuft unter `DynamicUser` mit `ProtectSystem=strict` und schreibt nichts auf die
-Platte — der Sitzungstoken lebt im Speicher des Prozesses.
+The unit runs under `DynamicUser` with `ProtectSystem=strict` and writes nothing to disk
+— the session token lives in the process's memory.
 
-**Das Binary gehört nach `/usr/local/bin`, nicht in ein eigenes Verzeichnis mit engen
-Rechten** wie `/opt/<name>/bin` mit `0770 pv:docker`. Der dynamische Benutzer ist weder der
-Eigentümer noch in der Gruppe, er käme nicht hinein und der Start scheiterte mit
-„Permission denied". Die beiden naheliegenden Auswege sind bewusst nicht gegangen:
+**The binary belongs in `/usr/local/bin`, not in a directory of its own with tight
+permissions** such as `/opt/<name>/bin` with `0770 pv:docker`. The dynamic user is
+neither the owner nor in the group, it would not get in, and the start would fail with
+"Permission denied". The two obvious ways out are deliberately not taken:
 
-- **Den Dienstbenutzer in die Gruppe `docker` aufnehmen** (`SupplementaryGroups=`) — wer in
-  `docker` ist, ist über den Docker-Socket praktisch root.
-- **`User=pv` statt `DynamicUser`** — dann läuft der Prozess unter einem Konto, das seine
-  Zugangsdatei selbst lesen kann. So liest sie nur systemd als root und reicht dem Prozess
-  die Werte als Umgebung weiter; der Dienstbenutzer hat auf `/etc/ecoflowd` keinen Zugriff.
+- **Adding the service user to the `docker` group** (`SupplementaryGroups=`) — whoever is
+  in `docker` is practically root via the Docker socket.
+- **`User=pv` instead of `DynamicUser`** — then the process runs under an account that can
+  read its own credentials file. As it is, only systemd reads it as root and passes the
+  values to the process as environment; the service user has no access to
+  `/etc/ecoflowd`.
 
-`RestartPreventExitStatus=78` ist der Kern: Bei abgelehnten Zugangsdaten bleibt der Dienst
-stehen, statt einen Tippfehler stündlich gegen einen inoffiziellen Endpunkt zu fahren —
-zur engen Fassung von „abgelehnt" siehe die Tabelle der Abbruchcodes oben.
-Jeder *andere* Fehlschlag startet nach 30 Sekunden neu — ein sauberer Halt über Signal
-dagegen nicht, denn die Unit steht auf `Restart=on-failure`.
+`RestartPreventExitStatus=78` is the core: when the credentials are rejected, the service
+stays down instead of firing a typo at an unofficial endpoint every hour — for the narrow
+meaning of "rejected", see the exit code table above. Any *other* failure restarts after
+30 seconds — a clean stop by signal does not, because the unit is set to
+`Restart=on-failure`.
 
 ```bash
 systemctl status ecoflowd@HC31XXXXXXXXXXXX
 journalctl -fu ecoflowd@HC31XXXXXXXXXXXX
 ```
 
-### An den lokalen Broker: `--broker`
+### To the local broker: `--broker`
 
 ```bash
 ./ecoflowd --sn HC31XXXXXXXXXXXX --broker tcp://127.0.0.1:1883 --topic myhome/ecoflow
 ```
 
-**Zwei JSON-Telegramme**, beide nicht retained, QoS 0. Das Topic ist `--topic` (Default
-`ecoflow`) plus ein festes `/state` bzw. `/energy`:
+**Two JSON telegrams**, neither retained, QoS 0. The topic is `--topic` (default
+`ecoflow`) plus a fixed `/state` or `/energy`:
 
 ```
 myhome/ecoflow/state   {"sn":"HC31XXXXXXXXXXXX","timestamp":"2026-09-22T09:13:16Z","pv":975,"house":-459,"battery":515,"grid":0,"soc":63}
 myhome/ecoflow/energy  {"sn":"HC31XXXXXXXXXXXX","timestamp":"2026-09-22T09:13:18Z","pv":3301,"house":3206,"batteryIn":1545,"batteryOut":1562,"gridIn":62,"gridOut":175}
 ```
 
-Die Werte sind aus dem Mitschnitt `internal/frames/testdata/fast.txt` dekodiert.
+The values are decoded from the capture `internal/frames/testdata/fast.txt`.
 
-**`state`** – ein Telegramm je neuer Messung, ohne `--fast` minütlich, mit `--fast` alle
-zwei bis drei Sekunden:
+**`state`** – one telegram per new measurement, every minute without `--fast`, every two
+to three seconds with `--fast`:
 
-| Schlüssel   | Einheit       | Bedeutung                                         |
+| Key         | Unit          | Meaning                                           |
 |-------------|---------------|---------------------------------------------------|
-| `sn`        | –             | Seriennummer des Geräts                           |
-| `timestamp` | RFC 3339, UTC | **Messzeit des Geräts**, nicht die Sendezeit      |
-| `pv`        | W             | PV-Leistung                                       |
-| `house`     | W             | Hauslast, **negativ = Verbrauch**                 |
-| `battery`   | W             | **positiv = laden**, negativ = entladen           |
-| `grid`      | W             | **positiv = Einspeisung**, negativ = Bezug        |
-| `soc`       | %             | Ladestand                                         |
+| `sn`        | –             | serial number of the device                       |
+| `timestamp` | RFC 3339, UTC | **the device's time of measurement**, not the send time |
+| `pv`        | W             | PV power                                          |
+| `house`     | W             | house load, **negative = consumption**            |
+| `battery`   | W             | **positive = charging**, negative = discharging   |
+| `grid`      | W             | **positive = export**, negative = import          |
+| `soc`       | %             | state of charge                                   |
 
-**`energy`** – die Tagessummen, sobald die sechs Teile der Stundenhistorie mit gleichem
-Zeitstempel beisammen sind (ohne `--fast` etwa alle zehn Minuten):
+**`energy`** – the day's totals, as soon as the six parts of the hourly history with the
+same timestamp are together (without `--fast` roughly every ten minutes):
 
-| Schlüssel                    | Einheit | Bedeutung                                     |
+| Key                          | Unit    | Meaning                                       |
 |------------------------------|---------|-----------------------------------------------|
-| `sn`, `timestamp`            | –       | wie oben; `timestamp` der Stundenhistorie     |
-| `pv`, `house`                | Wh      | PV-Ertrag, Hausverbrauch                      |
-| `batteryIn`, `batteryOut`    | Wh      | geladen, entladen                             |
-| `gridIn`, `gridOut`          | Wh      | Bezug, Einspeisung                            |
+| `sn`, `timestamp`            | –       | as above; `timestamp` of the hourly history   |
+| `pv`, `house`                | Wh      | PV yield, house consumption                   |
+| `batteryIn`, `batteryOut`    | Wh      | charged, discharged                           |
+| `gridIn`, `gridOut`          | Wh      | import, export                                |
 
-**„Heute“ ist der UTC-Tag**, weil das Gerät seine Stunden in UTC führt. In Österreich
-springen die Summen deshalb um 01:00 (MEZ) bzw. 02:00 (MESZ) auf 0, nicht um Mitternacht.
+**"Today" is the UTC day**, because the device keeps its hours in UTC. In Austria the
+totals therefore jump to 0 at 01:00 (CET) or 02:00 (CEST), not at midnight.
 
-**Warum der Zeitstempel im Telegramm steht.** Er macht drei Mechanismen überflüssig, die
-das frühere Format brauchte: den Heartbeat, das Verfügbarkeits-Topic mit Last Will und den
-Stale-Wächter dahinter. Ein Empfänger sieht das Alter jedes Werts selbst, und zwar nach der
-Uhr des **Geräts**. Einen hängenden Dienst kann ohnehin nur der Empfänger bemerken – ein
-hängender Prozess meldet nichts, am wenigsten, dass er hängt. Deshalb gehört an jeden
-Verbraucher eine Altersprüfung: `timeout` bei evcc, `expire_after` bei Home Assistant.
+**Why the timestamp is in the telegram.** It makes three mechanisms unnecessary that the
+earlier format needed: the heartbeat, the availability topic with last will, and the
+staleness watchdog behind it. A receiver sees the age of every value itself, and by the
+**device's** clock. A hanging service can only be noticed by the receiver anyway – a hung
+process reports nothing, least of all that it is hung. That is why every consumer needs an
+age check: `timeout` in evcc, `expire_after` in Home Assistant.
 
-**Warum `grid` 0 ist und nicht fehlt.** Das Gerät lässt ein Feld mit dem Wert 0 im Frame
-einfach weg – so arbeitet Protobuf (proto3): Ein Feld mit Standardwert wird nicht
-übertragen, und der Empfänger liest das Fehlen als 0. `grid` fehlt so in rund der Hälfte
-aller Berichte, und in jedem davon geht die Energiebilanz mit `grid = 0` exakt auf. „Fehlt“
-heißt hier also „gemessen 0“; weggelassen würde `grid` genau im häufigsten Zustand fehlen.
-Dass EcoFlow proto3 verwendet, ist aus diesem Verhalten gefolgert, nicht belegt. Die Zahlen
-stehen in [`mqtt-ausgabe.md`](./mqtt-ausgabe.md).
+**Why `grid` is 0 rather than missing.** The device simply leaves a field with the value 0
+out of the frame – that is how protobuf (proto3) works: a field with its default value is
+not transmitted, and the receiver reads the absence as 0. `grid` is missing like this in
+about half of all reports, and in every one of them the energy balance adds up exactly
+with `grid = 0`. "Missing" here therefore means "measured 0"; if it were left out, `grid`
+would be missing in precisely the most common state. That EcoFlow uses proto3 is inferred
+from this behaviour, not proven. The numbers are in [`mqtt-ausgabe.md`](./mqtt-ausgabe.md).
 
-**`dcdc` wird bewusst nicht publiziert**, solange seine Rolle nicht geklärt ist (siehe
-„Offene Punkte“). Beide Dekoder lesen das Feld weiter, ausgegeben wird es aber nirgends;
-zum Klären dient ein Mitschnitt von `ecoflow-api.sh live|fast`.
+**`dcdc` is deliberately not published** as long as its role is not clear (see
+"Open points"). Both decoders still read the field, but it is output nowhere; a capture
+from `ecoflow-api.sh live|fast` serves to clear it up.
 
-**Die Seriennummer steht im Telegramm, nicht im Topic.** Dort überlebt sie eine
-Weiterleitung nach InfluxDB oder in eine Warteschlange, bei der das Topic verloren geht, und
-`--topic` fügt sich in jedes bestehende Namensschema. Mehrere Geräte brauchen je ein eigenes
-`--topic`. **Topics am besten klein schreiben:** MQTT unterscheidet Groß- und
-Kleinschreibung, ein Abo mit einem falschen Buchstaben bekommt keine Fehlermeldung, sondern
-nichts. `ecoflowd` übernimmt `--topic` unverändert.
+**The serial number is in the telegram, not in the topic.** There it survives forwarding
+to InfluxDB or into a queue where the topic gets lost, and `--topic` fits into any
+existing naming scheme. Several devices each need their own `--topic`. **Best keep topics
+lowercase:** MQTT is case-sensitive, and a subscription with one wrong letter gets no
+error message, but nothing. `ecoflowd` takes `--topic` unchanged.
 
-**Schlüssel in camelCase.** JSON selbst schreibt keinen Stil vor; camelCase ist der der
-verbreiteten Leitfäden (Google, Microsoft, JSON:API). Begründung in `mqtt-ausgabe.md`.
+**Keys in camelCase.** JSON itself prescribes no style; camelCase is the one of the common
+guidelines (Google, Microsoft, JSON:API). Reasoning in `mqtt-ausgabe.md`.
 
-**Nichts ist retained.** Ein retained Messwert überlebt das, was er beschreibt, und Home
-Assistant warnt, dass retained Werte sich mit `expire_after` beißen. Wer sich neu verbindet,
-wartet auf die nächste Messung – ohne `--fast` höchstens eine Minute.
+**Nothing is retained.** A retained reading outlives what it describes, and Home Assistant
+warns that retained values clash with `expire_after`. Whoever reconnects waits for the
+next measurement – without `--fast` at most a minute.
 
-Mit `--mqtt-user` und `MQTT_PASSWORD` für einen Broker, der Anmeldung verlangt. Das
-Passwort kommt aus der Umgebung, weil ein Flag in der Prozessliste stünde.
+With `--mqtt-user` and `MQTT_PASSWORD` for a broker that requires authentication. The
+password comes from the environment, because a flag would show up in the process list.
 
-**Umstieg von v0.4.x.** Bis v0.4.x publizierte `ecoflowd` ein Topic je Wert
-(`ecoflow/<SN>/pv`, …, `/energy/…`) und ein retained `ecoflow/<SN>/status`. Das fällt mit
-v0.5.0 ersatzlos weg. Das alte retained `status` bleibt am Broker stehen, bis man es löscht:
+**Moving from v0.4.x.** Up to v0.4.x, `ecoflowd` published one topic per value
+(`ecoflow/<SN>/pv`, …, `/energy/…`) and a retained `ecoflow/<SN>/status`. All of that is
+gone without replacement as of v0.5.0. The old retained `status` stays on the broker until
+you delete it:
 
 ```bash
 mosquitto_pub -h <broker> -r -n -t ecoflow/HC31XXXXXXXXXXXX/status
@@ -740,9 +741,9 @@ mosquitto_pub -h <broker> -r -n -t ecoflow/HC31XXXXXXXXXXXX/status
 
 #### evcc
 
-Die Vorzeichen bleiben so, wie das Gerät misst — das Umrechnen bleibt beim Menschen,
-dieselbe Regel wie bei den Adressen in `modbusread`. evcc erwartet das Gegenteil und hat
-dafür `scale`; aus dem Telegramm holt `jq` den Wert:
+The signs stay as the device measures them — converting is left to the human, the same
+rule as for the addresses in `modbusread`. evcc expects the opposite and has `scale` for
+it; `jq` pulls the value out of the telegram:
 
 ```yaml
 meters:
@@ -752,14 +753,14 @@ meters:
       source: mqtt
       topic: ecoflow/state
       jq: .pv
-      timeout: 180s          # ohne timeout gilt jeder Wert unbegrenzt als aktuell
+      timeout: 180s          # without timeout every value counts as current forever
   - name: grid
     type: custom
     power:
       source: mqtt
       topic: ecoflow/state
       jq: .grid
-      scale: -1              # Gerät: positiv = Einspeisung, evcc: positiv = Bezug
+      scale: -1              # device: positive = export, evcc: positive = import
       timeout: 180s
   - name: battery
     type: custom
@@ -767,7 +768,7 @@ meters:
       source: mqtt
       topic: ecoflow/state
       jq: .battery
-      scale: -1              # Gerät: positiv = laden, evcc: positiv = entladen
+      scale: -1              # device: positive = charging, evcc: positive = discharging
       timeout: 180s
     soc:
       source: mqtt
@@ -776,11 +777,11 @@ meters:
       timeout: 180s
 ```
 
-`timeout` ist nicht optional: Ohne ihn akzeptiert evcc laut eigener Doku „values of any
-age" — ein eingefrorener Wert würde dann stillschweigend weiterverwendet.
+`timeout` is not optional: without it, evcc by its own documentation accepts "values of
+any age" — a frozen value would then silently keep being used.
 
-Für Energiewerte aus `ecoflow/energy` kommt `scale: 0.001` dazu, weil evcc kWh erwartet und
-hier Wh stehen.
+For energy values from `ecoflow/energy`, add `scale: 0.001`, because evcc expects kWh and
+the values here are Wh.
 
 #### Home Assistant
 
@@ -796,201 +797,199 @@ mqtt:
       expire_after: 180
 ```
 
-`expire_after` ersetzt das frühere `availability_topic`: Kommt drei Minuten lang kein
-Telegramm, wird der Sensor `unavailable`.
+`expire_after` replaces the earlier `availability_topic`: if no telegram comes for three
+minutes, the sensor becomes `unavailable`.
 
-### Sekundenwerte: `--fast`
+### Per-second values: `--fast`
 
 ```bash
 ./ecoflowd --sn HC31XXXXXXXXXXXX --stdout --fast
 ```
 
-Schickt alle `--switch-every` Sekunden (Default 3) den Stream-Schalter und liefert Werte
-alle zwei bis drei Sekunden statt minütlich.
+Sends the stream switch every `--switch-every` seconds (default 3) and delivers values
+every two to three seconds instead of every minute.
 
-**Das ist der einzige Schreibpfad des Programms**, und er geht auf das `.../set`-Topic —
-den Weg, über den sich das Gerät auch verstellen ließe. Deshalb ein Flag und kein Default:
-Wer Werte abfragt, schreibt dabei nie unbemerkt.
+**This is the program's only write path**, and it goes to the `.../set` topic — the path
+through which the device could also be reconfigured. That is why it is a flag and not a
+default: whoever queries values never writes without noticing.
 
-Der Befehl selbst ist nicht geraten. Er wurde am Draht mitgelesen, während die Handy-App
-lief; das Programm gibt diese Bytes unverändert wieder und ändert nur die laufende Nummer.
-Er trägt keine Parameter. Zehn Sekunden Wiederholabstand waren gemessen zu langsam — das
-Gerät fällt dann auf den Minutentakt zurück —, deshalb drei, der Takt der App.
+The command itself is not guessed. It was captured on the wire while the phone app was
+running; the program replays those bytes unchanged and only changes the sequence number.
+It carries no parameters. A repeat interval of ten seconds was measured to be too slow —
+the device then falls back to the minute rate —, hence three, the app's rate.
 
-Bleibt der schnelle Strom trotzdem aus, sagt der Dienst das **einmal** und läuft im
-Minutentakt weiter. Der Broker nimmt den Schalter nämlich in jedem Fall an (`PUBACK RC:0`
-gemessen); ob er wirkt, zeigt allein, ob schnelle Berichte eintreffen.
+If the fast stream still does not come, the service says so **once** and carries on at the
+minute rate. The broker accepts the switch in any case (`PUBACK RC:0` measured); whether
+it works is shown only by whether fast reports arrive.
 
-**Zugangsdaten kommen aus der Umgebung, nie aus Flags.** Der Login-Endpunkt überträgt das
-Passwort base64-kodiert statt gehasht, und es ist das **Kontopasswort**, kein
-Anwendungstoken — wer die Datei lesen kann, hat den vollen EcoFlow-Zugang. Auf einem
-Dauerläufer gehört es in eine Datei, die nur root lesen kann.
+**Credentials come from the environment, never from flags.** The login endpoint sends the
+password base64-encoded rather than hashed, and it is the **account password**, not an
+application token — whoever can read the file has full EcoFlow access. On a long-running
+machine it belongs in a file only root can read.
 
-Der Sitzungstoken bleibt im Speicher, solange der Prozess läuft — und der läuft, bis ein
-Signal kommt oder die Zugangsdaten abgelehnt werden. Ein Netz, das kommt und geht, wird
-intern abgefangen und führt **nicht** zu einer neuen Anmeldung: Der Token wird nur dann
-weggeworfen, wenn die Cloud ihn selbst ablehnt (HTTP 401/403 oder ein `code` ungleich `0`
-auf `certification`) — ein Verbindungsabbruch, ein Timeout oder eine HTML-Fehlerseite vom
-Gateway sagen über den Token nichts aus. Der Unterschied ist nicht kosmetisch: Die
-Anmeldung ist die eine Anfrage, die das Kontopasswort trägt, und eine wackelige Leitung
-hat sie vorher bei jedem Versuch ausgelöst. Auf die Platte wird der Token nicht
-geschrieben: Das spart genau eine Anmeldung pro Neustart und wäre eine weitere Kopie
-eines Zugangs auf einem Dateisystem.
+The session token stays in memory as long as the process runs — and it runs until a
+signal comes or the credentials are rejected. A network that comes and goes is handled
+internally and does **not** lead to a new login: the token is only thrown away when the
+cloud itself rejects it (HTTP 401/403 or a `code` other than `0` on `certification`) — a
+dropped connection, a timeout or an HTML error page from the gateway say nothing about
+the token. The difference is not cosmetic: the login is the one request that carries the
+account password, and before this a flaky line triggered it on every attempt. The token is
+not written to disk: that would save exactly one login per restart and be one more copy of
+an access credential on a file system.
 
-Die Ausgabe ist **zeichengleich** zu `scripts/ecoflow-frames.py` — nicht aus Geschmack,
-sondern damit sich beide Fassungen nebeneinander laufen lassen und vergleichen; ein Test
-hält sie gegen dieselben Mitschnitte zusammen.
+The output is **character-for-character identical** to `scripts/ecoflow-frames.py` — not
+out of taste, but so that both versions can be run side by side and compared; a test holds
+them together against the same captures.
 
-## Kurzüberblick
+## Summary
 
-- Eine spezifische, offiziell dokumentierte REST-API für den DC Fit existiert nicht.
-- Vier Wege wurden untersucht; **genau einer liefert heute laufend Messwerte**, und das
-  ist der inoffizielle MQTT-Kanal der Endkunden-App.
-- Die generische EcoFlow Developer/Open API (Cloud) liefert für die PowerOcean-Familie
-  Fehler 1006 "not allowed" – eine Modell-Sperrliste, kein Bug. Der **DC Fit (SN-Präfix `HC31`) ist betroffen, am Gerät
-  bestätigt**: `device/list` listet ihn zwar
-  mit Code 0, `device/quota/all` verweigert aber die Messwerte mit 1006.
-- Das **Endkunden-Portal** (REST, Session-Token) antwortet, gibt aber nur den zuletzt in
-  die Cloud gepushten Stand heraus – in einer Messung stand der über eine Stunde still.
-- Der **MQTT-Kanal der App** (Protobuf, rückentwickelt) liefert von selbst Minutenwerte
-  und mit dem Stream-Schalter Sekundenwerte. Darauf laufen `scripts/ecoflow-api.sh` und
-  der Dienst `cmd/ecoflowd`.
-- **Lokales Modbus TCP** (Port 502) wäre der stabile Weg, ist am Gerät aber noch
-  gesperrt (`connection refused`): Es muss vom Installateur über die EcoFlow Pro App
-  freigeschaltet werden, und die Registerbelegung ist nicht offiziell dokumentiert,
-  sondern community-ermittelt.
-- Details siehe die verlinkten Dateien, die Gegenüberstellung in `api-status.md`.
+- A specific, officially documented REST API for the DC Fit does not exist.
+- Four paths were examined; **exactly one delivers readings continuously today**, and that
+  is the unofficial MQTT channel of the consumer app.
+- The generic EcoFlow Developer/Open API (cloud) returns error 1006 "not allowed" for the
+  PowerOcean family – a model blocklist, not a bug. The **DC Fit (SN prefix `HC31`) is
+  affected, confirmed on the device**: `device/list` does list it with code 0, but
+  `device/quota/all` refuses the readings with 1006.
+- The **consumer portal** (REST, session token) answers, but only hands out the state last
+  pushed to the cloud – in one measurement it stood still for over an hour.
+- The **app's MQTT channel** (protobuf, reverse-engineered) delivers minute values on its
+  own and per-second values with the stream switch. `scripts/ecoflow-api.sh` and the
+  service `cmd/ecoflowd` run on it.
+- **Local Modbus TCP** (port 502) would be the stable path, but is still locked on the
+  device (`connection refused`): it has to be unlocked by the installer via the EcoFlow
+  Pro app, and the register layout is not officially documented but community-derived.
+- For details see the linked files, and the comparison in `api-status.md`.
 
-## Offene Punkte
+## Open points
 
-- Bestätigung des Register-Mappings am DC Fit. Die aktuelle Quelle behandelt ihn als
-  Normalfall und kennt nur *einen* modellabhängigen Sonderfall, und der gilt dem Plus
-- Welche der beiden Register-Deutungen stimmt: `modbus-registers.md` stellt die
-  widersprüchlichen Adressen beider Quellen gegenüber, jede Zeile ist ein Einzeltest
-  am Gerät (z.B. System-SOC auf 40527 vs. 42082)
-- Bestätigung am Gerät, dass die Freischaltung wirklich über *Control Mode →
-  „Modbus control"* in der Pro App läuft (Checkliste in `api-status.md`)
-- Welche Werte `product_category`/`product_number` (40002/40003) am DC Fit liefern –
-  die Referenz-Integration kennt sie nicht
-- Ob der schnelle Strom nach dem letzten Schalter aus Zeitgründen endet oder weil die
-  MQTT-Verbindung abriss. Gemessen sind **rund 25 Sekunden** Nachlauf; in derselben
-  Messung wurde aber auch neu verbunden, das trennt sie also nicht
-- Die restlichen Felder von `cmd_id` 110. Eine Nacht mit PV = 0 hat sie in drei Gruppen
-  getrennt (PV-gebunden, Batterieentladung, Einstellungen) und Feld 45/47 als
-  Entladeleistung belegt; ungeklärt bleiben unter anderem 2, 3, 5, 18, 19, 24, 28, 32
-  und 48. `cmd_id` 1, 108, 109, 111 und 136 sind aufgeschlüsselt
-- Ob am DC Fit **nachts überhaupt Energieberichte ankommen**. Das Gerät lässt Felder mit
-  dem Wert 0 weg (siehe „Warum `grid` 0 ist“ oben); bei PV = 0 fehlte dann auch das
-  PV-Feld, und beide Dekoder verwerfen einen Frame ohne PV
-  (`internal/frames/energy.go`, `scripts/ecoflow-frames.py`). Die Mitschnitte im Repo sind
-  reine Tagaufnahmen (PV ≥ 948 W) und entscheiden das nicht. Zu prüfen mit einem
-  nächtlichen `ecoflow-api.sh live`
-- Was `dcdc` (Feld 2 des Energieberichts) misst. Der Name stammt aus einer Fremdquelle
-  (`dcdc_pwr`); es ist **nicht** Teil der Energiebilanz und folgt der Batterie mit
-  gleichem Vorzeichen, in den Mitschnitten mit 63–103 % ihres Werts, ohne festes
-  Verhältnis. Bis das geklärt ist, publiziert `ecoflowd` es nicht
-- Warum das Portal den Tagesertrag **tagsüber** in beide Richtungen danebenliegen lässt.
-  Nach Sonnenuntergang stimmen Portal und Gerät auf 0,058 % überein, es wird also
-  dasselbe gemessen; das Portal schreibt nur sprunghaft fort. Praktisch heißt das:
-  Tageswerte vom Gerät nehmen, nicht vom Portal
+- Confirmation of the register mapping on the DC Fit. The current source treats it as the
+  normal case and knows only *one* model-dependent special case, and that one concerns the
+  Plus
+- Which of the two register readings is right: `modbus-registers.md` puts the
+  contradictory addresses of both sources side by side, every row is a single test on the
+  device (e.g. system SOC at 40527 vs. 42082)
+- Confirmation on the device that unlocking really goes through *Control Mode →
+  "Modbus control"* in the Pro app (checklist in `api-status.md`)
+- Which values `product_category`/`product_number` (40002/40003) return on the DC Fit –
+  the reference integration does not know them
+- Whether the fast stream ends after the last switch for reasons of time or because the
+  MQTT connection dropped. **About 25 seconds** of run-on were measured; but the same
+  measurement also reconnected, so it does not separate the two
+- The remaining fields of `cmd_id` 110. A night with PV = 0 split them into three groups
+  (PV-bound, battery discharge, settings) and established fields 45/47 as discharge power;
+  still unclear are, among others, 2, 3, 5, 18, 19, 24, 28, 32 and 48. `cmd_id` 1, 108,
+  109, 111 and 136 are decoded
+- Whether energy reports **arrive at all at night** on the DC Fit. The device leaves out
+  fields with the value 0 (see "Why `grid` is 0" above); with PV = 0 the PV field was then
+  missing too, and both decoders discard a frame without PV
+  (`internal/frames/energy.go`, `scripts/ecoflow-frames.py`). The captures in the repo are
+  daytime recordings only (PV ≥ 948 W) and do not settle it. To be checked with a
+  night-time `ecoflow-api.sh live`
+- What `dcdc` (field 2 of the energy report) measures. The name comes from a third-party
+  source (`dcdc_pwr`); it is **not** part of the energy balance and follows the battery
+  with the same sign, in the captures at 63–103 % of its value, without a fixed ratio.
+  Until that is clear, `ecoflowd` does not publish it
+- Why the portal's daily yield is off in both directions **during the day**. After sunset
+  portal and device agree to within 0.058 %, so they measure the same thing; the portal
+  just updates in jumps. In practice: take daily values from the device, not from the
+  portal
 
-## Arbeiten an diesem Repo
+## Working on this repo
 
-Jede Änderung – Go-Code wie Notizen – läuft über einen kurzlebigen Feature-Branch
-und einen PR nach `main`. `main` bleibt dadurch jederzeit auslieferbar, und die CI
-prüft *bevor* etwas ankommt, nicht danach. Das ist wichtig, weil ein Release ein Tag
-auf `main` ist (s.u.).
+Every change – Go code and notes alike – goes through a short-lived feature branch and a
+PR to `main`. That keeps `main` shippable at all times, and CI checks *before* something
+lands, not after. This matters because a release is a tag on `main` (see below).
 
-**1. Sauber starten.** Du zweigst gleich von `main` ab; ist der Stand alt, baust du
-auf Veraltetem auf und handelst dir beim Merge Konflikte ein.
+**1. Start clean.** You branch off `main` right away; if your copy is old, you build on
+something outdated and buy yourself conflicts at merge time.
 
 ```bash
 git checkout main && git pull
 ```
 
-**2. Branch anlegen.** Kurz, kleingeschrieben, nach dem *Ziel* der Änderung benannt.
+**2. Create a branch.** Short, lowercase, named after the *goal* of the change.
 
 ```bash
 git checkout -b register-map-dcfit
 ```
 
-**3. Ändern und lokal prüfen.** Das sind exakt die Prüfungen aus
-`.github/workflows/ci.yml` – laufen sie hier durch, wird die CI später kaum rot.
+**3. Change and check locally.** These are exactly the checks from
+`.github/workflows/ci.yml` – if they pass here, CI will hardly go red later.
 
 ```bash
 go build ./... && go vet ./... && go test ./...
-gofmt -l ./cmd ./internal      # keine Ausgabe = in Ordnung
+gofmt -l ./cmd ./internal      # no output = fine
 ```
 
-Bei reinen Doku-Änderungen entfällt das. Dafür gilt: `README.md`, `api-status.md` und
-`modbus-registers.md` überschneiden sich absichtlich – ändert sich eine Aussage, die
-anderen Stellen und die „Offene Punkte"-Listen mitziehen.
+For documentation-only changes this does not apply. Instead: `README.md`,
+`api-status.md` and `modbus-registers.md` overlap on purpose – if a statement changes,
+carry the other places and the "open points" lists along.
 
-**4. Committen.** Betreffzeile im Imperativ, die das *Ergebnis* nennt; darunter ein
-Absatz zum **Warum**. Das Was steht schon im Diff. `git add -p` zeigt jeden Block
-einzeln, damit kein vergessener Debug-Ausdruck mitrutscht.
+**4. Commit.** Subject line in the imperative, naming the *result*; below it a paragraph
+on the **why**. The what is already in the diff. `git add -p` shows every hunk
+separately, so no forgotten debug statement slips in.
 
 ```bash
 git add -p && git commit
 ```
 
-**5. Pushen und PR öffnen.** `--fill` übernimmt Titel und Text aus dem Commit.
+**5. Push and open a PR.** `--fill` takes title and body from the commit.
 
 ```bash
 git push -u origin register-map-dcfit
 gh pr create --base main --fill
 ```
 
-**6. CI abwarten.** Sie läuft auf einer frischen Maschine und findet damit die
-vergessene Datei und die Abhängigkeit, die es nur lokal gibt. Rot heißt: nachbessern,
-erneut committen, pushen – der PR aktualisiert sich von allein.
+**6. Wait for CI.** It runs on a fresh machine and thus finds the forgotten file and the
+dependency that only exists locally. Red means: fix, commit again, push – the PR updates
+by itself.
 
 ```bash
 gh pr checks --watch
 ```
 
-**7. Mergen.** Squash macht aus den Zwischenschritten einen lesbaren Commit auf
-`main`. Den entfernten Branch löscht GitHub selbst.
+**7. Merge.** Squash turns the intermediate steps into one readable commit on `main`.
+GitHub deletes the remote branch by itself.
 
 ```bash
 gh pr merge --squash --delete-branch
 git checkout main && git pull
 ```
 
-**Go-Version und Abhängigkeiten.** Die `go`-Zeile in `go.mod` ist eine *Mindestversion*
-und nennt deshalb nur die Minor-Version (`go 1.27`), keinen Patch. Ein Patch dort zwänge
-jeden mit einer älteren Patch-Version, eine Toolchain nachzuladen, obwohl der Code nichts
-daraus braucht. Sicherheitskorrekturen der Standardbibliothek kommen aus der Toolchain, mit
-der gebaut wird, und CI wie Release bauen mit `stable`. Angehoben wird die Zeile nur, wenn
-der Code eine neuere Sprach- oder Bibliotheksfunktion braucht. Abhängigkeiten prüft
-`go list -m -u all`; `govulncheck ./...` zeigt, ob eine bekannte Schwachstelle den eigenen
-Code erreicht. Aktualisiert wird auch, was nur in einem eingebundenen Modul steckt.
+**Go version and dependencies.** The `go` line in `go.mod` is a *minimum version* and
+therefore names only the minor version (`go 1.27`), no patch. A patch there would force
+everyone with an older patch version to download a toolchain, although the code needs
+nothing from it. Security fixes to the standard library come from the toolchain used to
+build, and CI and release both build with `stable`. The line is only raised when the code
+needs a newer language or library feature. `go list -m -u all` checks the dependencies;
+`govulncheck ./...` shows whether a known vulnerability reaches your own code. Whatever
+sits only in an included module is updated too.
 
-**Release.** Wenn der Stand auf `main` veröffentlicht werden soll:
+**Release.** When the state on `main` is to be published:
 
 ```bash
 git checkout main && git pull
 git tag vX.Y.Z && git push origin vX.Y.Z
 ```
 
-**Welche Nummer**, entscheidet die *Art* der Änderung, nicht ihr Umfang: Patch, solange
-sich am Verhalten nichts ändert — und Hilfetexte, Kommentare und Doku ändern es nicht,
-auch wenn der Diff groß ist. Minor, sobald ein Flag, ein Kommando oder ein Topic
-dazukommt – und ebenso, solange die Nummer mit `0.` beginnt, wenn eines wegfällt oder ein
-Ausgabeformat sich ändert. Das ist dann ein Bruch und steht als solcher in den
-Release-Notes; so geschehen mit `v0.5.0`, als die Einzeltopics den JSON-Telegrammen
-wichen. Das ist leicht zu verwechseln: `v0.4.1` umfasste rund 60 Korrekturen über neun
-Dateien und war trotzdem ein Patch, weil kein einziger Codepfad anders lief.
+**Which number** is decided by the *kind* of change, not its size: patch, as long as
+nothing about the behaviour changes — and help texts, comments and docs do not change it,
+even if the diff is large. Minor, as soon as a flag, a command or a topic is added – and
+likewise, as long as the number starts with `0.`, when one is removed or an output format
+changes. That is then a break and is stated as such in the release notes; that is what
+happened with `v0.5.0`, when the single topics gave way to the JSON telegrams. This is
+easy to mix up: `v0.4.1` comprised about 60 corrections across nine files and was still a
+patch, because not a single code path ran differently.
 
-Nur auf `main` taggen – `release.yml` baut daraus die Binaries und stempelt die
-Versionsnummer über `-X main.version` ein. Ein Tag auf einem anderen Branch erzeugte
-ein Release, das auf einen Stand zeigt, den es in `main` nie gab.
+Only tag on `main` – `release.yml` builds the binaries from it and stamps the version
+number in via `-X main.version`. A tag on another branch would produce a release pointing
+at a state that never existed in `main`.
 
-> Beim Squash-Merge entsteht auf `main` ein *neuer* Commit; der Commit des Branches
-> wird nie ein Vorfahre von `main`. `git branch --merged` meldet solche Branches
-> deshalb dauerhaft als „nicht gemerged" – verlässlich ist `gh pr list`.
+> A squash merge creates a *new* commit on `main`; the branch's commit never becomes an
+> ancestor of `main`. `git branch --merged` therefore reports such branches as "not
+> merged" forever – `gh pr list` is the reliable way.
 
-## Quellen
+## Sources
 
 - https://developer.ecoflow.com
 - https://github.com/Feberdin/ecoflow-powerocean-ha
@@ -1001,8 +1000,8 @@ ein Release, das auf einen Stand zeigt, den es in `main` nie gab.
 - https://github.com/shuette42/ecoflow-energy-ha
 - https://www.photovoltaikforum.com/thread/247994-ecoflow-powerocean-modbus-protokoll/
 
-## Lizenz
+## License
 
-MIT – siehe [`LICENSE`](./LICENSE). Beachte, dass Teile der Register-Informationen
-aus MIT-lizenzierten Drittquellen (s.o.) übernommen wurden; die jeweiligen
-Original-Links sind in `modbus-registers.md` angegeben.
+MIT – see [`LICENSE`](./LICENSE). Note that parts of the register information were taken
+from MIT-licensed third-party sources (see above); the respective original links are given
+in `modbus-registers.md`.

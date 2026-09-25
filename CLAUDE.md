@@ -65,10 +65,19 @@ Branches taggen — sonst zeigt ein Release auf einen Stand, der nie in `main` w
 
 ## Sprache
 
-**Doku auf Deutsch, Code und Programmausgaben auf Englisch.** Neue oder geänderte
-Markdown-Abschnitte ebenfalls auf Deutsch (technische Bezeichner wie
-`feed_in_power_max` bleiben englisch); Go-Kommentare, `--help`-Text und
-Fehlermeldungen auf Englisch, weil das Tool universell einsetzbar sein soll.
+**`README.md` auf Englisch, die Recherche-Notizen auf Deutsch, Code und
+Programmausgaben auf Englisch.**
+
+- `README.md` ist englisch, weil `ecoflowd` und `modbusread` auch ohne Deutschkenntnisse
+  einsetzbar sein sollen – die README ist der Einstieg für genau diese Leute. Änderungen
+  daran ebenfalls auf Englisch.
+- `api-status.md`, `modbus-registers.md`, `mqtt-ausgabe.md` und diese Datei bleiben
+  deutsch: Das ist die Recherche, sie ist umfangreich und entstand auf Deutsch; eine
+  Übersetzung wäre eine zweite Fassung, die dem Stand hinterherläuft. Die README weist
+  darauf hin. Neue oder geänderte Abschnitte dort auf Deutsch (technische Bezeichner wie
+  `feed_in_power_max` bleiben englisch).
+- Go-Kommentare, `--help`-Text und Fehlermeldungen auf Englisch, weil die Werkzeuge
+  universell einsetzbar sein sollen.
 
 ## Struktur & Zusammenhang der Dateien
 
@@ -107,7 +116,7 @@ Fehlermeldungen auf Englisch, weil das Tool universell einsetzbar sein soll.
   (beide Binaries für sechs Plattformen, Tag `vX.Y.Z` auf `main`)
 - `ecoflow-open-demo/` – EcoFlows offizieller Java-Demo-Client, nur zum Nachlesen
   heruntergeladen. Per `.gitignore` bewusst **nicht** versioniert; nicht „aufräumen"
-- `README.md` – Einstieg, Disclaimer, Kurzüberblick, Quellenliste, offene Punkte
+- `README.md` – Einstieg (englisch), Disclaimer, Summary, Quellenliste, Open points
 - `api-status.md` – die *Entscheidungsebene*: Cloud-REST (EcoFlow Developer/Open API,
   HMAC-signiert, liefert für PowerOcean oft Fehler 1006) vs. lokales **Modbus TCP**
   (Port 502, Freischaltung nur durch Installateur via EcoFlow **Pro App**)
@@ -123,7 +132,8 @@ Die vier Markdown-Dateien überschneiden sich bewusst: README verlinkt alle drei
 `api-status.md` verweist für das Mapping auf `modbus-registers.md` und für die
 Ausgabeseite auf `mqtt-ausgabe.md`. Bei inhaltlichen Änderungen (z.B. Fehler 1006 gelöst,
 Freischaltpfad gefunden) **alle betroffenen Stellen mitziehen**, inkl. der „Offene
-Fragen“/„Offene Punkte“-Checklisten in README und `api-status.md`.
+Fragen“-Checkliste in `api-status.md` und „Open points“ in der README – dort auf
+Englisch.
 
 Dasselbe gilt seit dem Cloud-Kanal für die Werkzeuge: Wer an `scripts/ecoflow-api.sh`,
 `scripts/ecoflow-frames.py` oder `cmd/ecoflowd` etwas ändert, zieht die zugehörigen
