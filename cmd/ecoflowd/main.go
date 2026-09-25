@@ -33,7 +33,6 @@ import (
 const (
 	exitOK          = 0
 	exitUsage       = 1
-	exitRuntime     = 2
 	exitCredentials = 78
 )
 
