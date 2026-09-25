@@ -1001,11 +1001,11 @@ REST interface – but there is no explicit confirmation of this.
   `foxthefox/ioBroker.ecoflow-mqtt` (`dcdc_pwr`). Measured against the captures
   (26 Sep 2026): not part of the energy balance, same sign as the battery, 63–103 %
   of its value without a fixed ratio. Until that is clear, `ecoflowd` does not publish it
-  (`mqtt-output.md`, §4)
+  (`mqtt-output.md`, §3)
 - [x] Does a missing power field mean "0" or "unknown"? → **"0".** `grid` is missing in
   100 of 191 energy reports, an explicit `0.0` appears in none, and without `grid` the
   balance adds up exactly – the proto3 behaviour of omitting fields with the default value
-  (26 Sep 2026, `mqtt-output.md`, §4). It remains open whether for this reason at night,
+  (26 Sep 2026, `mqtt-output.md`, §3). It remains open whether for this reason at night,
   at PV = 0, no reports at all get through the decoders
 - [x] Does the prefix `HC31` (DC Fit) return error 1006? → **Yes, for `quota/all`**;
   `device/list`, by contrast, lists the device normally (September 2026)
