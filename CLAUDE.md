@@ -68,11 +68,11 @@ Branches taggen — sonst zeigt ein Release auf einen Stand, der nie in `main` w
 **`README.md` auf Englisch, die Recherche-Notizen auf Deutsch, Code und
 Programmausgaben auf Englisch.**
 
-- `README.md` ist englisch, weil `ecoflowd` und `modbusread` auch ohne Deutschkenntnisse
-  einsetzbar sein sollen – die README ist der Einstieg für genau diese Leute. Änderungen
-  daran ebenfalls auf Englisch.
-- `api-status.md`, `modbus-registers.md`, `mqtt-ausgabe.md` und diese Datei bleiben
-  deutsch: Das ist die Recherche, sie ist umfangreich und entstand auf Deutsch; eine
+- `README.md` und `mqtt-output.md` sind englisch, weil `ecoflowd` und `modbusread` auch
+  ohne Deutschkenntnisse einsetzbar sein sollen – die README ist der Einstieg für genau
+  diese Leute, `mqtt-output.md` beschreibt das Format, auf das sie ihre Empfänger bauen.
+  Änderungen daran ebenfalls auf Englisch.
+- `api-status.md`, `modbus-registers.md` und diese Datei bleiben deutsch: Das ist die Recherche, sie ist umfangreich und entstand auf Deutsch; eine
   Übersetzung wäre eine zweite Fassung, die dem Stand hinterherläuft. Die README weist
   darauf hin. Neue oder geänderte Abschnitte dort auf Deutsch (technische Bezeichner wie
   `feed_in_power_max` bleiben englisch).
@@ -120,7 +120,7 @@ Programmausgaben auf Englisch.**
 - `api-status.md` – die *Entscheidungsebene*: Cloud-REST (EcoFlow Developer/Open API,
   HMAC-signiert, liefert für PowerOcean oft Fehler 1006) vs. lokales **Modbus TCP**
   (Port 502, Freischaltung nur durch Installateur via EcoFlow **Pro App**)
-- `mqtt-ausgabe.md` – die *Ausgabeseite*: wie `ecoflowd` auf den lokalen Broker
+- `mqtt-output.md` – die *Ausgabeseite* (englisch): wie `ecoflowd` auf den lokalen Broker
   publiziert und warum so — zwei JSON-Telegramme statt, wie bis v0.4.x, ein Topic je
   Wert. Enthält die Begründungen (Messzeit im Payload statt Heartbeat und Last Will,
   camelCase, fehlendes Feld = 0 wegen proto3, `dcdc` erst nach Klärung) und die
@@ -130,7 +130,7 @@ Programmausgaben auf Englisch.**
 
 Die vier Markdown-Dateien überschneiden sich bewusst: README verlinkt alle drei,
 `api-status.md` verweist für das Mapping auf `modbus-registers.md` und für die
-Ausgabeseite auf `mqtt-ausgabe.md`. Bei inhaltlichen Änderungen (z.B. Fehler 1006 gelöst,
+Ausgabeseite auf `mqtt-output.md`. Bei inhaltlichen Änderungen (z.B. Fehler 1006 gelöst,
 Freischaltpfad gefunden) **alle betroffenen Stellen mitziehen**, inkl. der „Offene
 Fragen“-Checkliste in `api-status.md` und „Open points“ in der README – dort auf
 Englisch.

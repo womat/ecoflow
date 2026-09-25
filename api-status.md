@@ -20,7 +20,7 @@ Modbus-Freischaltung.
 
 Diese Datei behandelt den Weg *zum Gerät*. Wie `ecoflowd` die gewonnenen Werte auf den
 lokalen Broker weitergibt — zwei JSON-Telegramme, und warum in dieser Form — steht in
-[`mqtt-ausgabe.md`](./mqtt-ausgabe.md).
+[`mqtt-output.md`](./mqtt-output.md).
 
 ## 1. EcoFlow Developer/Open API (Cloud)
 
@@ -986,11 +986,11 @@ REST-Interface – eine explizite Bestätigung dafür liegt aber nicht vor.
   `foxthefox/ioBroker.ecoflow-mqtt` (`dcdc_pwr`). Gemessen an den Mitschnitten
   (26.09.2026): nicht Teil der Energiebilanz, gleiches Vorzeichen wie die Batterie, 63–103 %
   ihres Werts ohne festes Verhältnis. Bis das geklärt ist, publiziert `ecoflowd` es nicht
-  (`mqtt-ausgabe.md`, §4)
+  (`mqtt-output.md`, §4)
 - [x] Heißt ein fehlendes Leistungsfeld „0“ oder „unbekannt“? → **„0“.** `grid` fehlt in
   100 von 191 Energieberichten, eine explizite `0.0` steht in keinem, und ohne `grid` geht
   die Bilanz exakt auf – das proto3-Verhalten, Felder mit Standardwert wegzulassen
-  (26.09.2026, `mqtt-ausgabe.md`, §4). Offen bleibt, ob deshalb nachts, bei PV = 0, gar
+  (26.09.2026, `mqtt-output.md`, §4). Offen bleibt, ob deshalb nachts, bei PV = 0, gar
   keine Berichte durch die Dekoder kommen
 - [x] Liefert das Präfix `HC31` (DC Fit) Fehler 1006? → **Ja, bei `quota/all`**;
   `device/list` listet das Gerät dagegen normal (September 2026)
