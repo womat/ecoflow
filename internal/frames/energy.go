@@ -63,7 +63,7 @@ func (f Frame) Energy() (Energy, bool) {
 	//
 	// By the same rule a PV of exactly 0 would not be sent either, and this
 	// check would then drop the frame. The captures are daytime only, so
-	// whether that happens at night is open - see README, "Offene Punkte".
+	// whether that happens at night is open - see README, "Open points".
 	var e Energy
 	var seen bool
 	for _, fl := range body {
