@@ -1,171 +1,172 @@
-# Modbus-Register – EcoFlow PowerOcean (DC Fit / Plus)
+# Modbus registers – EcoFlow PowerOcean (DC Fit / Plus)
 
-> **Status:** Community-reverse-engineert, von EcoFlow nicht offiziell dokumentiert oder
-> unterstützt. Zwei Quellen mit **abweichenden Adressen** liegen vor (siehe
-> „Widersprüche der Quellen"); am eigenen Gerät ist noch nichts nachgemessen.
+> **Status:** Community reverse-engineered, not officially documented or supported by
+> EcoFlow. Two sources with **differing addresses** are available (see
+> "Contradictions between the sources"); nothing has been measured on our own device yet.
 
-**Testgerät dieser Notizen:** PowerOcean **DC Fit**, Firmware **1.0.6.20**.
+**Test device for these notes:** PowerOcean **DC Fit**, firmware **1.0.6.20**.
 
-**Zur Modellfrage:** Die aktuelle Quelle behandelt den **DC Fit als Normalfall** – im
-gesamten Register-Katalog gibt es genau *einen* modellabhängigen Sonderfall, und der gilt
-dem **Plus** (`feed_in_power_max`, siehe unten). Die frühere Sorge in diesen Notizen, das
-Mapping sei „am Plus ermittelt und für den DC Fit fraglich", hat die Richtung vertauscht.
-Bestätigt ist damit trotzdem nichts – nur der Verdacht hat sich gedreht.
+**On the model question:** The current source treats the **DC Fit as the normal case** –
+in the entire register catalogue there is exactly *one* model-dependent special case, and
+that one concerns the **Plus** (`feed_in_power_max`, see below). The earlier worry in
+these notes that the mapping was "determined on the Plus and questionable for the DC Fit"
+had the direction reversed. Nothing is confirmed by this, though – only the suspicion has
+turned around.
 
-## Quellen
+## Sources
 
-- https://github.com/MaxGrmm/EF-PowerOcean-TcpModbus – Home-Assistant-Integration.
-  Register-Map als Code in `custom_components/ef_powerocean_tcpmodbus/const.py`
-  (`MODBUS_REGISTERS`), Modellkatalog in `models.py`, Protokollnotizen in
-  `EcoFlow_PowerOcean_Modbus.md`. **Aktuellere und gegen das EcoFlow-Portal
-  gegengeprüfte Quelle** – im Konfliktfall die belastbarere.
-- https://github.com/MaxGrmm/ecoflow-poweroceanplus-modbus – ältere Register-Tabellen,
-  ermittelt durch Scannen von 40001–44096 an einem PowerOcean **Plus**.
-- `evcc-io/evcc`, `templates/definition/meter/ecoflow-powerocean-modbus.yaml` –
-  Meter-Template der Ladesoftware evcc. **Unabhängige dritte Quelle**: entstanden
-  außerhalb der beiden EcoFlow-Repos und bestätigt deren aktuelle Adressen (siehe
-  „Bestätigung durch evcc"). Dazu https://docs.evcc.io/en/meters/ecoflow-powerocean-modbus
-  für Freischaltungshinweis und Modbus-Parameter.
+- https://github.com/MaxGrmm/EF-PowerOcean-TcpModbus – Home Assistant integration.
+  Register map as code in `custom_components/ef_powerocean_tcpmodbus/const.py`
+  (`MODBUS_REGISTERS`), model catalogue in `models.py`, protocol notes in
+  `EcoFlow_PowerOcean_Modbus.md`. **The more recent source, cross-checked against the
+  EcoFlow portal** – the more reliable one in case of conflict.
+- https://github.com/MaxGrmm/ecoflow-poweroceanplus-modbus – older register tables,
+  determined by scanning 40001–44096 on a PowerOcean **Plus**.
+- `evcc-io/evcc`, `templates/definition/meter/ecoflow-powerocean-modbus.yaml` – meter
+  template of the charging software evcc. **Independent third source**: written outside
+  the two EcoFlow repos and confirms their current addresses (see "Confirmation by
+  evcc"). Plus https://docs.evcc.io/en/meters/ecoflow-powerocean-modbus for the unlocking
+  note and Modbus parameters.
 
-Beide GitHub-Repos stehen unter MIT-Lizenz ("free to use, modify, and distribute with
+Both GitHub repos are under the MIT license ("free to use, modify, and distribute with
 attribution").
 
-## Freischaltung
+## Unlocking
 
-Muss vom **EcoFlow-Installateur/-Partner** über die EcoFlow **Pro App** (Installateur-App,
-nicht die normale Endkunden-App) aktiviert werden – standardmäßig deaktiviert.
+Has to be activated by the **EcoFlow installer/partner** via the EcoFlow **Pro app** (the
+installer app, not the normal consumer app) – disabled by default.
 
-Der Pfad laut `EcoFlow_PowerOcean_Modbus.md`:
+The path according to `EcoFlow_PowerOcean_Modbus.md`:
 
-> Pro App öffnen → **Wechselrichter auswählen** → Control Mode auf **„Modbus control"**
-> umstellen.
+> Open the Pro app → **select the inverter** → switch Control Mode to **"Modbus
+> control"**.
 
-Es ist also kein versteckter Schalter, sondern ein **Wechsel des Betriebsmodus**. Nicht
-bestätigt ist, wie sich dieser Modus auf das interne Scheduling auswirkt – bei rein
-lesendem Zugriff sollte er folgenlos sein, belegt ist das nicht.
+So it is not a hidden switch but a **change of operating mode**. It is not confirmed how
+this mode affects the internal scheduling – with purely reading access it should have no
+consequences, but that is not proven.
 
-Der Zugang zur Pro App selbst (Installateur-Rolle, Anlagen- vs. Besitzer-Bindung,
-Entbindung von einem fremden Konto) steht in [`api-status.md`](./api-status.md),
-Abschnitt 4a „Zugang zur EcoFlow Pro App"; die Fragen für den Termin in Abschnitt 4b. Für die
-Freischaltung ist keine Übertragung der Anlage nötig – es genügt, dass ein Pro-Zugang den
-Modus umstellt.
+Access to the Pro app itself (installer role, system vs. owner binding, unbinding from
+someone else's account) is covered in [`api-status.md`](./api-status.md), section 4a
+"Access to the EcoFlow Pro app"; the questions for the appointment in section 4b.
+Unlocking does not require transferring the system – it is enough for a Pro account to
+switch the mode.
 
-## Verbindung
+## Connection
 
-| Parameter | Wert |
+| Parameter | Value |
 |---|---|
-| Protokoll | Modbus TCP |
+| Protocol | Modbus TCP |
 | Port | 502 |
-| Unit-/Slave-ID | 1 (das Gerät antwortet praktisch auf jede ID) |
-| Funktionscodes | `0x03` lesen; `0x06`/`0x10` schreiben |
-| Adressierung | direkte 4xxxx-Adressen, **literal aufs Kabel** |
-| Max. Register je Read | 125 (Modbus-Grenze einer Antwort) |
+| Unit/slave ID | 1 (the device answers to practically any ID) |
+| Function codes | `0x03` read; `0x06`/`0x10` write |
+| Addressing | direct 4xxxx addresses, **literally on the wire** |
+| Max. registers per read | 125 (Modbus limit of one response) |
 
-**Zur Adressierung:** Die Referenz-Integration übergibt die 4xxxx-Zahlen unverändert an
-pymodbus, sie gehen also genau so auf den Draht. `modbusread` tut dasselbe (siehe
-[`README.md`](./README.md): Adressen werden nie umgerechnet) – die Tabellen unten sind damit **1:1
-verwendbar**. Die frühere Angabe „Register-Nummerierung 1-based" in diesen Notizen ist
-dadurch stark in Zweifel gezogen, aber erst am Gerät endgültig zu klären.
+**On addressing:** The reference integration passes the 4xxxx numbers unchanged to
+pymodbus, so they go on the wire exactly like that. `modbusread` does the same (see
+[`README.md`](./README.md): addresses are never converted) – the tables below can thus be
+**used 1:1**. The earlier claim "register numbering 1-based" in these notes is thereby put
+in serious doubt, but can only be settled for good on the device.
 
-## Datentypen und Wortreihenfolge
+## Data types and word order
 
-| Typ | Register | Bemerkung |
+| Type | Registers | Remark |
 |---|---|---|
-| `UINT16` | 1 | Prozentwerte, Zähler, Fehlercodes, Enums |
-| `UINT32` | 2 | Kapazitäten und Leistungsgrenzen, `(high << 16) \| low` |
-| `FLOAT32` | 2 | IEEE 754, **word-swapped** – Leistung, Spannung, Strom, Energie |
-| `SERIAL` | 8 | 16 ASCII-Bytes, je Wort High-Byte zuerst |
+| `UINT16` | 1 | percentages, counters, fault codes, enums |
+| `UINT32` | 2 | capacities and power limits, `(high << 16) \| low` |
+| `FLOAT32` | 2 | IEEE 754, **word-swapped** – power, voltage, current, energy |
+| `SERIAL` | 8 | 16 ASCII bytes, high byte first in each word |
 
-**Lesen und Schreiben verwenden unterschiedliche Wortreihenfolgen** – laut Quelle
-widerspricht sich EcoFlows eigene Doku hier, gemessen wurde am Plus:
+**Reading and writing use different word orders** – according to the source, EcoFlow's
+own documentation contradicts itself here; it was measured on the Plus:
 
-| Richtung | Wortreihenfolge |
+| Direction | Word order |
 |---|---|
-| Lesen (`0x03`) | **Low-Word zuerst** (Register *N* = untere Hälfte) |
-| Schreiben (`0x10`) | **High-Word zuerst** |
+| Read (`0x03`) | **low word first** (register *N* = lower half) |
+| Write (`0x10`) | **high word first** |
 
-Für `modbusread` heißt das beim Lesen: `--word-order low`.
+For `modbusread` this means, when reading: `--word-order low`.
 
-Die Falle beim Schreiben: Wird ein 32-Bit-Wert in *Lese*-Reihenfolge geschrieben, lehnt das
-Gerät das nicht ab – es speichert die Worte und interpretiert sie High-Word-first, handelt
-also auf einem um Faktor 65536 zu großen Wert. Ein Schreibzugriff kann dadurch „erfolgreich"
-aussehen, während etwas völlig anderes passiert.
+The trap when writing: if a 32-bit value is written in *read* order, the device does not
+reject it – it stores the words and interprets them high-word-first, so it acts on a value
+65536 times too large. A write can therefore look "successful" while something entirely
+different happens.
 
-## Register-Map (aktuelle Quelle: `const.py`)
+## Register map (current source: `const.py`)
 
-Die Integration liest in vier Blöcken:
+The integration reads in four blocks:
 
-| Block | Start | Worte | Inhalt |
+| Block | Start | Words | Content |
 |---|---|---|---|
-| Device Info | 40002 | 12 | Produkttyp, Seriennummer, Firmware |
-| Live | 40519 | 89 | Leistungen, Limits, Spannungen, Ströme, PV |
-| Faults | 42049 | 45 | Fehlerzähler und -codes, SOC je Batterie |
-| Energie | 42161 | 100 | Lifetime- und Tageszähler |
+| Device info | 40002 | 12 | product type, serial number, firmware |
+| Live | 40519 | 89 | power, limits, voltages, currents, PV |
+| Faults | 42049 | 45 | fault counters and codes, SOC per battery |
+| Energy | 42161 | 100 | lifetime and daily counters |
 
-### Geräteidentität
+### Device identity
 
-| Register | Typ | Beschreibung |
+| Register | Type | Description |
 |---|---|---|
 | 40002 | UINT16 | `product_category` |
 | 40003 | UINT16 | `product_number` |
-| 40004 | SERIAL (8) | Seriennummer, 16 ASCII-Bytes |
-| 40012 | UINT32 | Firmware-Version |
+| 40004 | SERIAL (8) | serial number, 16 ASCII bytes |
+| 40012 | UINT32 | firmware version |
 
-**Offen und am eigenen Gerät klärbar:** `models.py` kann den **DC Fit nicht** aus diesen
-Registern erkennen – belegt sind nur `product_number` 1 (Single-/Three-Phase, je nach
-`product_category`), 2 (Single-Phase) und 3 (Plus); im Code steht dazu ausdrücklich
-„We are not sure of the product number for the remaining models." Wer 40002/40003 an einem
-DC Fit liest, schließt diese Lücke – auch upstream.
+**Open and resolvable on our own device:** `models.py` **cannot** recognise the DC Fit
+from these registers – only `product_number` 1 (single/three-phase, depending on
+`product_category`), 2 (single-phase) and 3 (Plus) are known; the code says explicitly
+"We are not sure of the product number for the remaining models." Whoever reads
+40002/40003 on a DC Fit closes this gap – upstream too.
 
-### Live-Werte
+### Live values
 
-| Register | Typ | Beschreibung |
+| Register | Type | Description |
 |---|---|---|
-| 40519 | FLOAT32 | `house_power` – Hausverbrauch |
-| 40521 | FLOAT32 | `grid_power` – Netzleistung |
-| 40523 | FLOAT32 | `solar_power` – PV-Leistung |
-| 40525 | FLOAT32 | `battery_power` – Batterieleistung |
-| 40527 | UINT16 | `battery_soc` – **System-SOC in %** |
+| 40519 | FLOAT32 | `house_power` – house consumption |
+| 40521 | FLOAT32 | `grid_power` – grid power |
+| 40523 | FLOAT32 | `solar_power` – PV power |
+| 40525 | FLOAT32 | `battery_power` – battery power |
+| 40527 | UINT16 | `battery_soc` – **system SOC in %** |
 | 40528 | UINT32 | `inverter_rated_power` |
 | 40574 | FLOAT32 | `battery_voltage` |
 | 40576 | FLOAT32 | `battery_current` |
 | 40578 | FLOAT32 | `battery_temperature` |
-| 40580 / 40582 / 40584 | FLOAT32 | Spannung L1 / L2 / L3 |
-| 40586 / 40588 / 40590 | FLOAT32 | Strom L1 / L2 / L3 |
+| 40580 / 40582 / 40584 | FLOAT32 | voltage L1 / L2 / L3 |
+| 40586 / 40588 / 40590 | FLOAT32 | current L1 / L2 / L3 |
 | 40592 | FLOAT32 | `inverter_temperature` |
-| 40594 | FLOAT32 | `frequency` – Netzfrequenz |
-| 40596 / 40598 / 40600 | FLOAT32 | PV-Strang 1 / 2 / 3 Spannung |
-| 40602 / 40604 / 40606 | FLOAT32 | PV-Strang 1 / 2 / 3 Strom |
+| 40594 | FLOAT32 | `frequency` – grid frequency |
+| 40596 / 40598 / 40600 | FLOAT32 | PV string 1 / 2 / 3 voltage |
+| 40602 / 40604 / 40606 | FLOAT32 | PV string 1 / 2 / 3 current |
 
-Die Float-Werte tragen physikalische Einheiten direkt; die Skalierungsfaktoren (×10, ×100,
-×1000) der älteren Quelle entfallen hier – siehe „Widersprüche der Quellen".
+The float values carry physical units directly; the scaling factors (×10, ×100, ×1000) of
+the older source do not apply here – see "Contradictions between the sources".
 
-### Fehler und Batterien
+### Faults and batteries
 
-| Register | Typ | Beschreibung |
+| Register | Type | Description |
 |---|---|---|
 | 42049 | UINT16 | `fault_count` |
 | 42050 ff. | UINT16 | `fault_1` … `fault_n` |
-| 42081 | UINT16 | `battery_count` – **Anzahl Batterien** |
-| 42082 ff. | UINT16 | SOC je Batterie (`42081 + n`) |
+| 42081 | UINT16 | `battery_count` – **number of batteries** |
+| 42082 ff. | UINT16 | SOC per battery (`42081 + n`) |
 
-### Energiezähler
+### Energy counters
 
-| Register | Typ | Beschreibung |
+| Register | Type | Description |
 |---|---|---|
-| 42161 / 42163 | FLOAT32 | Netzbezug gesamt / heute |
-| 42177 / 42179 | FLOAT32 | Netzeinspeisung gesamt / heute |
-| 42225 / 42227 | FLOAT32 | Batterie geladen gesamt / heute |
-| 42241 / 42243 | FLOAT32 | Batterie entladen gesamt / heute |
-| 42257 / 42259 | FLOAT32 | Solarertrag gesamt / heute |
+| 42161 / 42163 | FLOAT32 | grid import total / today |
+| 42177 / 42179 | FLOAT32 | grid export total / today |
+| 42225 / 42227 | FLOAT32 | battery charged total / today |
+| 42241 / 42243 | FLOAT32 | battery discharged total / today |
+| 42257 / 42259 | FLOAT32 | solar yield total / today |
 
-## Bestätigung durch evcc
+## Confirmation by evcc
 
-Das evcc-Template ist unabhängig von den beiden EcoFlow-Repos entstanden und verwendet
-exakt die Adressen der aktuellen Karte – inklusive `float32s`, evccs Bezeichnung für
-**word-swapped** Float, sowie Port 502 und Unit-ID 1:
+The evcc template was written independently of the two EcoFlow repos and uses exactly the
+addresses of the current map – including `float32s`, evcc's name for a **word-swapped**
+float, as well as port 502 and unit ID 1:
 
-| Register | evcc | Deckt sich mit |
+| Register | evcc | Matches |
 |---|---|---|
 | 40521 | Grid power, W | `grid_power` |
 | 40523 | Solar power, W | `solar_power` |
@@ -175,93 +176,92 @@ exakt die Adressen der aktuellen Karte – inklusive `float32s`, evccs Bezeichnu
 | 42241 | Battery discharged total, kWh | `bat_discharged_total` |
 | 42257 | Solar yield total, kWh | `solar_total` |
 
-Damit ist **40527 als System-SOC von zwei unabhängigen Quellen gestützt** – die ältere
-Deutung „evtl. Max-SOC-Limit" ist damit unwahrscheinlich geworden (gemessen ist sie
-deshalb trotzdem noch nicht).
+This means **40527 as system SOC is backed by two independent sources** – the older
+reading "possibly max SOC limit" has thereby become unlikely (it still has not been
+measured, though).
 
-**Neuer Widerspruch beim Vorzeichen:** evcc kommentiert 40525 mit „positive when
-discharging, negative when charging" und dreht den Rohwert per `scale: -1` um. Die ältere
-Tabelle in diesen Notizen behauptete das Gegenteil (positiv = laden). Am Gerät zu
-entscheiden: bei bekanntem Ladevorgang einmal 40525 lesen.
+**A new contradiction about the sign:** evcc comments 40525 with "positive when
+discharging, negative when charging" and flips the raw value with `scale: -1`. The older
+table in these notes claimed the opposite (positive = charging). To be decided on the
+device: read 40525 once during a known charging phase.
 
-## Widersprüche der Quellen (= der Messplan)
+## Contradictions between the sources (= the measurement plan)
 
-Die ältere Tabelle und die aktuelle Integration deuten teils dieselben Adressen
-unterschiedlich. Beide Quellen stimmen überein bei **40580–40591** (Phasenspannungen und
--ströme) und **40602–40607** (PV-Strangströme). Die Abweichungen:
+The older table and the current integration partly interpret the same addresses
+differently. Both sources agree on **40580–40591** (phase voltages and currents) and
+**40602–40607** (PV string currents). The differences:
 
-| Adresse | Ältere Quelle | Aktuelle Quelle |
+| Address | Older source | Current source |
 |---|---|---|
-| 40527 | „evtl. Max-SOC-Limit", Wert 100 | `battery_soc` (System-SOC in %) |
-| 40574 | PV-Gesamtleistung (×100) | `battery_voltage` |
-| 40576 | Batterieleistung (×1000) | `battery_current` |
-| 40592 | Netzfrequenz | `inverter_temperature` |
+| 40527 | "possibly max SOC limit", value 100 | `battery_soc` (system SOC in %) |
+| 40574 | total PV power (×100) | `battery_voltage` |
+| 40576 | battery power (×1000) | `battery_current` |
+| 40592 | grid frequency | `inverter_temperature` |
 | 40594 | – | `frequency` |
-| 40596 | Wirkleistung (×10) | PV-Strang-1-Spannung |
-| 40600 | Inverter-Temperatur | PV-Strang-3-Spannung |
-| 42081 | Systemstatus (1 = Online) | `battery_count` |
-| 42082 | Batterie-SOC | SOC der **ersten** Batterie |
+| 40596 | active power (×10) | PV string 1 voltage |
+| 40600 | inverter temperature | PV string 3 voltage |
+| 42081 | system status (1 = online) | `battery_count` |
+| 42082 | battery SOC | SOC of the **first** battery |
 
-Zwei Beobachtungen dazu, beide **unbestätigt**:
+Two observations on this, both **unconfirmed**:
 
-- Bei 42081/42082 können sich beide Deutungen wie eine Bestätigung angefühlt haben: Eine
-  Anlage mit *einer* Batterie liefert dort eine 1 – als „online" ebenso plausibel wie als
-  „battery_count".
-- Die Skalierungsfaktoren der älteren Quelle (×10, ×100, ×1000) wirken wie Korrekturen für
-  falsch zugeordnete Adressen. Wenn die aktuelle Karte stimmt, braucht es sie nicht.
+- At 42081/42082 both readings may have felt like a confirmation: a system with *one*
+  battery returns a 1 there – as plausible for "online" as for "battery_count".
+- The scaling factors of the older source (×10, ×100, ×1000) look like corrections for
+  wrongly assigned addresses. If the current map is right, they are not needed.
 
-**Am Gerät zu entscheiden**, sobald Modbus frei ist – jede Zeile ist ein Einzeltest:
+**To be decided on the device** as soon as Modbus is unlocked – every row is a single
+test:
 
 ```
-modbusread <ip> 40527 uint16                       # 100 → eher Limit; 0..100 plausibel → SOC
-modbusread <ip> 40574 float32 --word-order low     # Spannung (~400 V) oder Leistung?
-modbusread <ip> 42081 uint16                       # Anzahl Batterien oder Online-Flag?
-modbusread <ip> 40525 float32 --word-order low     # Vorzeichen bei bekanntem Ladevorgang
-modbusread <ip> 40519 raw --count 100 --out hex    # Live-Block am Stück ansehen
+modbusread <ip> 40527 uint16                       # 100 → rather a limit; 0..100 plausible → SOC
+modbusread <ip> 40574 float32 --word-order low     # voltage (~400 V) or power?
+modbusread <ip> 42081 uint16                       # number of batteries or online flag?
+modbusread <ip> 40525 float32 --word-order low     # sign during a known charging phase
+modbusread <ip> 40519 raw --count 100 --out hex    # look at the live block in one piece
 ```
 
-Die offiziellen Cloud-Feldnamen in [`api-status.md`](./api-status.md) (`bpSoc`, `bpPwr`,
-`mpptPwr`, `sysLoadPwr`, `sysGridPwr`) sind dabei die Gegenprobe für den **Betrag**: Ein
-Register, dessen Wert nicht zur offiziellen Semantik passt, ist falsch gedeutet.
+The official cloud field names in [`api-status.md`](./api-status.md) (`bpSoc`, `bpPwr`,
+`mpptPwr`, `sysLoadPwr`, `sysGridPwr`) serve as the cross-check for the **magnitude**: a
+register whose value does not fit the official semantics is misinterpreted.
 
-**Bei den Vorzeichen taugt sie nicht.** Am DC Fit gilt für `sysGridPwr` das Gegenteil der
-Dokuangabe — positiv heißt dort **Einspeisung**, gemessen über die Energiebilanz
-`PV = Batterie + Haus + Netz`. Wer die offizielle Konvention ungeprüft als Maßstab nimmt,
-verwirft eine richtige Deutung. Was auf dem Cloud-Kanal gemessen ist: Batterie positiv =
-Laden, Netz positiv = Einspeisung, Haus wird negativ gemeldet. Ob die Modbus-Register
-dieselbe Richtung führen, ist damit **nicht** gesagt — es ist aber die Gegenprobe, die
-bereitliegt.
+**For the signs it is no use.** On the DC Fit, `sysGridPwr` behaves opposite to what the
+docs say — positive there means **export**, measured via the energy balance
+`PV = battery + house + grid`. Whoever takes the official convention as the yardstick
+without checking discards a correct interpretation. What is measured on the cloud channel:
+battery positive = charging, grid positive = export, house is reported negative. Whether
+the Modbus registers follow the same direction is **not** established by this — but it is
+the cross-check that is ready to hand.
 
-## Steuer-/Konfigurationsregister
+## Control/configuration registers
 
-### Explizit als beschreibbar implementiert (Home-Assistant-Integration)
-| Register | Beschreibung | Range |
+### Explicitly implemented as writable (Home Assistant integration)
+| Register | Description | Range |
 |---|---|---|
-| 40536 | `min_soc_limit` (Entladeuntergrenze) | 0–100 %, Schritt 1 |
-| 40541 | `device_led_brightness` | 0–100 %, Schritt 10 |
+| 40536 | `min_soc_limit` (lower discharge limit) | 0–100 %, step 1 |
+| 40541 | `device_led_brightness` | 0–100 %, step 10 |
 
-### Bekannt, aber (noch) nicht als schreibbar exponiert
-| Register | Beschreibung |
+### Known, but not (yet) exposed as writable
+| Register | Description |
 |---|---|
-| 40530 | `system_modes` (UINT32, vermutlich Bitmaske) |
-| 40609 | `feed_in_power_max` – **einziger modellabhängiger Fall**: am PowerOcean **Plus** stattdessen 40538 |
+| 40530 | `system_modes` (UINT32, presumably a bitmask) |
+| 40609 | `feed_in_power_max` – **the only model-dependent case**: on the PowerOcean **Plus** 40538 instead |
 | 40546 | `limit_inv_power` |
 | 40548 | `limit_inv_max` |
 | 40552 | `battery_capacity` |
 | 40554 | `battery_discharge_power_limit` |
 | 40556 | `battery_charge_power_limit` |
 
-### Modi/Enums (aktuell nur lesend implementiert)
+### Modes/enums (currently implemented read-only)
 - `grid_mode`, `operating_mode`
-- `self_use_mode_ena`, `intelligent_mode_ena`, `battery_saver_mode_ena` (Binärflags)
+- `self_use_mode_ena`, `intelligent_mode_ena`, `battery_saver_mode_ena` (binary flags)
 
-### Nicht kartierte Konfigurationsregister
-Der Block 40519–40607 wird am Stück gelesen, aber nicht vollständig gedeutet: Unterhalb
-40574 liegen mehr Register, als die Integration **dekodiert**; einige davon sind
-**vorzeichenbehaftete** 32-Bit-Werte, für die es dort keinen Decoder gibt.
-`modbusread` kann sie mit `int32` lesen.
+### Unmapped configuration registers
+The block 40519–40607 is read in one piece but not fully interpreted: below 40574 there
+are more registers than the integration **decodes**; some of them are **signed** 32-bit
+values for which there is no decoder there. `modbusread` can read them with `int32`.
 
-## Decoding-Snippet (pymodbus)
+## Decoding snippet (pymodbus)
 
 ```python
 import struct
@@ -278,7 +278,7 @@ def read_float(addr):
     r = client.read_holding_registers(addr, count=2, slave=1)
     if r.isError():
         return None
-    # Lesereihenfolge: registers[0] = Low-Word, registers[1] = High-Word
+    # read order: registers[0] = low word, registers[1] = high word
     raw = struct.pack('>HH', r.registers[1], r.registers[0])
     return round(struct.unpack('>f', raw)[0], 3)
 
@@ -291,42 +291,39 @@ def read_serial(addr=40004, count=8):
     return ''.join(c for c in chars if 32 <= ord(c) <= 126)
 ```
 
-## Bekannte Lücken – was Modbus nicht liefert
+## Known gaps – what Modbus does not deliver
 
-Die Cloud kennt deutlich mehr als Modbus. Betroffen sind unter anderem Zellspannungen,
-Temperaturen je Pack, State of Health und Zyklenzahl, DC-Bus- und Isolationswerte,
-AFCI-Selbsttest, **phasenweise Wirk-/Blind-/Scheinleistung** (Modbus hat nur Spannung und
-Strom), rund 180 Netzschutzparameter, Zeitpläne/Peak-Shaving/VPP, ausführliche Fehlerlisten
-sowie Monats- und Jahresenergien.
+The cloud knows considerably more than Modbus. Affected are, among others, cell voltages,
+temperatures per pack, state of health and cycle count, DC bus and insulation values, the
+AFCI self-test, **per-phase active/reactive/apparent power** (Modbus only has voltage and
+current), about 180 grid protection parameters, schedules/peak shaving/VPP, detailed fault
+lists, and monthly and yearly energies.
 
-Für dieses Gerät ist die **offizielle** Cloud-API gesperrt (siehe `api-status.md`).
-Erreichbar bleiben diese Werte über zwei inoffizielle Wege, beide inzwischen skriptiert
-statt aus dem Browser abgelesen:
+For this device the **official** cloud API is blocked (see `api-status.md`). These values
+remain reachable via two unofficial paths, both scripted by now rather than read off the
+browser:
 
-- **Endkunden-Portal**, `provider-service/user/device/detail?sn=<SN>` —
-  `scripts/ecoflow-api.sh portal|status`. **Keine Live-Quelle:** Der Endpunkt gibt den
-  zuletzt in die Cloud gepushten Stand heraus, der in einer Messung über eine Stunde
-  stillstand.
-- **App-MQTT-Kanal** — `scripts/ecoflow-api.sh live|fast`, ausgepackt von
-  `scripts/ecoflow-frames.py` oder von `cmd/ecoflowd`. Liefert laufend Messwerte, dazu
-  die Stundenbilanz des Tages und die Seriennummern der verbauten Komponenten.
+- **Consumer portal**, `provider-service/user/device/detail?sn=<SN>` —
+  `scripts/ecoflow-api.sh portal|status`. **Not a live source:** the endpoint hands out the
+  state last pushed to the cloud, which in one measurement stood still for over an hour.
+- **App MQTT channel** — `scripts/ecoflow-api.sh live|fast`, unpacked by
+  `scripts/ecoflow-frames.py` or by `cmd/ecoflowd`. Delivers readings continuously, plus
+  the day's hourly balance and the serial numbers of the installed components.
 
-Beides ist inoffiziell und jederzeit änderbar.
+Both are unofficial and can change at any time.
 
-## Vorsicht bei Schreibzugriffen
+## Caution with write access
 
-`modbusread` schreibt grundsätzlich nicht – es gibt in diesem Programm keinen Codepfad,
-der einen Modbus-Schreibbefehl absetzt. (Das zweite Binary des Repos, `ecoflowd`, hat
-einen Schreibpfad, aber in die Cloud und nur hinter dem Flag `--fast`; Modbus fasst es
-nicht an.) Wer es anderweitig tut:
+`modbusread` never writes – there is no code path in this program that issues a Modbus
+write command. (The repo's second binary, `ecoflowd`, has a write path, but to the cloud
+and only behind the `--fast` flag; it does not touch Modbus.) If you write by other means:
 
-- Das Mapping ist reverse-engineert und von EcoFlow nicht bestätigt; Firmware-Updates
-  können Adressen und Verhalten ändern.
-- **Rücklesen beweist nichts.** Unmittelbar nach einem 32-Bit-Schreibzugriff stehen die
-  Worte so da, wie sie gesendet wurden; erst Sekunden später dreht die Firmware sie in
-  Lesereihenfolge. Beides belegt nur die Zustellung, nicht die Wirkung. Verlässlich ist
-  allein das Verhalten: bewegte Leistung, LED, oder die Pro App.
-- Vor produktivem Zugriff auf die Leistungslimit-Register (40554/40556) erst mit
-  unkritischen Registern (Min-SOC, LED) testen und das Geräteverhalten beobachten.
-- Schreibzugriffe können das interne Scheduling stören – immer nur ein Register auf einmal
-  ändern.
+- The mapping is reverse-engineered and not confirmed by EcoFlow; firmware updates can
+  change addresses and behaviour.
+- **Reading back proves nothing.** Immediately after a 32-bit write the words stand as
+  they were sent; only seconds later does the firmware turn them into read order. Both
+  only prove delivery, not effect. The only reliable evidence is behaviour: power that
+  moves, the LED, or the Pro app.
+- Before productive access to the power limit registers (40554/40556), test with
+  non-critical registers first (min SOC, LED) and watch the device's behaviour.
+- Writes can disturb the internal scheduling – only ever change one register at a time.

@@ -8,16 +8,12 @@ local Modbus TCP), and the tools that came out of them.
 > Modbus registers described here. Use at your own risk, especially when writing to
 > registers.
 
-This README, `mqtt-output.md` and all tools (output, `--help`, code comments) are in
-English. The two research notes `api-status.md` and `modbus-registers.md` are written in
-**German**.
-
 ## Contents
 
 | File                                                 | Description                                                                                            |
 |------------------------------------------------------|--------------------------------------------------------------------------------------------------------|
-| [`api-status.md`](./api-status.md)                   | Overview: cloud REST API vs. local Modbus TCP, known problems (e.g. error 1006), unlocking (German)     |
-| [`modbus-registers.md`](./modbus-registers.md)       | Register map (SOC, battery, PV, grid, energy counters, control registers) with decoding examples (German) |
+| [`api-status.md`](./api-status.md)                   | Overview: cloud REST API vs. local Modbus TCP, known problems (e.g. error 1006), unlocking              |
+| [`modbus-registers.md`](./modbus-registers.md)       | Register map (SOC, battery, PV, grid, energy counters, control registers) with decoding examples          |
 | [`mqtt-output.md`](./mqtt-output.md)                 | The output format of `ecoflowd` on the local broker – why two JSON telegrams and what they look like   |
 | [`cmd/modbusread`](./cmd/modbusread)                 | Small Go CLI for checking the registers on the device (see below)                                      |
 | [`scripts/ecoflow-api.sh`](./scripts/ecoflow-api.sh) | Shell script for all four cloud paths: Developer API, portal, app MQTT, stream switch (see below)       |
