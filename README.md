@@ -841,9 +841,10 @@ it works is shown only by whether fast reports arrive.
   Until that is clear, `ecoflowd` does not publish it
 - Scheduled tasks: how the app enables, disables, changes, creates and deletes them is
   captured (`96/125`; the task list comes as `96/127` and is pushed as `96/10`, see
-  `api-status.md`, section 3). Open: whether the device accepts such a command from
-  anything other than the app. That is a write test and, like any second write path, a
-  decision of its own
+  `api-status.md`, section 3). A single write test showed that the device also accepts
+  enabling and disabling an existing task from outside the app. Open: whether that
+  becomes a permanent second write path. Like any second write path, that is a decision of
+  its own; the repo contains no such command
 - Why the portal's daily yield is off in both directions **during the day**. After sunset
   portal and device agree to within 0.058 %, so they measure the same thing; the portal
   just updates in jumps. In practice: take daily values from the device, not from the

@@ -914,10 +914,43 @@ established**.
 Also seen, **not assigned:** when the app was closed it sent `cmd_func 53 / cmd_id 113` to
 `dest` 53, without a payload.
 
+#### Write test: the device accepts `96/125` without the app (26 September 2026)
+
+One single test, decided by the maintainer. It was meant to settle one question, not to build a
+second write path; whether there will be one remains a decision of its own (`CLAUDE.md`).
+Nothing was added to the repo for it. A one-off script outside the repo sent the frames.
+
+**The frames were captured, not assembled.** In the app, a daily task 10:00–14:00 ("Laden
+des Akkus", internal number 7) was switched off, on and off again while `app-mqtt set` was
+listening. Then the app was closed completely; its stream switch `96/97` stopped arriving on
+`set`. Both captured frames (on and off) were then sent from the Mac, **byte for byte
+unchanged except for the sequence number** (field 14). Transport as for `fast`: MQTT v5,
+QoS 1, a fresh `ANDROID_…` client id, `/app/<userId>/<SN>/thing/property/set`.
+
+The app counts `seq` past 127, and the varint then takes two bytes. A replacement must
+therefore have the same encoded length, otherwise the length fields no longer match.
+
+| Time (local) | Sent             | Broker        | `set_reply`                        | `96/10` (device push)   |
+|--------------|------------------|---------------|------------------------------------|-------------------------|
+| 23:03:51     | "on", `seq` 29   | PUBACK RC:0   | `96/125` ack, task 7, **`seq` 29** | task 7 `is_enable` = 1  |
+| 23:06:54     | "off", `seq` 31  | PUBACK RC:0   | `96/125` ack, task 7, **`seq` 31** | task 7 `is_enable` missing = off |
+
+- **The acknowledgement carries our sequence number**, so it answered our frame and not one of
+  the app's.
+- In between, the maintainer opened the app: it showed the task as **enabled**, and after the
+  second frame as **disabled**. So the device changed its stored state, not just a display.
+- `is_effect` stayed 0 because 23:00 lies outside 10:00–14:00. **The effect was therefore not
+  part of this test.** That enabling a task blocks the discharge is measured with the app
+  (table above). What this test adds is that the device does not care where the command
+  comes from.
+
+**Result:** the DC Fit accepts enabling and disabling an existing task from a client other than
+the phone app, with a replayed frame and a new sequence number. Not tested: frames with a changed
+body, i.e. other times, a different type, create or delete. Those would no longer be captured
+bytes.
+
 **Not tested:**
 
-- whether the device accepts a `96/125` that does not come from the app. That would be a
-  write test and needs a decision of its own, see `CLAUDE.md`
 - the Android header of the template
 - the natural end of a task
 - the maximum number of tasks: the template reports 6 charge and 3 feed-in schedules on a
@@ -1095,12 +1128,12 @@ Open:
   Lag alone does not explain it (see "The hourly history"). Suspicion, not established:
   `measured` dates the power value, not the energy counter
 - [ ] The remaining fields of `96/110` (see section 3)
-- [ ] Scheduled tasks: does the device accept a `96/125` that does not come from the app?
-  That would be a write test, and a second write path is a decision of its own
-  (`CLAUDE.md`). Also open: the natural end of a task (does `96/10` report it?), the
-  Android header variant, minutes outside the app's 30-minute grid, and where the DC Fit
-  takes its self-consumption from while "Laden des Akkus" is active (section 3,
-  "Scheduled tasks")
+- [ ] Scheduled tasks: should there be a permanent second write path for them (e.g. in
+  `ecoflowd`)? A decision of its own (`CLAUDE.md`), now with the write test on the table.
+  Also open: frames with a changed body (other times, create, delete), the natural end
+  of a task (does `96/10` report it?), the Android header variant, minutes outside the
+  app's 30-minute grid, and where the DC Fit takes its self-consumption from while
+  "Laden des Akkus" is active (section 3, "Scheduled tasks")
 
 Answered – the evidence is in the sections named:
 
@@ -1125,6 +1158,9 @@ Answered – the evidence is in the sections named:
 - [x] How the app enables, disables, changes, creates and deletes scheduled tasks: one
   command `96/125`, the list via `96/127` and pushed as `96/10`; captured by listening on
   26 Sep 2026 (section 3, "Scheduled tasks")
+- [x] The device accepts enabling and disabling an existing task without the app: captured
+  frames replayed with a new sequence number, acknowledged and applied, the app showed the
+  change (section 3, "Write test")
 
 ## Sources
 
