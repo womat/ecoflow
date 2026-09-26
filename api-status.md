@@ -822,7 +822,7 @@ embedded message:
 | Field | Name (template)    | Measured on the DC Fit |
 |-------|--------------------|------------------------|
 | 2     | `is_cfg`           | 1 = create, 2 = modify, **3 = delete**. The template knows no way to delete; here it is simply 3 |
-| 3     | `task_index`       | internal number of the task. The app does not show it. When creating, the app chose 7 while 4 and 6 existed – presumably "highest + 1", from a single case |
+| 3     | `task_index`       | internal number of the task. The app does not show it. When creating, the app chose 7 while 4 and 6 existed, and later 8 while only 7 existed – presumably "highest + 1" |
 | 4     | `is_enable`        | 1 = enabled. **Disabled means the field is missing**, it is never sent as 0 (as in the template) |
 | 5     | `is_effect`        | never sent by the app; only in the task lists (below): 1 = running now |
 | 6     | `type`             | 1 = "Laden des Akkus", 2 = "Mit der Batterie Lasten betreiben" (supply the loads from the battery). The template leaves this open |
@@ -944,10 +944,27 @@ therefore have the same encoded length, otherwise the length fields no longer ma
   (table above). What this test adds is that the device does not care where the command
   comes from.
 
-**Result:** the DC Fit accepts enabling and disabling an existing task from a client other than
-the phone app, with a replayed frame and a new sequence number. Not tested: frames with a changed
-body, i.e. other times, a different type, create or delete. Those would no longer be captured
-bytes.
+**Second test the same evening: create and delete.** Same procedure. In the app a harmless task
+was created and deleted right away ("Laden des Akkus", once on 27 Sep 2026, 03:00–03:30). The
+app gave it number 8. With the app closed, both captured frames were then replayed:
+
+| Time (local) | Sent                                  | Broker      | `set_reply`                         | `96/10` (device push) |
+|--------------|---------------------------------------|-------------|-------------------------------------|-----------------------|
+| 23:30:04     | create (`is_cfg` 1, task 8), `seq` 105 | PUBACK RC:0 | `96/125` ack, task 8, **`seq` 105** | list contains 7 **and 8** |
+| 23:35:41     | delete (`is_cfg` 3, task 8), `seq` 110 | PUBACK RC:0 | `96/125` ack, task 8, **`seq` 110** | list contains only 7  |
+
+After each frame the app showed the result: the test task was back with time and mode as
+created, and then gone again, while task 7 stayed unchanged.
+
+One oddity: when the **app** created the task at 23:22:51, no acknowledgement arrived on
+`set_reply`, although `96/10` showed the new task. The replayed create was acknowledged. Whether
+the device skipped that ack or the capture missed it is open.
+
+**Result:** the DC Fit accepts enable, disable, create and delete from a client other than the
+phone app, with replayed frames and new sequence numbers. The command's origin makes no
+difference to the device. Not tested: frames with a **changed body**, i.e. other times, another
+type or another number than the app chose. Those would no longer be captured bytes, and they
+would be needed if an automation is to set its own windows.
 
 **Not tested:**
 
@@ -1130,7 +1147,7 @@ Open:
 - [ ] The remaining fields of `96/110` (see section 3)
 - [ ] Scheduled tasks: should there be a permanent second write path for them (e.g. in
   `ecoflowd`)? A decision of its own (`CLAUDE.md`), now with the write test on the table.
-  Also open: frames with a changed body (other times, create, delete), the natural end
+  Also open: frames with a changed body (own times, type or task number), the natural end
   of a task (does `96/10` report it?), the Android header variant, minutes outside the
   app's 30-minute grid, and where the DC Fit takes its self-consumption from while
   "Laden des Akkus" is active (section 3, "Scheduled tasks")
@@ -1158,9 +1175,9 @@ Answered – the evidence is in the sections named:
 - [x] How the app enables, disables, changes, creates and deletes scheduled tasks: one
   command `96/125`, the list via `96/127` and pushed as `96/10`; captured by listening on
   26 Sep 2026 (section 3, "Scheduled tasks")
-- [x] The device accepts enabling and disabling an existing task without the app: captured
-  frames replayed with a new sequence number, acknowledged and applied, the app showed the
-  change (section 3, "Write test")
+- [x] The device accepts enable, disable, create and delete of a task without the app:
+  captured frames replayed with a new sequence number, acknowledged and applied, the app
+  showed the change (section 3, "Write test")
 
 ## Sources
 
