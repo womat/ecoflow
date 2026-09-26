@@ -939,8 +939,7 @@ Open:
 - [ ] What does field 2 of the energy report (`dcdc`) measure? Not part of the energy
   balance, same sign as the battery, 63–103 % of its value (26 Sep 2026); `ecoflowd` does
   not publish it until it is clear – details in `mqtt-output.md`, §3
-- [ ] Do energy reports get through the decoders at night? The device omits fields with
-  the value 0 (`mqtt-output.md`, §3), so at PV = 0 the PV field is missing too
+- [x] Do energy reports get through the decoders at night? → **Yes**, `mqtt-output.md`, §3
 - [ ] Does the fast stream end after the last switch for reasons of time, or because the
   MQTT connection dropped? Measured on 22 Sep 2026: the last switch at 14:25:57Z, then
   exactly six more `96/33` at an even **4-second rate** (14:26:01 to 14:26:21Z), then

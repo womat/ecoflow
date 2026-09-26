@@ -145,6 +145,14 @@ import nor export), and a receiver would get `null` instead of 0. Recorded in
 `internal/frames` as `TestAbsentMeansZero`, which fires if a firmware changes the
 behaviour.
 
+**Night readings still arrive.** By the same rule a PV of exactly 0 would be left out, and
+both decoders drop a frame without PV. That does not happen at night: the night capture in
+`api-status.md` (`96/110`) has an energy report every minute, and on 25 Sep 2026 at
+22:47 UTC `ecoflowd` published `"pv":0` in the dark. Probably PV is small rather than zero
+then – the string report showed about 0.4 W that night – so the field is still sent. The
+raw value of a night-time PV field has not been captured: plausible, not proven. The PV
+check stays as it is.
+
 ### `dcdc` only once it is understood
 
 Only what is understood goes into the telegram. `dcdc` (field 2) is not: the name comes
@@ -168,12 +176,6 @@ that in place).
 
 ## 5. Open points
 
-- **Do energy reports arrive at night?** By the same proto3 rule, with PV = 0 the PV field
-  would be missing too, and both decoders discard a frame without PV
-  (`internal/frames/energy.go`, `scripts/ecoflow-frames.py`). The captures are daytime
-  recordings only (PV ≥ 948 W). To be checked with a night-time `ecoflow-api.sh live`; if
-  the answer is "no", the PV check has to change – in both versions and with new
-  `.golden` files.
 - **How often does `energy` come with `--fast`?** The hourly history then arrives
   considerably more often. Not counted; if it becomes too much, "only send when the totals
   changed" would be a decision of its own.
