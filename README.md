@@ -842,8 +842,9 @@ it works is shown only by whether fast reports arrive.
 - Scheduled tasks: how the app enables, disables, changes, creates and deletes them is
   captured (`96/125`; the task list comes as `96/127` and is pushed as `96/10`, see
   `api-status.md`, section 3). Write tests with replayed app frames showed that the device
-  also accepts enable, disable, create and delete from outside the app; frames with
-  changed content (own times) are untested. Open: whether that becomes a permanent second
+  also accepts enable, disable, create and delete from outside the app, and that it stores
+  overlapping tasks, which only the app refuses. Frames with changed content (own times)
+  are untested. Open: whether that becomes a permanent second
   write path. Like any second write path, that is a decision of
   its own; the repo contains no such command
 - Why the portal's daily yield is off in both directions **during the day**. After sunset

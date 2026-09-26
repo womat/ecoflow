@@ -966,13 +966,35 @@ difference to the device. Not tested: frames with a **changed body**, i.e. other
 type or another number than the app chose. Those would no longer be captured bytes, and they
 would be needed if an automation is to set its own windows.
 
+**Third test, 27 September 2026 just after midnight: overlapping windows.** The app refuses
+tasks whose windows overlap. The question was whether only the app checks this. An overlapping
+pair can still be built from captured frames alone. In the app, task A was created for
+03:00–03:30 (number 8), then moved to 04:00–04:30, and then task B was created for 03:00–03:30
+(number 9). Both were deleted and the app was closed. Then the two *create* frames were replayed,
+both for 03:00–03:30 and each unchanged except for the sequence number:
+
+| Time (local) | Sent                        | `set_reply`                            | `96/10` (device push) |
+|--------------|-----------------------------|----------------------------------------|-----------------------|
+| 00:10:55     | create A (8, 03:00–03:30)   | ack, field 1 = 1, task 8, **`seq` 40** | 7, 8 |
+| 00:14:16     | create B (9, 03:00–03:30)   | ack, field 1 = 1, task 9, **`seq` 45** | 7, 8 **and 9, both 03:00–03:30, both enabled** |
+
+The app then **showed both tasks**, without any error.
+
+**The overlap check lives only in the app.** The device stores overlapping tasks without
+objection and acknowledges them like any other command. The acknowledgement did not differ
+(field 1 = 1). So this test does not settle whether field 1 would ever carry an error code.
+How the device behaves when two overlapping tasks are **due** at the same time was not
+observed: both were deleted again at 00:22, before 03:00, with the captured delete frames. An
+automation that writes its own tasks therefore has to rule out overlaps itself.
+
 **Not tested:**
 
 - the Android header of the template
 - the natural end of a task
 - the maximum number of tasks: the template reports 6 charge and 3 feed-in schedules on a
   J32E and `task_index` 1..8
-- overlapping windows
+- what the device does when overlapping tasks are due at the same time (that it stores them
+  is established, see "Third test")
 - minutes outside the 30-minute grid
 
 (Sources: `shuette42/ecoflow-energy-ha`, `energy_stream.py`, issue #420, PR #422)
@@ -1148,7 +1170,8 @@ Open:
 - [ ] Scheduled tasks: should there be a permanent second write path for them (e.g. in
   `ecoflowd`)? A decision of its own (`CLAUDE.md`), now with the write test on the table.
   Also open: frames with a changed body (own times, type or task number), the natural end
-  of a task (does `96/10` report it?), the Android header variant, minutes outside the
+  of a task (does `96/10` report it?), what happens when overlapping tasks are due (the
+  device stores them; only the app refuses them), the Android header variant, minutes outside the
   app's 30-minute grid, and where the DC Fit takes its self-consumption from while
   "Laden des Akkus" is active (section 3, "Scheduled tasks")
 
@@ -1178,6 +1201,8 @@ Answered – the evidence is in the sections named:
 - [x] The device accepts enable, disable, create and delete of a task without the app:
   captured frames replayed with a new sequence number, acknowledged and applied, the app
   showed the change (section 3, "Write test")
+- [x] Overlapping tasks are refused only by the app; the device stores them (section 3,
+  "Write test", third test)
 
 ## Sources
 
