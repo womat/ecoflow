@@ -833,12 +833,6 @@ it works is shown only by whether fast reports arrive.
   (PV-bound, battery discharge, settings) and established fields 45/47 as discharge power;
   still unclear are, among others, 2, 3, 5, 18, 19, 24, 28, 32 and 48. `cmd_id` 1, 108,
   109, 111 and 136 are decoded
-- Whether energy reports **arrive at all at night** on the DC Fit. The device leaves out
-  fields with the value 0 (see "`grid` is 0, not missing" above); with PV = 0 the PV field was then
-  missing too, and both decoders discard a frame without PV
-  (`internal/frames/energy.go`, `scripts/ecoflow-frames.py`). The captures in the repo are
-  daytime recordings only (PV ≥ 948 W) and do not settle it. To be checked with a
-  night-time `ecoflow-api.sh live`
 - What `dcdc` (field 2 of the energy report) measures. The name comes from a third-party
   source (`dcdc_pwr`); it is **not** part of the energy balance and follows the battery
   with the same sign, in the captures at 63–103 % of its value, without a fixed ratio.
