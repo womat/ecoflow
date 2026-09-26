@@ -61,59 +61,34 @@ ecoflow/HC31XXXXXXXXXXXX/status    online        ← retained, last will
 It published on change, plus once a minute even when unchanged. The retained `status`
 stays on the broker after the move until you delete it (README, "Moving from v0.4.x").
 
-## 2. The comparison pattern
+## 2. Why the old format was dropped
 
-A home automation setup that grew over time, on the same broker, sends **one flat JSON
-object per device** to `myhome/<device>/summary`, regardless of changes:
+Its assumptions did not hold up:
 
-```
-myhome/inverter/summary   {"E":39836000,"P":240,"PC":242.39,"PR":-34,"F":49.98,…}
-myhome/heatpump/summary   {"Timestamp":"2026-09-23T20:36:23.168Z","E":26440945,"P":0,…}
-myhome/wallbox/summary    {"timeStamp":"…","counter":34274662,"counterUnit":"Wh",
-                           "gauge":0.98,"gaugeUnit":"W"}
-```
+- **"evcc and Home Assistant need one scalar per topic"** – refuted. evcc's MQTT plugin
+  has a `jq:` expression, Home Assistant `value_template: "{{ value_json.pv }}"`; JSON
+  costs one line of configuration.
+- **"A heartbeat is needed"** to tell "unchanged" from "gone" – a time of measurement in
+  the payload does that better, by the **device's** clock rather than the service's send
+  time.
+- **"An availability topic reports the outage"** – it does not: if `ecoflowd` hangs without
+  losing the connection, `online` stays and the last will never fires. The only known
+  consumer had built its own age watchdog for exactly that reason. Only the receiver can
+  notice a hanging service; Home Assistant does it with `expire_after`, evcc with
+  `timeout`.
+- **"A retained reading outlives what it describes"** – true only without a timestamp. It
+  still stays at `retain: false`, because Home Assistant warns against retained values
+  together with `expire_after`.
 
-No availability topic, no last will; the receivers check the timestamp themselves.
+The comparison pattern was a home automation setup on the same broker (captured 23 Sep
+2026): one flat JSON object per device on `myhome/<device>/summary`, no availability topic,
+no last will, receivers check the timestamp themselves. Its weather branch carries both
+forms side by side; `ecoflowd` offers only one, because a second way in is a second one to
+keep up to date. Its keys follow **no uniform style** (PascalCase, abbreviations, camelCase,
+lowercase, sometimes mixed in one object – as of 25 Sep 2026), so there was no house style
+to follow – see §3.
 
-The weather branch of the same broker carries **both** forms side by side – a `summary`
-with the complete JSON *and* fanned-out single values. So the forms do not exclude each
-other; `ecoflowd` only offers the one, because a second way in would be a second one to
-keep up to date.
-
-**There is no uniform key style there** (as of 25 Sep 2026, from the keys the flow reads):
-PascalCase (`Timestamp`, `State`, `Power`), abbreviations (`E`, `P`, `SOC`), camelCase
-(`timeStamp`, `unitCounter`), lowercase (`out1`), and twice mixed within one object
-(Smartfox: `BoilerE` next to `grid`). So there is no house style `ecoflowd` could follow –
-see §4.
-
-## 3. The assumptions behind the old format – and what became of them
-
-### 3.1 "evcc and Home Assistant need one scalar per topic" – **refuted**
-
-evcc's MQTT plugin has a `jq:` expression, Home Assistant has `value_template:
-"{{ value_json.pv }}"`. JSON costs one line of configuration there, nothing more.
-
-### 3.2 "A heartbeat is needed" – **obsolete with the timestamp**
-
-The old reasoning was: *"Without a heartbeat a consumer cannot tell 'unchanged' from
-'gone'."* That is exactly what a time of measurement in the payload provides, and better:
-it is the **device's** clock, not the service's send time.
-
-### 3.3 "A retained reading outlives what it describes" – **only without a timestamp**
-
-If the message carries its time of measurement, a newly connected receiver sees the state
-**and** its age. It still stays at `retain: false` – to match the comparison pattern and
-because Home Assistant warns against retained values together with `expire_after`, no
-longer for the old reason.
-
-### 3.4 "An availability topic reports the outage" – **does not hold up**
-
-The only known consumer had to build its own age watchdog because it could not trust the
-retained `status`: if `ecoflowd` hangs without losing the connection, `online` stays and
-the last will does not fire. A hanging service can only be noticed by the receiver. Home
-Assistant manages with `expire_after`, evcc with `timeout`, without an availability topic.
-
-## 4. The decisions in detail
+## 3. The decisions in detail
 
 ### Two telegrams, not one
 
@@ -180,13 +155,7 @@ simply the battery power minus converter losses. Both decoders still read the fi
 `ecoflowd` only publishes it once its role is established (`TestDCDCIsNotPublished` holds
 that in place).
 
-### What fell away along the way
-
-The `last` map, the heartbeat interval, the staleness watchdog, `setOnlineLocked`,
-`announce`, `check`, the last will and both 30-second tickers. What remains: a frame
-arrives, build the object, publish.
-
-## 5. What the format costs
+## 4. What the format costs
 
 - **No immediate notice on a crash.** Without a last will, a receiver notices the
   service's death only after its own deadline instead of within seconds.
@@ -197,7 +166,7 @@ arrives, build the object, publish.
   switch; by the versioning rule in `0.x` a minor step with a note on the break, hence
   v0.5.0.
 
-## 6. Open points
+## 5. Open points
 
 - **Do energy reports arrive at night?** By the same proto3 rule, with PV = 0 the PV field
   would be missing too, and both decoders discard a frame without PV
@@ -208,7 +177,7 @@ arrives, build the object, publish.
 - **How often does `energy` come with `--fast`?** The hourly history then arrives
   considerably more often. Not counted; if it becomes too much, "only send when the totals
   changed" would be a decision of its own.
-- **What does `dcdc` measure?** See §4.
+- **What does `dcdc` measure?** See §3.
 
 ## Sources
 
