@@ -941,8 +941,9 @@ therefore have the same encoded length, otherwise the length fields no longer ma
   second frame as **disabled**. So the device changed its stored state, not just a display.
 - `is_effect` stayed 0 because 23:00 lies outside 10:00–14:00. **The effect was therefore not
   part of this test.** That enabling a task blocks the discharge is measured with the app
-  (table above). What this test adds is that the device does not care where the command
-  comes from.
+  (table above), but only for a task the **app** switched. This test shows that the device
+  accepts and stores the command from elsewhere. Whether a task enabled that way also takes
+  effect has not been observed yet (see the fourth test).
 
 **Second test the same evening: create and delete.** Same procedure. In the app a harmless task
 was created and deleted right away ("Laden des Akkus", once on 27 Sep 2026, 03:00–03:30). The
@@ -961,8 +962,9 @@ One oddity: when the **app** created the task at 23:22:51, no acknowledgement ar
 the device skipped that ack or the capture missed it is open.
 
 **Result:** the DC Fit accepts enable, disable, create and delete from a client other than the
-phone app, with replayed frames and new sequence numbers. The command's origin makes no
-difference to the device. Not tested: frames with a **changed body**, i.e. other times, another
+phone app, with replayed frames and new sequence numbers. For **storing** a task the
+command's origin makes no difference to the device. Whether a task created that way is also
+**executed** is open, see the fourth test. Not tested: frames with a **changed body**, i.e. other times, another
 type or another number than the app chose. Those would no longer be captured bytes, and they
 would be needed if an automation is to set its own windows.
 
@@ -987,6 +989,37 @@ How the device behaves when two overlapping tasks are **due** at the same time w
 observed: both were deleted again at 00:22, before 03:00, with the captured delete frames. An
 automation that writes its own tasks therefore has to rule out overlaps itself.
 
+**Fourth test, 27 September 2026 around 01:00: own times – stored, but not executed.** This is
+the first frame in these tests that does **not** come byte for byte from the app. The captured
+create frame for task 8 (once on 27 Sep, type 1) was taken, and **only the time field**
+(payload field 10) was replaced with the same encoded length, so every length field stayed
+valid. A one-off script outside the repo did the replacement; given the original window it
+reproduces the captured frame exactly. The new window was **00:51–01:02**, deliberately off the
+app's 30-minute grid. The app stayed closed.
+
+| Time (local) | Event | Observation |
+|--------------|-------|-------------|
+| 00:48:11 | create task 8, 00:51–01:02, `seq` 60 | ack with **our** `seq`, `96/10` lists task 8 with exactly 00:51–01:02, enabled |
+| 00:51–01:02 | window | **no** `96/10` at the start, battery kept discharging (≈ 280–370 W) throughout |
+| 01:00 | full hour inside the window | nothing either: the idea "the device only checks on the half hour" is refuted |
+| after 01:02 | – | the app showed the task with start 00:51, enabled, never "active", then as **expired** |
+| 01:07:53 | captured delete frame for task 8 (still carrying the old window 03:00–03:30) | ack, task gone: **delete works by task number**, the window in the frame is not compared |
+
+**Established:** the device stores a task with times chosen by us, acknowledges it and hands it to
+the app, but did **not execute** it. **Open – why.** This test cannot separate two
+explanations:
+
+1. The device only executes windows **on the 30-minute grid**. Off-grid times are stored but
+   never become active.
+2. Tasks that were **not created by the app** are not executed at all. No test so far has
+   ruled this out. In tests 2 and 3 the replayed tasks were deleted before their start, and
+   the only task seen running (22:30, table above) had been created by the app.
+
+The next test separates them: the same frame with an **on-grid** window (e.g. 13:30–14:00),
+created from outside the app. If it runs, the grid is the cause. If not, the origin is. Even more
+basic, and also not yet observed: whether an **app-created** task that was **enabled** from outside
+the app takes effect. Test 1 only showed that it was stored as enabled.
+
 **Not tested:**
 
 - the Android header of the template
@@ -995,7 +1028,8 @@ automation that writes its own tasks therefore has to rule out overlaps itself.
   J32E and `task_index` 1..8
 - what the device does when overlapping tasks are due at the same time (that it stores them
   is established, see "Third test")
-- minutes outside the 30-minute grid
+- whether a task created from outside the app ever runs, and whether off-grid minutes are the
+  reason the one in the fourth test did not
 
 (Sources: `shuette42/ecoflow-energy-ha`, `energy_stream.py`, issue #420, PR #422)
 
@@ -1169,10 +1203,11 @@ Open:
 - [ ] The remaining fields of `96/110` (see section 3)
 - [ ] Scheduled tasks: should there be a permanent second write path for them (e.g. in
   `ecoflowd`)? A decision of its own (`CLAUDE.md`), now with the write test on the table.
-  Also open: frames with a changed body (own times, type or task number), the natural end
-  of a task (does `96/10` report it?), what happens when overlapping tasks are due (the
-  device stores them; only the app refuses them), the Android header variant, minutes outside the
-  app's 30-minute grid, and where the DC Fit takes its self-consumption from while
+  Also open: **why a task with own times (00:51–01:02) was stored but not executed** –
+  off-grid minutes, or created outside the app; an on-grid window created from outside the
+  app decides it. Further: the natural end of a task (does `96/10` report it?), what happens
+  when overlapping tasks are due (the device stores them; only the app refuses them), the
+  Android header variant, and where the DC Fit takes its self-consumption from while
   "Laden des Akkus" is active (section 3, "Scheduled tasks")
 
 Answered – the evidence is in the sections named:
