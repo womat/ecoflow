@@ -428,7 +428,9 @@ scripts/ecoflow-api.sh app-mqtt HC31XXXXXXXXXXXX        # default topic: set
 Subscribes to one of the app topics under `/app/<userId>/<SN>/thing/property/` and shows
 what arrives there. The default is `set` — the topic the script otherwise writes nothing
 to. Operate the phone app while this is running and you see its commands in the original.
-Pure subscription, no write access.
+Pure subscription, no write access. With `set_reply` as the suffix you see the device's
+answers as well. This is how the stream switch and the scheduled tasks (`96/125`, see
+`api-status.md`, section 3) were captured.
 
 Besides `fast`, only `request` and `live` publish, and only read requests to a `get`
 topic; all other commands just subscribe.
@@ -837,6 +839,11 @@ it works is shown only by whether fast reports arrive.
   source (`dcdc_pwr`); it is **not** part of the energy balance and follows the battery
   with the same sign, in the captures at 63–103 % of its value, without a fixed ratio.
   Until that is clear, `ecoflowd` does not publish it
+- Scheduled tasks: how the app enables, disables, changes, creates and deletes them is
+  captured (`96/125`; the task list comes as `96/127` and is pushed as `96/10`, see
+  `api-status.md`, section 3). Open: whether the device accepts such a command from
+  anything other than the app. That is a write test and, like any second write path, a
+  decision of its own
 - Why the portal's daily yield is off in both directions **during the day**. After sunset
   portal and device agree to within 0.058 %, so they measure the same thing; the portal
   just updates in jumps. In practice: take daily values from the device, not from the

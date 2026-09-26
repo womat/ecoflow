@@ -368,7 +368,8 @@ from this, see section 1, "MQTT path of the Open API"):
 | `/app/<userId>/<SN>/thing/property/get`         | publish   | request/wake-up call            |
 | `/app/<userId>/<SN>/thing/property/get_reply`   | subscribe | answer to it                    |
 | `/app/device/status/<SN>`                       | subscribe | online/offline                  |
-| `/app/<userId>/<SN>/thing/property/set`         | publish   | **writing** – only `fast`       |
+| `/app/<userId>/<SN>/thing/property/set`         | publish   | **writing** – only `fast`; the app also sends its commands here (scheduled tasks, see below) |
+| `/app/<userId>/<SN>/thing/property/set_reply`   | subscribe | the device's answers to `set`   |
 
 **The wake-up call** that `live` sends to the `get` topic every `ECOFLOW_LIVE_INTERVAL`
 seconds (default 30):
@@ -783,6 +784,149 @@ only helps for pairing with an energy report to the second.
 **`96/136` is a constant.** The same two bytes across all samples: `08 0b`, i.e.
 field 1 = 11. Not a reading.
 
+### Scheduled tasks: `96/125`, `96/127` and `96/10` (26 September 2026)
+
+The app has a *scheduled tasks* menu (German UI: *Geplante Aufgaben*). A task switches the
+system into a mode for a time window. The mode that matters here is called **"Laden des
+Akkus"** (charge battery). The name misleads, because the DC Fit cannot charge from the grid.
+Observed by the maintainer during a daytime car charge, the mode does this: the battery
+**does not discharge**, all PV goes through the inverter to the loads, the grid covers the rest,
+and surplus PV still charges the battery. That makes it a discharge block, which is why
+it was examined.
+
+**How it was captured:** purely by listening, nothing was sent to the device. Three
+subscriptions ran in parallel while the maintainer operated the iPhone app step by step:
+`app-mqtt <SN> set` (what the app sends), `app-mqtt <SN> set_reply` (what the device
+answers) and `live <SN>` (the device's push). Each step changed one property only.
+
+**Template:** `shuette42/ecoflow-energy-ha` implements these commands for the PowerOcean
+and the Plus, not for the DC Fit. The field names below are taken from there. The values and
+their meaning in the right-hand column are **measured on the DC Fit**. Where the DC Fit
+behaves differently from the template, the table says so.
+
+#### What the app sends: `96/125`, one command for everything
+
+Enable, disable, change time, change repetition, change mode, create and delete all use
+the **same command**, `cmd_func 96 / cmd_id 125`, on `.../thing/property/set`. The
+header matches the stream switch (`96/97`), including field 7 = 3, `version` 3 and `"ios"`.
+The template describes a different header for the Android app (no field 7, `version` 19,
+`"android"`), which was not captured here. One full frame (enable):
+
+```
+0a4a0a151002180420013001380040810148005204d884a01a102018602001280138034060487d50155801705f800103880101ba0103696f73ca0110<SN as ASCII>
+```
+
+The payload (field 1 of the header, **in plain text** like every command from the app) is an
+embedded message:
+
+| Field | Name (template)    | Measured on the DC Fit |
+|-------|--------------------|------------------------|
+| 2     | `is_cfg`           | 1 = create, 2 = modify, **3 = delete**. The template knows no way to delete; here it is simply 3 |
+| 3     | `task_index`       | internal number of the task. The app does not show it. When creating, the app chose 7 while 4 and 6 existed – presumably "highest + 1", from a single case |
+| 4     | `is_enable`        | 1 = enabled. **Disabled means the field is missing**, it is never sent as 0 (as in the template) |
+| 5     | `is_effect`        | never sent by the app; only in the task lists (below): 1 = running now |
+| 6     | `type`             | 1 = "Laden des Akkus", 2 = "Mit der Batterie Lasten betreiben" (supply the loads from the battery). The template leaves this open |
+| 7     | `sys_chg_dsg_pwr`  | power in W: 100 W set in the app → 100; power "Auto" → 0. Type 1 always had 0 |
+| 8     | `time_mode`        | 129 = daily, 130 = weekdays, 132 = once. Presumably a flag 0x80 plus 1 / 2 / 4 |
+| 9     | `time_param`       | depends on field 8, see below |
+| 10    | `time_table`       | packed varint `start \| end << 16`, both in **minutes after local midnight**, as in the template |
+
+**Field 9 by repetition:**
+
+- *daily* (129): ignored. After switching from Mon–Fri back to daily, the old mask 31 stayed
+  in the field.
+- *weekdays* (130): a bit mask. Mon–Fri = 31 = `0b11111`, so bit 0 = Monday.
+  Presumably bit 6 = Sunday, but that was not observed.
+- *once* (132): the date as `year << 9 | month << 5 | day`, month counted from 1.
+  26 September 2026 = 1037626, confirmed against the app.
+
+**`time_table` examples:** `d884a01a` = 600 | 840 << 16 = 10:00–14:00;
+`b285881d` = 11:30–15:30; `c68a902b` = 22:30–23:00. All checked against the app.
+The app offers only **30-minute steps**. Whether the device accepts other minutes is not
+tested.
+
+A modify or delete **always carries the full task**, not just the changed field. The
+payloads of the individual steps, in order:
+
+| Step in the app | Payload |
+|---|---|
+| enable task (10:00–14:00, daily, type 1) | `1002 1804 2001 3001 3800 408101 4800 5204d884a01a` |
+| disable it | `1002 1804 3001 3800 408101 4800 5204d884a01a` |
+| start 10:00 → 11:30 (the app moved the end to 15:30 as well) | `1002 1804 3001 3800 408101 4800 5204b285881d` |
+| daily → Mon–Fri | `1002 1804 3001 3800 408201 481f 5204b285881d` |
+| mode → "Mit der Batterie Lasten betreiben", 100 W, daily | `1002 1804 3002 3864 408101 481f 5204b285881d` |
+| power → "Auto" | `1002 1804 3002 3800 408101 481f 5204b285881d` |
+| create task (once 26.09.2026, 23:00–23:30, type 1, enabled) | `1001 1807 2001 3001 3800 408401 48baaa3f 5204e48a882c` |
+| delete task 6 (once, 15:30–16:00) | `1003 1806 3001 3864 408401 48baaa3f 5204a287801e` |
+
+#### What the device answers
+
+**On `set_reply`, the device acknowledges every `96/125`** with a `96/125` of its own,
+payload `08 0x 10 yy`: field 2 = the task number, field 1 = 1 or 2. In all nine
+acknowledgements field 1 matched the task's `type`. It is therefore **presumably an echo of
+the type and not a result code**. No rejection was observed. So, unlike `get_reply`, the
+`set_reply` topic of the app channel does carry answers.
+
+**The task list can be requested: `96/127`.** After every change, and when the list is
+opened, the app sends a `96/127` **without a payload** (no field 1, no `dataLen`):
+
+```
+0a31102018602001280138034060487f580170<seq>800103880101ba0103696f73ca0110<SN as ASCII>
+```
+
+The device answers on `set_reply` with `96/127`. The payload carries repeated field 1, each
+entry laid out like a `96/125` body plus field 5 (`is_effect`). In the list, field 2 shows
+how the task was last configured: 1 after creating, 2 after modifying.
+
+**The device pushes the same list by itself as `96/10`** on `/app/device/property/<SN>`,
+XOR-obfuscated like every frame in this direction. It did so in three situations:
+
+- about one second after **every change**
+- at the **start of a task**: 22:30:01 for a task from 22:30, `is_effect` 0 → 1
+- after the task was **disabled while running**: `is_effect` 1 → 0 one second later
+
+The natural end of a task was not observed. **The state of the tasks can therefore be read
+purely by subscribing**, without sending anything to the device.
+
+#### The effect, measured
+
+Night, PV = 0, house about 360 W. Values from the fast stream (`96/33`, `ecoflow-frames.py`),
+which the open app had switched on:
+
+| Time     | Event                            | Battery |
+|----------|----------------------------------|---------|
+| 22:30:00 | task starts ("Laden des Akkus")   | discharges 390 W |
+| 22:30:01 | `96/10` reports `is_effect` = 1  | unchanged |
+| 22:30:12 | –                                | starts to ramp down |
+| 22:30:26 | –                                | **0 W**, the grid takes the whole house load |
+| 22:33:37 | task disabled in the app         | 0 W |
+| 22:33:38 | `96/10` reports `is_effect` = 0  | still 0 W |
+| 22:35:16 | –                                | starts to discharge again |
+| 22:35:28 | –                                | back at the house load (335 W) |
+
+So the task takes effect **about 25 s after its start** and releases the battery **about
+100 s after it was disabled**. The device updates the task's state immediately, but the power
+follows with a delay. During the task the energy report showed exactly 0 W for the battery.
+With the Fronius limit (see the `myhome` concept) about 85 W of self-consumption had still
+come from the battery. Where the DC Fit takes its self-consumption from in this mode is **not
+established**.
+
+Also seen, **not assigned:** when the app was closed it sent `cmd_func 53 / cmd_id 113` to
+`dest` 53, without a payload.
+
+**Not tested:**
+
+- whether the device accepts a `96/125` that does not come from the app. That would be a
+  write test and needs a decision of its own, see `CLAUDE.md`
+- the Android header of the template
+- the natural end of a task
+- the maximum number of tasks: the template reports 6 charge and 3 feed-in schedules on a
+  J32E and `task_index` 1..8
+- overlapping windows
+- minutes outside the 30-minute grid
+
+(Sources: `shuette42/ecoflow-energy-ha`, `energy_stream.py`, issue #420, PR #422)
+
 ### Context: the community's "Enhanced Mode"
 
 Under this name the same channel runs in the Home Assistant integrations. It bypasses the
@@ -951,6 +1095,12 @@ Open:
   Lag alone does not explain it (see "The hourly history"). Suspicion, not established:
   `measured` dates the power value, not the energy counter
 - [ ] The remaining fields of `96/110` (see section 3)
+- [ ] Scheduled tasks: does the device accept a `96/125` that does not come from the app?
+  That would be a write test, and a second write path is a decision of its own
+  (`CLAUDE.md`). Also open: the natural end of a task (does `96/10` report it?), the
+  Android header variant, minutes outside the app's 30-minute grid, and where the DC Fit
+  takes its self-consumption from while "Laden des Akkus" is active (section 3,
+  "Scheduled tasks")
 
 Answered – the evidence is in the sections named:
 
@@ -972,6 +1122,9 @@ Answered – the evidence is in the sections named:
 - [x] A missing power field means "0" (`mqtt-output.md`, §3)
 - [x] `254/32`, `96/3`, `96/137`, `96/1`, `96/108`, `96/109`, `96/111`, `96/136` are decoded,
   including the component roles and the daily yield against the portal (section 3)
+- [x] How the app enables, disables, changes, creates and deletes scheduled tasks: one
+  command `96/125`, the list via `96/127` and pushed as `96/10`; captured by listening on
+  26 Sep 2026 (section 3, "Scheduled tasks")
 
 ## Sources
 
@@ -985,6 +1138,11 @@ Answered – the evidence is in the sections named:
 - https://www.photovoltaikforum.com/thread/218848-erfahrungen-mit-system-ecoflow-powerocean/?pageNo=17
 - https://github.com/shuette42/ecoflow-energy-ha (Enhanced Mode: AES certification,
   client ID construction, keepalive intervals)
+- https://github.com/shuette42/ecoflow-energy-ha/blob/main/custom_components/ecoflow_energy/ecoflow/energy_stream.py
+  (scheduled tasks `96/125` `EmsTimerTaskCfg` on PowerOcean/Plus: field names, `time_table`
+  encoding)
+- https://github.com/shuette42/ecoflow-energy-ha/issues/420 (task limits on a J32E) and
+  https://github.com/shuette42/ecoflow-energy-ha/pull/422
 - https://github.com/tolwi/hassio-ecoflow-cloud (`app/certification`, client ID form)
 - https://github.com/jensfr1/ha-ecoflow-ocean2 (wake-up interval with justification)
 - https://github.com/foxthefox/ioBroker.ecoflow-mqtt (device type `poweroceanfit`:
