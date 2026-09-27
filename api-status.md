@@ -942,8 +942,8 @@ therefore have the same encoded length, otherwise the length fields no longer ma
 - `is_effect` stayed 0 because 23:00 lies outside 10:00–14:00. **The effect was therefore not
   part of this test.** That enabling a task blocks the discharge is measured with the app
   (table above), but only for a task the **app** switched. This test shows that the device
-  accepts and stores the command from elsewhere. Whether a task enabled that way also takes
-  effect has not been observed yet (see the fourth test).
+  accepts and stores the command from elsewhere. That a task enabled that way also takes
+  effect was shown later, in the fifth test.
 
 **Second test the same evening: create and delete.** Same procedure. In the app a harmless task
 was created and deleted right away ("Laden des Akkus", once on 27 Sep 2026, 03:00–03:30). The
@@ -963,8 +963,8 @@ the device skipped that ack or the capture missed it is open.
 
 **Result:** the DC Fit accepts enable, disable, create and delete from a client other than the
 phone app, with replayed frames and new sequence numbers. For **storing** a task the
-command's origin makes no difference to the device. Whether a task created that way is also
-**executed** is open, see the fourth test. Not tested: frames with a **changed body**, i.e. other times, another
+command's origin makes no difference to the device. It is also **executed**, provided its
+times lie on the 30-minute grid (fourth and fifth test). Not tested: frames with a **changed body**, i.e. other times, another
 type or another number than the app chose. Those would no longer be captured bytes, and they
 would be needed if an automation is to set its own windows.
 
@@ -1020,6 +1020,50 @@ created from outside the app. If it runs, the grid is the cause. If not, the ori
 basic, and also not yet observed: whether an **app-created** task that was **enabled** from outside
 the app takes effect. Test 1 only showed that it was stored as enabled.
 
+**Fifth test, 27 September 2026 afternoon: tasks switched from outside the app take effect.** It
+answers both questions of the fourth test. The app stayed closed throughout, the capture ran as
+before. To make the effect visible while PV still exceeded the house load, the maintainer
+switched on a large load during each window: first the oven, later a kettle.
+
+*a) App-created task, enabled and disabled from the Mac.* In the app, task 7 was moved to
+16:30–17:00 (daily, "Laden des Akkus") and switched on and off; the captured "on" and "off" frames
+were then replayed.
+
+| Time (local) | Event | PV | House | Battery | Grid |
+|---|---|---|---|---|---|
+| 16:11:19 | "on" sent, ack with our `seq`, `96/10` enabled | | | | |
+| 16:30:00 | before the oven | 901 W | 548 W | charging 353 W | 0 |
+| 16:30:01 | `96/10`: task 7 **running** | | | | |
+| 16:32–16:34 | oven on | ≈ 1050 W | ≈ 2950 W | **0 W** | import ≈ 1900 W |
+| 16:34:51 | "off" sent, ack, `96/10`: not running | | | | |
+| 16:36 | – | 981 W | 3038 W | discharging 1052 W | import 1006 W |
+| 16:37–16:38 | – | ≈ 970 W | ≈ 3050 W | discharging ≈ 2075 W | ≈ 0 |
+
+All PV went to the house, it was not curtailed. The battery added nothing, and the grid covered
+the rest; without the task the battery would have supplied those ≈ 1900 W. After the "off" the
+battery was back within a good minute. **Enabling and disabling an app-created task from outside
+the app works, including its effect.**
+
+*b) Task created from the Mac, on the grid.* The captured create frame for task 8 (once, 27 Sep,
+type 1) was sent with only the time field replaced, first for 17:30–18:00 and then modified to
+**17:00–17:30**. For the modification the captured modify frame for task 8 was used, again with
+only the time replaced.
+
+| Time (local) | Event | PV | House | Battery | Grid |
+|---|---|---|---|---|---|
+| 16:39:09 | create 17:30–18:00, ack with our `seq` | | | | |
+| 16:42:56 | modify to 17:00–17:30, ack, `96/10` shows the new window | | | | |
+| 17:00:01 | `96/10`: task 8 **running** | 580 W | 354 W | 0 W | export |
+| 17:02–17:03 | kettle on | ≈ 600 W | ≈ 2800 W | **0 W** | import ≈ 2200 W |
+| 17:03:40 | captured delete frame for task 8, ack, task gone | | | | |
+| 17:05 | – | 534 W | 3328 W | discharging 1956 W | import 838 W |
+
+**A task created from outside the app with times on the 30-minute grid runs like an app task.**
+The failure in the fourth test is therefore most likely due to the **off-grid minutes**
+(00:51–01:02). Strictly, the two tests also differ in the time of day and in the kind of frame
+(created vs. created and then modified), so "off-grid minutes are never executed" is the
+closest explanation, not a proof.
+
 **Not tested:**
 
 - the Android header of the template
@@ -1028,8 +1072,9 @@ the app takes effect. Test 1 only showed that it was stored as enabled.
   J32E and `task_index` 1..8
 - what the device does when overlapping tasks are due at the same time (that it stores them
   is established, see "Third test")
-- whether a task created from outside the app ever runs, and whether off-grid minutes are the
-  reason the one in the fourth test did not
+- an off-grid window on another occasion, to confirm that off-grid minutes are the reason the
+  task in the fourth test did not run (the fifth test showed that on-grid tasks from outside
+  the app do run)
 
 (Sources: `shuette42/ecoflow-energy-ha`, `energy_stream.py`, issue #420, PR #422)
 
@@ -1218,11 +1263,10 @@ Open:
   - The task state from `96/10` goes out as a telegram.
   - The trigger is a local-only HTTP endpoint rather than an MQTT command topic.
   - The block lapses by itself unless it is renewed.
-  The reasoning is in the `myhome` concept for the discharge block. **Precondition:** an
-  app-created task enabled from outside the app must be seen to take effect; that is not
-  observed yet. Also open: **why a task with own times (00:51–01:02) was stored but not executed** –
-  off-grid minutes, or created outside the app; an on-grid window created from outside the
-  app decides it. Further: the natural end of a task (does `96/10` report it?), what happens
+  The reasoning is in the `myhome` concept for the discharge block. The precondition, that an
+  app-created task enabled from outside the app takes effect, is **met** (fifth test,
+  27 Sep 2026). Also open: whether off-grid minutes are really the reason a task was stored but
+  not executed; on-grid tasks created from outside the app do run. Further: the natural end of a task (does `96/10` report it?), what happens
   when overlapping tasks are due (the device stores them; only the app refuses them), the
   Android header variant, and where the DC Fit takes its self-consumption from while
   "Laden des Akkus" is active (section 3, "Scheduled tasks")
@@ -1255,6 +1299,9 @@ Answered – the evidence is in the sections named:
   showed the change (section 3, "Write test")
 - [x] Overlapping tasks are refused only by the app; the device stores them (section 3,
   "Write test", third test)
+- [x] Tasks switched from outside the app take effect: an app task enabled from the Mac and a
+  Mac-created task on the 30-minute grid both blocked the discharge under a large load (section
+  3, "Write test", fifth test)
 
 ## Sources
 
