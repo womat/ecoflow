@@ -1201,9 +1201,26 @@ Open:
   Lag alone does not explain it (see "The hourly history"). Suspicion, not established:
   `measured` dates the power value, not the energy counter
 - [ ] The remaining fields of `96/110` (see section 3)
+- [ ] A discharge block **without** the scheduler. The app offers no switch for it (no
+  discharge block, no backup reserve), so nothing can be captured. The community names two
+  candidates for PowerOcean/Plus, untested on the DC Fit: `96/98` `SysWorkModeSet` (BACKUP is
+  refused there without unknown parameters) and `96/112` `SysBatChgDsgSet` field 2, the
+  discharge floor. Setting the floor to the current SoC would amount to "hold", but that is an
+  inference. Both would have to be assembled from third-party sources, which is exactly the
+  case `CLAUDE.md` warns about. On Modbus the equivalent is `min_soc_limit` 40536, still locked
 - [ ] Scheduled tasks: should there be a permanent second write path for them (e.g. in
   `ecoflowd`)? A decision of its own (`CLAUDE.md`), now with the write test on the table.
-  Also open: **why a task with own times (00:51–01:02) was stored but not executed** –
+  **Recommendation (27 Sep 2026), not decided:**
+  - `ecoflowd` executes and reports, the home automation decides when.
+  - The scope is as narrow as `fast`: a flag of its own, only enable/disable of an
+    **app-created** task (number set by flag), and frames in the captured form with only
+    `seq` varying.
+  - The task state from `96/10` goes out as a telegram.
+  - The trigger is a local-only HTTP endpoint rather than an MQTT command topic.
+  - The block lapses by itself unless it is renewed.
+  The reasoning is in the `myhome` concept for the discharge block. **Precondition:** an
+  app-created task enabled from outside the app must be seen to take effect; that is not
+  observed yet. Also open: **why a task with own times (00:51–01:02) was stored but not executed** –
   off-grid minutes, or created outside the app; an on-grid window created from outside the
   app decides it. Further: the natural end of a task (does `96/10` report it?), what happens
   when overlapping tasks are due (the device stores them; only the app refuses them), the
