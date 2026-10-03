@@ -68,7 +68,9 @@ sent once per connection. Not retained, like the other two.
   no time of their own. This is the one place where the rule "the device's time in the
   payload" cannot be kept, and so it is said here.
 - The example above is illustrative; unlike `state` and `energy`, no telegram from a live
-  `--block` run is pinned by a test yet. The device test is still to come.
+  `--block` run is pinned by a test. The device test on 3 Oct 2026 ran without a broker; the
+  same object came back over HTTPS and was right after every switch (`api-status.md`, sixth
+  test).
 
 ### The earlier format (up to v0.4.x)
 
@@ -205,10 +207,9 @@ that in place).
   considerably more often. Not counted; if it becomes too much, "only send when the totals
   changed" would be a decision of its own.
 - **What does `dcdc` measure?** See §3.
-- **`block` on the device:** the telegram has so far only been seen in tests with a
-  simulated device. The fields come from the captured lists; whether a pushed `96/10`
-  reads the same as the `96/127` answer is stated in `api-status.md`, but that capture was
-  decoded on the fly and not kept raw.
+- **`block` on the broker:** the telegram itself has not yet gone to a real broker. The
+  device test (3 Oct 2026) ran without one; its content was checked over HTTPS. A raw
+  `96/10` for the test data is still missing.
 
 ## Sources
 

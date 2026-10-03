@@ -844,7 +844,8 @@ the same as the [`<topic>/block` telegram](mqtt-output.md):
 ```
 
 `enabled` and `running` are the device's, from its task list; `running` is false outside
-the app task's window even when the task is enabled. Status codes: `200`, `401` wrong or
+the app task's window even when the task is enabled. Right after a switch `running` can
+lag by about a second – the answer shows the device's list at that moment. Status codes: `200`, `401` wrong or
 missing token, `409` not exactly one task to switch, `503` no connection to the device or
 no task list yet, `504` the device did not acknowledge within 10 s.
 
@@ -946,10 +947,10 @@ mainly so that the token never crosses a wire in clear, should the setup ever ch
   an app task enabled from the Mac and a task created from the Mac on the 30-minute grid both
   blocked the discharge. A task with off-grid times (00:51–01:02) was stored but not
   executed. Decided on 3 Oct 2026: `ecoflowd --block` switches one app task on and off
-  ([Discharge block](#discharge-block---block)). Still open: a test of `--block` on the
-  device; what the device does at midnight with a 00:00–24:00 task and how it encodes the
-  end 24:00; the natural end of a task; and whether off-grid minutes are really why the
-  fourth test's task did not run
+  ([Discharge block](#discharge-block---block)), tested on the device the same evening (sixth
+  test in `api-status.md`). Still open: what the device does at midnight with a 00:00–24:00
+  task; a raw `96/10` for the test data; the natural end of a task; and whether off-grid
+  minutes are really why the fourth test's task did not run
 - Why the portal's daily yield is off in both directions **during the day**. After sunset
   portal and device agree to within 0.058 %, so they measure the same thing; the portal
   just updates in jumps. In practice: take daily values from the device, not from the
