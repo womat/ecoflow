@@ -854,6 +854,61 @@ curl --cacert tls.crt -H "Authorization: Bearer $ECOFLOWD_HTTP_TOKEN" \
      -X PUT https://172.17.0.1:8089/block
 ```
 
+**How a request travels** – from the caller through `ecoflowd` to the device and back, with
+the telegram to the local broker:
+
+```mermaid
+sequenceDiagram
+    participant C as Caller (curl, later Node-RED)
+    participant E as ecoflowd
+    participant D as EcoFlow cloud and device
+    participant B as Local broker
+
+    Note over E,D: At start-up and after every reconnect
+    E->>D: subscribe to push, set_reply and status
+    E->>D: 96/127 (empty) - send the task list
+    D-->>E: set_reply 96/127 - task list
+    opt at start-up, task found enabled
+        E->>D: 96/125 task as listed, field 4 left out (off)
+        D-->>E: ack with our seq, then 96/10 off
+    end
+    opt after a reconnect, a request running, task found off
+        E->>D: 96/125 task as listed, field 4 = 1 (on)
+    end
+    E->>B: ecoflow/block
+
+    Note over C,D: Switching the block on
+    C->>E: PUT /block with Bearer token
+    alt no list yet, or not exactly one task
+        E-->>C: 503 or 409, nothing sent
+    else task is off
+        E->>D: 96/125 task as listed, field 4 = 1 (on)
+        D-->>E: ack with our seq (else 504 after 10 s)
+        D-->>E: 96/10 enabled
+        E-->>C: 200 with enabled, until
+    end
+    E->>B: ecoflow/block
+    D-->>E: 96/10 running, inside the app task's window
+    Note over D: battery stops discharging within about 25 s
+
+    loop while the block is wanted, e.g. every 2 min
+        C->>E: PUT /block
+        E-->>C: 200 - only until moves, nothing is sent
+    end
+
+    alt the caller ends it
+        C->>E: DELETE /block
+        E->>D: 96/125 task as listed, field 4 left out (off)
+        D-->>E: ack, then 96/10 off
+        E-->>C: 200 with enabled false
+    else no renewal within --block-ttl
+        E->>D: 96/125 task as listed, field 4 left out (off)
+        D-->>E: ack, then 96/10 off
+    end
+    E->>B: ecoflow/block
+    Note over D: battery supplies again about 1 to 1.5 min later
+```
+
 **What it does on its own:**
 
 - A request **not renewed** within `--block-ttl` ends, and the task is switched off. A
