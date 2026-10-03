@@ -207,9 +207,9 @@ that in place).
   considerably more often. Not counted; if it becomes too much, "only send when the totals
   changed" would be a decision of its own.
 - **What does `dcdc` measure?** See §3.
-- **`block` on the broker:** the telegram itself has not yet gone to a real broker. The
-  device test (3 Oct 2026) ran without one; its content was checked over HTTPS. A raw
-  `96/10` for the test data is still missing.
+- **A raw `96/10` for the test data** is still missing. The `block` telegram itself has
+  reached the real broker since 3 Oct 2026: four of them for one on and off, with
+  `running` following `enabled` a second later.
 
 ## Sources
 

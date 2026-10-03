@@ -46,6 +46,10 @@
 # with "ip -4 addr show docker0", and put the same address in the certificate.
 # If the bridge is not up yet when the service starts, binding fails and the
 # service exits with 1 and restarts after RestartSec - no ordering needed.
+# With ufw's default "deny incoming", containers time out until the port is
+# allowed on the bridge, and only there:
+#
+#   sudo ufw allow in on docker0 to 172.17.0.1 port 8089 proto tcp
 
 [Unit]
 Description=EcoFlow PowerOcean %i to local MQTT
