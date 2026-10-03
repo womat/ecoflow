@@ -270,6 +270,8 @@ func TestTopicsFor(t *testing.T) {
 		Reply: "/app/42/HC31XXXXXXXXXXXX/thing/property/get_reply",
 		Get:   "/app/42/HC31XXXXXXXXXXXX/thing/property/get",
 		Set:   "/app/42/HC31XXXXXXXXXXXX/thing/property/set",
+		// Not in Subscribe: ecoflowd adds it only when it switches tasks.
+		SetReply: "/app/42/HC31XXXXXXXXXXXX/thing/property/set_reply",
 	}
 	if got != want {
 		t.Errorf("got %+v, want %+v", got, want)

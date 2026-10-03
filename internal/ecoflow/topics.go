@@ -23,20 +23,27 @@ type Topics struct {
 	// the subscription alone keeps the data coming.
 	Get string
 
-	// Set takes commands that change the device. Only the stream switch is
-	// ever published here, and only on an explicit request.
+	// Set takes commands that change the device. Only the stream switch and
+	// the task commands are ever published here, each behind a flag of its
+	// own.
 	Set string
+
+	// SetReply carries the device's answers to Set: the acknowledgement of a
+	// task command and the task list. Unlike Reply it does answer - measured
+	// in September 2026. It is only subscribed to when tasks are switched.
+	SetReply string
 }
 
 // TopicsFor names the topics of one device.
 func TopicsFor(userID, serial string) Topics {
 	thing := fmt.Sprintf("/app/%s/%s/thing/property", userID, serial)
 	return Topics{
-		Push:  "/app/device/property/" + serial,
-		State: "/app/device/status/" + serial,
-		Reply: thing + "/get_reply",
-		Get:   thing + "/get",
-		Set:   thing + "/set",
+		Push:     "/app/device/property/" + serial,
+		State:    "/app/device/status/" + serial,
+		Reply:    thing + "/get_reply",
+		Get:      thing + "/get",
+		Set:      thing + "/set",
+		SetReply: thing + "/set_reply",
 	}
 }
 

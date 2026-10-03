@@ -22,9 +22,13 @@ import (
 // Readings and totals come from different frames with different timestamps,
 // so they go out separately. One object holding both would put fields of
 // different age under a single time - the thing a telegram is meant to avoid.
+//
+// The third, block, exists only with --block: the state of the discharge
+// block task, sent whenever the device reports its task list.
 const (
 	leafState  = "state"
 	leafEnergy = "energy"
+	leafBlock  = "block"
 )
 
 // broker is the little of an MQTT client this needs. Naming it separately is
@@ -216,12 +220,17 @@ func (p *publisher) totals(parts map[frames.Flow]frames.HourlyPart) {
 func (p *publisher) send(leaf string, v any) {
 	payload, err := json.Marshal(v)
 	if err != nil {
-		// Both types are flat structs of strings and integers, so this does
+		// All three are flat structs of strings, integers and booleans, so this does
 		// not happen - but saying so beats publishing an empty message.
 		fmt.Fprintf(p.stderr, "error: encoding the %s telegram: %v\n", leaf, err)
 		return
 	}
 	p.client.Publish(p.prefix+"/"+leaf, 0, false, payload)
+}
+
+// block publishes the state of the discharge block.
+func (p *publisher) block(s blockState) {
+	p.send(leafBlock, s)
 }
 
 // close hangs up.

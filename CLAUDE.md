@@ -81,15 +81,19 @@ German — that concerns the chat, not the files.
   local MQTT broker as two JSON telegrams (`<topic>/state`, `<topic>/energy`) with serial
   number and time of measurement in the payload; no retain, no availability topic, no
   heartbeat. Only what is understood goes into the telegram — `dcdc` is therefore
-  deliberately missing. None of it is on disk; the session lives in the process. Unlike
-  `modbusread`, deliberately device-specific; the knowledge for that lives in
-  `internal/frames` and `internal/ecoflow`
+  deliberately missing. None of it is on disk; the session lives in the process. With
+  `--block` a third telegram (`<topic>/block`) and an HTTPS endpoint join it: the
+  discharge block (`block.go` the state, `https.go` the endpoint), see the write paths
+  below. Unlike `modbusread`, deliberately device-specific; the knowledge for that lives
+  in `internal/frames` and `internal/ecoflow`
 - `internal/decode/` – pure functions over `[]uint16` (types, word/byte order, address
   parsing). This is where the logic lives that produces *wrong numbers* rather than
   crashes when it errs – hence kept network-free and fully testable
 - `internal/frames/` – pure functions over `[]byte`: the protobuf frames of the app MQTT
   channel (wrapper, XOR obfuscation, energy reports, hourly history, component list,
-  building the stream switch). Network-free for the same reason as `internal/decode`.
+  scheduled task lists, building the stream switch and the task commands). Replies on
+  `set_reply` are plain, everything on the push topic is XORed – hence `ParseReply`
+  next to `Parse`. Network-free for the same reason as `internal/decode`.
   **This is where the EcoFlow knowledge lives**, so that `modbusread` stays universal.
   The tests run against anonymised captures from the real device in `testdata/` and
   check the two arithmetic identities that established the field assignment. The
@@ -141,16 +145,34 @@ refuted. When catching up, the code counts, not the older prose.
 - **Read-only is a hard property, not a default:** `modbusread` calls no `Write*` method
   of the library. The mapping is unconfirmed (see below); a tool without a write path
   cannot write by accident. Do not soften this.
-- **The one write path in the repo, and how it is fenced in:** on the app MQTT channel
-  there is exactly one – the `EnergyStreamSwitch` on `.../set`, which switches on the fast
-  data stream. It is bound to four conditions, and together they are the rule: it hangs
-  on a **command of its own** (`ecoflow-api.sh fast`) or a **flag of its own**
-  (`ecoflowd --fast`), so it never happens as a side effect of reading; it carries **no
-  parameters**; its bytes were **captured** on the wire and are replayed unchanged, only
-  the sequence number varies; and it is the only one there. A second write path would be
-  a decision of its own, not an extension of this one. Why this is so strict: an attempt
-  assembled from third-party sources was wrong in four places – on a topic through which
-  the device can be reconfigured.
+- **The two write paths in the repo, and how they are fenced in:** on the app MQTT channel
+  there are exactly two, both on `.../set`.
+  - The first is the `EnergyStreamSwitch` (`96/97`), which switches on the fast data
+    stream. It is bound to four conditions, and together they are the rule: it hangs on a
+    **command of its own** (`ecoflow-api.sh fast`) or a **flag of its own**
+    (`ecoflowd --fast`), so it never happens as a side effect of reading; it carries **no
+    parameters**; its bytes were **captured** on the wire and are replayed unchanged, only
+    the sequence number varies.
+  - The second is the **discharge block** (`ecoflowd --block`, decided by the maintainer
+    on 3 Oct 2026 after the fifth write test). It switches one scheduled task of type
+    "Laden des Akkus" on and off. Its fence:
+    - a flag of its own, triggered only over a local HTTPS endpoint with a token, never
+      over MQTT;
+    - exactly two message kinds, both captured from the app: the empty task list request
+      `96/127`, and `96/125` carrying the task **exactly as the device listed it**, with
+      only field 4 (on/off) changed;
+    - exactly one task of type 1, or `--block-task N`; nothing is guessed;
+    - nothing is created, deleted, moved or re-timed. The app task's window decides when a
+      block can apply.
+
+    The byte-for-byte test against the capture (`internal/frames/tasks_test.go`) is what
+    this rests on.
+
+  A third write path, or widening either of these (creating tasks, writing times, the
+  community's `96/112`/`96/98`), would be a decision of its own, not an extension. Why
+  this is so strict: an attempt assembled from third-party sources was wrong in four
+  places – on a topic through which the device can be reconfigured. And the fourth write
+  test showed that a task with self-chosen times is stored but not executed.
 - **Addresses are never converted** – what is typed goes on the wire as it is (0-based).
   Many sources document 1-based; converting is deliberately left to the human, so the
   tool does not hide an assumption.

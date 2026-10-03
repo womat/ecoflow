@@ -481,12 +481,17 @@ go build ./cmd/ecoflowd
 | `--stdout` | also write every reading to stdout |
 | `--fast` | switch on the fast stream — **writes**, see below |
 | `--switch-every` | repeat rate for it, default 3s; below 1s is rejected |
+| `--block` | switch the discharge block task on request — **writes**, see [Discharge block](#discharge-block---block) |
+| `--listen` | address of the HTTPS endpoint of `--block`, e.g. `172.17.0.1`; port 8089 if none is given |
+| `--tls-cert`, `--tls-key` | certificate and key for it |
+| `--block-ttl` | how long a block request holds unless renewed, default 5m, 1m to 15m |
+| `--block-task` | the task to switch; by default the only one of type "Laden des Akkus" |
 | `--host` | different API host; for US accounts `https://api-a.ecoflow.com` |
 | `-v` | report every incoming frame |
 | `--version` | print the version and exit |
 
 Credentials come exclusively from the environment — `ECOFLOW_EMAIL`, `ECOFLOW_PASSWORD`,
-optionally `ECOFLOW_HOST` and `MQTT_PASSWORD`. Never from flags: whatever is on the
+optionally `ECOFLOW_HOST`, `MQTT_PASSWORD` and, with `--block`, `ECOFLOWD_HTTP_TOKEN`. Never from flags: whatever is on the
 command line, anyone on the machine can read in the process list.
 
 Three exit codes, and one of them matters for continuous operation:
@@ -523,7 +528,7 @@ connected to mqtt-e.ecoflow.com:8883, subscribed to 3 topics
 The output is **character-for-character identical** to `scripts/ecoflow-frames.py`, so both
 can be run side by side and compared; a test holds them together against the same captures.
 
-**Without `--fast` it sends nothing to the device.** That is not caution but what the
+**Without `--fast` or `--block` it sends nothing to the device.** That is not caution but what the
 device needs: the subscription alone keeps it talking, measured over 23 minutes without a
 single message sent to the cloud. The readings still go to your local broker — just every
 minute instead of every two to three seconds.
@@ -788,14 +793,108 @@ minutes, the sensor becomes `unavailable`.
 Sends the stream switch every `--switch-every` seconds (default 3) and delivers values
 every two to three seconds instead of every minute.
 
-**This is the program's only write path**, on the `.../set` topic through which the device
-could also be reconfigured – hence a flag, not a default. It sends the same captured,
+**This is one of the program's two write paths** (the other is [`--block`](#discharge-block---block)),
+on the `.../set` topic through which the device could also be reconfigured – hence a flag,
+not a default. It sends the same captured,
 parameterless switch as `ecoflow-api.sh fast` (see there), with the same 3-second rate;
 at ten seconds the device falls back to the minute rate.
 
 If the fast stream still does not come, the service says so **once**, after about 60 s,
 and carries on at the minute rate. The broker accepts the switch in any case (`PUBACK RC:0` measured); whether
 it works is shown only by whether fast reports arrive.
+
+### Discharge block: `--block`
+
+Keeps the battery from discharging on request, e.g. while the car charges. It uses a
+scheduled task of the app: the mode **"Laden des Akkus"** (charge battery) stops the battery
+discharging, PV goes to the loads, the grid covers the rest, and surplus PV still charges
+the battery. Enabled from outside the app, such a task takes effect about 25 s later, and
+within a good minute of disabling it the battery supplies again – measured in the fifth
+write test, see [`api-status.md`](api-status.md), section 3.
+
+**How it is split up:**
+
+- **In the app**, set up exactly **one** task of type "Laden des Akkus". Its window and
+  repetition decide *when* a block may apply at all, e.g. daily 00:00–24:00. The app
+  refuses a second task whose window overlaps, even while the first is disabled.
+- **`ecoflowd`** only switches that task on and off. It never changes the times, creates
+  or deletes anything. It finds the task by itself: exactly one of type 1, or the one
+  named with `--block-task`. With none or several it switches nothing and answers `409`.
+- **The caller** (the home automation, for now `curl`) decides *whether*: it asks over
+  HTTPS and renews the request while the block is wanted.
+
+```bash
+export ECOFLOWD_HTTP_TOKEN="$(openssl rand -hex 32)"
+./ecoflowd --sn HC31XXXXXXXXXXXX --broker tcp://127.0.0.1:1883 --block \
+           --listen 172.17.0.1:8089 --tls-cert tls.crt --tls-key tls.key
+```
+
+| Request | Effect |
+|---|---|
+| `PUT /block` | switch on, or renew; holds for `--block-ttl` (default 5 min) |
+| `DELETE /block` | switch off now |
+| `GET /block` | the state |
+
+Every request carries `Authorization: Bearer <token>`. The answer is the state as JSON,
+the same as the [`<topic>/block` telegram](mqtt-output.md):
+
+```json
+{"sn":"HC31XXXXXXXXXXXX","timestamp":"2026-10-03T12:00:01Z","task":7,"requested":true,
+ "until":"2026-10-03T12:05:00Z","enabled":true,"running":true,"window":"00:00-24:00"}
+```
+
+`enabled` and `running` are the device's, from its task list; `running` is false outside
+the app task's window even when the task is enabled. Status codes: `200`, `401` wrong or
+missing token, `409` not exactly one task to switch, `503` no connection to the device or
+no task list yet, `504` the device did not acknowledge within 10 s.
+
+```bash
+curl --cacert tls.crt -H "Authorization: Bearer $ECOFLOWD_HTTP_TOKEN" \
+     -X PUT https://172.17.0.1:8089/block
+```
+
+**What it does on its own:**
+
+- A request **not renewed** within `--block-ttl` ends, and the task is switched off. A
+  caller that asks every two minutes with the default of five keeps the block through a
+  missed request.
+- **At start-up** an enabled task is switched off – a restart leaves no block behind.
+- A request **survives a reconnect** to the cloud; afterwards the task is brought back
+  on if needed.
+- **Switching in the app stands.** `ecoflowd` acts on a request, its end and at start-up,
+  and does not keep correcting the device. So the block can still be set by hand.
+
+**What it cannot do:** the fallback runs in `ecoflowd`, not on the device. If `ecoflowd`
+or the cloud is down, an enabled task stays enabled until the end of its window or a
+restart – a tariff disadvantage, no harm.
+
+**What it sends**, both on `.../set` and both captured from the app: the request for the
+task list (`96/127`, no payload) once per connection, and the task itself (`96/125`),
+exactly as the device listed it, with only its on/off field changed. A test checks that
+this reproduces the app's own command byte for byte. The answers come on `.../set_reply`,
+which is subscribed to only with `--block`.
+
+**Certificate and token.** The endpoint speaks TLS 1.3 only, and the certificate has to
+name the address the caller connects to. A self-signed one is enough, the caller trusts
+exactly this certificate. RSA rather than an EC key on purpose: LibreSSL (macOS) writes EC
+keys with explicit curve parameters, which Go refuses.
+
+```bash
+openssl req -x509 -newkey rsa:3072 -nodes -days 3650 \
+  -subj "/CN=ecoflowd" -addext "subjectAltName=IP:172.17.0.1" \
+  -keyout /etc/ecoflowd/tls.key -out /etc/ecoflowd/tls.crt
+chmod 600 /etc/ecoflowd/tls.key
+openssl rand -hex 32   # into /etc/ecoflowd/env as ECOFLOWD_HTTP_TOKEN=...
+```
+
+Under systemd the unit hands both files over with `LoadCredential=`, see
+[`contrib/ecoflowd@.service`](contrib/ecoflowd@.service).
+
+**Where to listen:** on the Docker bridge (`172.17.0.1` by default) when the caller runs
+in a container, otherwise on `127.0.0.1`. An address is required and `0.0.0.0` is
+refused: the endpoint is not meant for the LAN. Whether TLS is needed at all inside one
+machine was weighed: the traffic does not leave it. TLS was chosen anyway (3 Oct 2026),
+mainly so that the token never crosses a wire in clear, should the setup ever change.
 
 ## Summary
 
@@ -846,9 +945,11 @@ it works is shown only by whether fast reports arrive.
   overlapping tasks, which only the app refuses. Switched that way, tasks **take effect**:
   an app task enabled from the Mac and a task created from the Mac on the 30-minute grid both
   blocked the discharge. A task with off-grid times (00:51–01:02) was stored but not
-  executed. Open: whether that becomes a permanent second
-  write path. Like any second write path, that is a decision of
-  its own; the repo contains no such command
+  executed. Decided on 3 Oct 2026: `ecoflowd --block` switches one app task on and off
+  ([Discharge block](#discharge-block---block)). Still open: a test of `--block` on the
+  device; what the device does at midnight with a 00:00–24:00 task and how it encodes the
+  end 24:00; the natural end of a task; and whether off-grid minutes are really why the
+  fourth test's task did not run
 - Why the portal's daily yield is off in both directions **during the day**. After sunset
   portal and device agree to within 0.058 %, so they measure the same thing; the portal
   just updates in jumps. In practice: take daily values from the device, not from the

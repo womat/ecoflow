@@ -1,10 +1,12 @@
 package main
 
 import (
+	"crypto/tls"
 	"errors"
 	"flag"
 	"fmt"
 	"io"
+	"net"
 	"os"
 	"strings"
 	"time"
@@ -24,6 +26,12 @@ type options struct {
 	switchEvery time.Duration
 	verbose     bool
 	version     bool
+	block       bool
+	listen      string
+	tlsCert     string
+	tlsKey      string
+	blockTTL    time.Duration
+	blockTask   uint64
 }
 
 // config is the validated form.
@@ -40,6 +48,13 @@ type config struct {
 	fast         bool
 	switchEvery  time.Duration
 	verbose      bool
+
+	block          bool
+	listen         string
+	tlsCertificate tls.Certificate
+	httpToken      string
+	blockTTL       time.Duration
+	blockTask      uint64
 }
 
 // backoff bounds the wait between reconnection attempts. The cloud being
@@ -74,6 +89,16 @@ func newFlagSet(o *options, stderr io.Writer) *flag.FlagSet {
 		"switch on the device's fast stream - this publishes, see the note below")
 	fs.DurationVar(&o.switchEvery, "switch-every", 3*time.Second,
 		"how often to renew the fast stream")
+	fs.BoolVar(&o.block, "block", false,
+		"switch the discharge block task on request - this publishes, see the note below")
+	fs.StringVar(&o.listen, "listen", "",
+		"address for the HTTPS endpoint of --block, e.g. 172.17.0.1 (port 8089 if none is given)")
+	fs.StringVar(&o.tlsCert, "tls-cert", "", "certificate file for --listen")
+	fs.StringVar(&o.tlsKey, "tls-key", "", "private key file for --listen")
+	fs.DurationVar(&o.blockTTL, "block-ttl", defaultBlockTTL,
+		"how long a block request holds unless renewed (1m to 15m)")
+	fs.Uint64Var(&o.blockTask, "block-task", 0,
+		"number of the task to switch; by default the only one of type \"Laden des Akkus\"")
 	fs.BoolVar(&o.verbose, "v", false, "report every frame that arrives")
 	fs.BoolVar(&o.version, "version", false, "print the version and exit")
 
@@ -81,7 +106,8 @@ func newFlagSet(o *options, stderr io.Writer) *flag.FlagSet {
 		fmt.Fprint(stderr, `usage: ecoflowd --sn <serial> [options]
 
 Reads an EcoFlow PowerOcean over the consumer app's cloud channel and keeps
-reading it. Nothing is ever sent to the device unless --fast is given.
+reading it. Nothing is ever sent to the device unless --fast or --block is
+given.
 
 With --broker the readings go to a local MQTT broker as two JSON telegrams,
 neither retained:
@@ -106,6 +132,9 @@ credentials, from the environment and never from flags:
   ECOFLOW_HOST         API host, overridden by --host
   MQTT_PASSWORD        password for the local broker, if it wants one. A flag
                        would put it in the process list for anyone to read.
+  ECOFLOWD_HTTP_TOKEN  the token every request to the --block endpoint has to
+                       carry as "Authorization: Bearer <token>"; at least 16
+                       characters, e.g. from "openssl rand -hex 32".
 
 options:
 `)
@@ -130,6 +159,36 @@ note on --fast:
   Ten seconds was measured to be too slow - the device falls back to its minute
   cadence - so three is the default, which is what the app itself uses.
 
+note on --block:
+  The discharge block. In the app, set up exactly one scheduled task of type
+  "Laden des Akkus" (charge battery); its window and repetition decide when a
+  block may apply at all, e.g. daily 00:00-24:00. With --block this program
+  switches that task on and off on request and never changes its times.
+  Measured: about 25 s after the task is enabled the battery stops
+  discharging, and within a good minute of disabling it, it supplies again.
+
+  The request comes over HTTPS on --listen, never over MQTT:
+    PUT    /block   switch on, or renew; holds for --block-ttl
+    DELETE /block   switch off now
+    GET    /block   the state, as JSON
+  each with "Authorization: Bearer $ECOFLOWD_HTTP_TOKEN". A request not
+  renewed within --block-ttl ends by itself and the task is switched off. At
+  start-up an enabled task is switched off as well; switching in the app is
+  left alone otherwise. Answers: 200, 401 wrong token, 409 not exactly one
+  task to switch, 503 no connection or no task list yet, 504 the device did
+  not acknowledge.
+
+  Like --fast this publishes to the .../set topic, and for the same reason it
+  is a flag: two kinds of message, both captured from the app - the request
+  for the task list, and the task itself sent back exactly as the device
+  listed it with only its on/off field changed. Nothing is created, deleted or
+  moved. The state also goes to <topic>/block on the local broker.
+
+  The endpoint speaks TLS 1.3 only. The certificate has to name the address
+  given with --listen; under systemd, pass certificate and key with
+  LoadCredential=, see contrib/ecoflowd@.service. Bind it to the Docker bridge
+  or localhost, not to the LAN - an address is required for that reason.
+
 exit status:
   0  stopped on a signal
   1  usage or configuration error
@@ -141,6 +200,8 @@ examples:
   ecoflowd --sn HC31XXXXXXXXXXXX --stdout
   ecoflowd --sn HC31XXXXXXXXXXXX --stdout --fast
   ecoflowd --sn HC31XXXXXXXXXXXX --broker tcp://127.0.0.1:1883
+  ecoflowd --sn HC31XXXXXXXXXXXX --broker tcp://127.0.0.1:1883 --block \
+           --listen 172.17.0.1:8089 --tls-cert tls.crt --tls-key tls.key
 `)
 	}
 
@@ -163,8 +224,20 @@ func parseArgs(argv []string, stderr io.Writer) (*options, *flag.FlagSet, error)
 	return opts, fs, nil
 }
 
+// The --block limits. Five minutes matches the revert time the home
+// automation already uses for the inverter's power limit; the floor keeps a
+// block from flapping against the device's 25 s reaction, the ceiling keeps
+// a forgotten one from holding for hours.
+const (
+	defaultBlockTTL  = 5 * time.Minute
+	minBlockTTL      = time.Minute
+	maxBlockTTL      = 15 * time.Minute
+	defaultHTTPSPort = "8089"
+	minTokenLength   = 16
+)
+
 // buildConfig validates the command line and the environment together.
-func buildConfig(o *options, _ *flag.FlagSet) (*config, error) {
+func buildConfig(o *options, fs *flag.FlagSet) (*config, error) {
 	c := &config{
 		serial:      strings.TrimSpace(o.serial),
 		host:        o.host,
@@ -206,6 +279,78 @@ func buildConfig(o *options, _ *flag.FlagSet) (*config, error) {
 	if c.fast && c.switchEvery < time.Second {
 		return nil, fmt.Errorf("--switch-every %s is too short; the app uses 3s", c.switchEvery)
 	}
+	if err := blockConfig(c, o, fs); err != nil {
+		return nil, err
+	}
 
 	return c, nil
+}
+
+// blockConfig checks the --block flags. Flags that belong to it are an error
+// without it: an endpoint that silently does not exist sends people debugging
+// the network.
+func blockConfig(c *config, o *options, fs *flag.FlagSet) error {
+	if !o.block {
+		var stray []string
+		if fs != nil {
+			fs.Visit(func(f *flag.Flag) {
+				switch f.Name {
+				case "listen", "tls-cert", "tls-key", "block-ttl", "block-task":
+					stray = append(stray, "--"+f.Name)
+				}
+			})
+		}
+		if len(stray) > 0 {
+			return fmt.Errorf("%s only work together with --block", strings.Join(stray, ", "))
+		}
+		return nil
+	}
+
+	c.block, c.blockTTL, c.blockTask = true, o.blockTTL, o.blockTask
+	if c.blockTTL < minBlockTTL || c.blockTTL > maxBlockTTL {
+		return fmt.Errorf("--block-ttl %s is outside %s to %s", c.blockTTL, minBlockTTL, maxBlockTTL)
+	}
+
+	listen, err := listenAddress(o.listen)
+	if err != nil {
+		return err
+	}
+	c.listen = listen
+
+	if o.tlsCert == "" || o.tlsKey == "" {
+		return errors.New("--block needs --tls-cert and --tls-key; the endpoint speaks HTTPS only")
+	}
+	cert, err := tls.LoadX509KeyPair(o.tlsCert, o.tlsKey)
+	if err != nil {
+		return fmt.Errorf("certificate: %w", err)
+	}
+	c.tlsCertificate = cert
+
+	// From the environment, like every other secret here: a flag would put it
+	// in the process list.
+	c.httpToken = os.Getenv("ECOFLOWD_HTTP_TOKEN")
+	if len(c.httpToken) < minTokenLength {
+		return fmt.Errorf("--block needs ECOFLOWD_HTTP_TOKEN of at least %d characters; see --help",
+			minTokenLength)
+	}
+	return nil
+}
+
+// listenAddress checks --listen. An address is required and the unspecified
+// ones are refused: listening on every interface would put the endpoint on
+// the LAN, which is exactly what it is not meant for.
+func listenAddress(s string) (string, error) {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return "", errors.New("--block needs --listen, e.g. 172.17.0.1 for the Docker bridge or 127.0.0.1")
+	}
+	host, port, err := net.SplitHostPort(s)
+	if err != nil {
+		host, port = strings.Trim(s, "[]"), defaultHTTPSPort
+	}
+	ip := net.ParseIP(host)
+	if host == "" || (ip != nil && ip.IsUnspecified()) {
+		return "", fmt.Errorf("--listen %q would listen on every interface; give the address to bind", s)
+	}
+	return net.JoinHostPort(host, port), nil
 }

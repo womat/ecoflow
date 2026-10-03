@@ -65,7 +65,7 @@ func TestSessionIsReusedAcrossAttempts(t *testing.T) {
 	for range 4 {
 		// Each of these fails at the broker, which is the ordinary case this
 		// is about: the cloud is fine, the connection is not.
-		connected, err := session(context.Background(), cfg, &s, nil, io.Discard, io.Discard)
+		connected, err := session(context.Background(), cfg, &s, nil, nil, io.Discard, io.Discard)
 		if err == nil {
 			t.Fatal("expected the connection to fail")
 		}
@@ -97,7 +97,7 @@ func TestExpiredTokenIsForgotten(t *testing.T) {
 
 	var s ecoflow.Session
 	for range 3 {
-		if _, err := session(context.Background(), cfg, &s, nil, io.Discard, io.Discard); err == nil {
+		if _, err := session(context.Background(), cfg, &s, nil, nil, io.Discard, io.Discard); err == nil {
 			t.Fatal("expected certification to fail")
 		}
 		if s.Token != "" {
@@ -121,7 +121,7 @@ func TestATokenSurvivesABadLine(t *testing.T) {
 
 	var s ecoflow.Session
 	for range 3 {
-		if _, err := session(context.Background(), cfg, &s, nil, io.Discard, io.Discard); err == nil {
+		if _, err := session(context.Background(), cfg, &s, nil, nil, io.Discard, io.Discard); err == nil {
 			t.Fatal("expected certification to fail")
 		}
 		if s.Token == "" {
@@ -145,7 +145,7 @@ func TestBadCredentialsSurfaceAsSuch(t *testing.T) {
 	cfg := &config{serial: "HC31XXXXXXXXXXXX", email: "a@b.c", password: "wrong", host: srv.URL}
 
 	var s ecoflow.Session
-	_, err := session(context.Background(), cfg, &s, nil, io.Discard, io.Discard)
+	_, err := session(context.Background(), cfg, &s, nil, nil, io.Discard, io.Discard)
 	if err == nil {
 		t.Fatal("got no error, want one")
 	}

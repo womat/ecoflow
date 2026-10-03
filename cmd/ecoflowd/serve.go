@@ -34,6 +34,20 @@ func serve(ctx context.Context, cfg *config, stdout, stderr io.Writer) int {
 		out = p
 	}
 
+	// The block lives as long as the process, not as one connection: a
+	// request has to outlast a reconnect to the cloud.
+	var block *blocker
+	if cfg.block {
+		block = newBlocker(cfg, stderr)
+		if out != nil {
+			block.publish = out.block
+		}
+		if _, err := startHTTPS(ctx, cfg, block, stderr); err != nil {
+			fmt.Fprintln(stderr, "error:", err)
+			return exitUsage
+		}
+	}
+
 	// The session is held here rather than fetched per attempt. Logging in is
 	// what costs something - an undocumented endpoint, the account password on
 	// the wire - and a token lasts about a month, so a network that comes and
@@ -42,7 +56,7 @@ func serve(ctx context.Context, cfg *config, stdout, stderr io.Writer) int {
 	wait := backoffStart
 
 	for {
-		connected, err := session(ctx, cfg, &s, out, stdout, stderr)
+		connected, err := session(ctx, cfg, &s, out, block, stdout, stderr)
 
 		// A connection that actually stood is not something to back off from.
 		// Without this the wait only ever grows: a service that reconnects
@@ -86,7 +100,7 @@ func serve(ctx context.Context, cfg *config, stdout, stderr io.Writer) int {
 // the subscription ever stood, which is what tells a failed attempt apart from
 // a connection that worked and later dropped.
 func session(ctx context.Context, cfg *config, s *ecoflow.Session,
-	out *publisher, stdout, stderr io.Writer) (bool, error) {
+	out *publisher, block *blocker, stdout, stderr io.Writer) (bool, error) {
 
 	client := &ecoflow.Client{Host: cfg.host}
 
@@ -113,12 +127,12 @@ func session(ctx context.Context, cfg *config, s *ecoflow.Session,
 	}
 
 	topics := ecoflow.TopicsFor(s.UserID, cfg.serial)
-	return listen(ctx, cfg, out, broker, *s, topics, stdout, stderr)
+	return listen(ctx, cfg, out, block, broker, *s, topics, stdout, stderr)
 }
 
 // listen subscribes and reports what arrives, until the connection or the
 // context ends.
-func listen(ctx context.Context, cfg *config, out *publisher, broker ecoflow.Broker,
+func listen(ctx context.Context, cfg *config, out *publisher, block *blocker, broker ecoflow.Broker,
 	s ecoflow.Session, topics ecoflow.Topics, stdout, stderr io.Writer) (bool, error) {
 
 	id, err := ecoflow.ClientID(s.UserID)
@@ -148,10 +162,14 @@ func listen(ctx context.Context, cfg *config, out *publisher, broker ecoflow.Bro
 		}
 	})
 
-	incoming := make(chan []byte, 256)
+	type message struct {
+		topic   string
+		payload []byte
+	}
+	incoming := make(chan message, 256)
 	opts.SetDefaultPublishHandler(func(_ mqtt.Client, m mqtt.Message) {
 		select {
-		case incoming <- m.Payload():
+		case incoming <- message{m.Topic(), m.Payload()}:
 		default: // never block the MQTT thread on a slow reader
 		}
 	})
@@ -167,13 +185,32 @@ func listen(ctx context.Context, cfg *config, out *publisher, broker ecoflow.Bro
 		return false, fmt.Errorf("connect to %s: %w", broker.Address(), tokenErr(token))
 	}
 
-	for _, topic := range topics.Subscribe() {
+	// The answers to commands arrive on set_reply, which is only worth
+	// listening to when commands other than the stream switch are sent.
+	subscribe := topics.Subscribe()
+	if block != nil {
+		subscribe = append(subscribe, topics.SetReply)
+	}
+	for _, topic := range subscribe {
 		if token := c.Subscribe(topic, 0, nil); !token.WaitTimeout(30*time.Second) || token.Error() != nil {
 			return false, fmt.Errorf("subscribe to %s: %w", topic, tokenErr(token))
 		}
 	}
 	fmt.Fprintf(stderr, "connected to %s, subscribed to %d topics\n",
-		broker.Address(), len(topics.Subscribe()))
+		broker.Address(), len(subscribe))
+
+	if block != nil {
+		block.connected(func(frame []byte) error {
+			token := c.Publish(topics.Set, 1, false, frame)
+			if !token.WaitTimeout(10*time.Second) || token.Error() != nil {
+				return tokenErr(token)
+			}
+			return nil
+		})
+		// Runs before the deferred Disconnect above, so nothing publishes
+		// onto a client that is going away.
+		defer block.disconnected()
+	}
 
 	// The connection lives only as long as this function, and so must the
 	// switch loop: a goroutine publishing onto a client that has been
@@ -200,8 +237,13 @@ func listen(ctx context.Context, cfg *config, out *publisher, broker ecoflow.Bro
 			return true, fmt.Errorf("connection lost: %w", err)
 		case <-fast.deadline():
 			fast.complain(stderr)
-		case payload := <-incoming:
-			f, err := frames.Parse(payload)
+		case m := <-incoming:
+			if block != nil && m.topic == topics.SetReply {
+				handleReply(block, m.payload, cfg.verbose, stderr)
+				continue
+			}
+
+			f, err := frames.Parse(m.payload)
 			if err != nil {
 				continue // not every frame on these topics is one we know
 			}
@@ -210,6 +252,12 @@ func listen(ctx context.Context, cfg *config, out *publisher, broker ecoflow.Bro
 			}
 			if f.Command == frames.Fast {
 				fast.arrived()
+			}
+			if tasks, ok := f.Tasks(); ok {
+				if block != nil {
+					block.listed(tasks)
+				}
+				continue
 			}
 
 			if part, ok := f.Hourly(); ok {
@@ -230,6 +278,25 @@ func listen(ctx context.Context, cfg *config, out *publisher, broker ecoflow.Bro
 				out.energy(e)
 			}
 		}
+	}
+}
+
+// handleReply passes the device's answers on set_reply to the block. They are
+// not obfuscated, unlike everything on the push topic, hence ParseReply.
+func handleReply(block *blocker, payload []byte, verbose bool, stderr io.Writer) {
+	f, err := frames.ParseReply(payload)
+	if err != nil {
+		return
+	}
+	if verbose {
+		fmt.Fprintf(stderr, "reply %v, sequence %d, %d bytes\n", f.Command, f.Seq, len(f.Payload))
+	}
+	if tasks, ok := f.Tasks(); ok {
+		block.listed(tasks)
+		return
+	}
+	if _, ok := f.Acknowledged(); ok {
+		block.acknowledged(f.Seq)
 	}
 }
 
