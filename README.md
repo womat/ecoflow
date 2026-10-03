@@ -893,7 +893,17 @@ Under systemd the unit hands both files over with `LoadCredential=`, see
 
 **Where to listen:** on the Docker bridge (`172.17.0.1` by default) when the caller runs
 in a container, otherwise on `127.0.0.1`. An address is required and `0.0.0.0` is
-refused: the endpoint is not meant for the LAN. Whether TLS is needed at all inside one
+refused: the endpoint is not meant for the LAN. **A host firewall has to let the bridge in:**
+with ufw's default "deny incoming", a container's request times out while one from the host
+itself works. Allow the port on the bridge only, not from everywhere:
+
+```bash
+sudo ufw allow in on docker0 to 172.17.0.1 port 8089 proto tcp comment 'ecoflowd --block'
+```
+
+`/etc/ecoflowd` is readable by root alone, so a `curl --cacert /etc/ecoflowd/tls.crt` on the
+host has to run with `sudo`. The caller in the container gets a copy of `tls.crt`; it is
+the certificate, not the key, and need not be secret. Whether TLS is needed at all inside one
 machine was weighed: the traffic does not leave it. TLS was chosen anyway (3 Oct 2026),
 mainly so that the token never crosses a wire in clear, should the setup ever change.
 
