@@ -843,9 +843,10 @@ it works is shown only by whether fast reports arrive.
   captured (`96/125`; the task list comes as `96/127` and is pushed as `96/10`, see
   `api-status.md`, section 3). Write tests with replayed app frames showed that the device
   also accepts enable, disable, create and delete from outside the app, and that it stores
-  overlapping tasks, which only the app refuses. A task with own, off-grid times
-  (00:51–01:02) was stored but **not executed**; whether that is due to the grid or to the
-  task not coming from the app is still open. Open: whether that becomes a permanent second
+  overlapping tasks, which only the app refuses. Switched that way, tasks **take effect**:
+  an app task enabled from the Mac and a task created from the Mac on the 30-minute grid both
+  blocked the discharge. A task with off-grid times (00:51–01:02) was stored but not
+  executed. Open: whether that becomes a permanent second
   write path. Like any second write path, that is a decision of
   its own; the repo contains no such command
 - Why the portal's daily yield is off in both directions **during the day**. After sunset
