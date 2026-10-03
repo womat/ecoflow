@@ -842,8 +842,14 @@ embedded message:
 
 **`time_table` examples:** `d884a01a` = 600 | 840 << 16 = 10:00–14:00;
 `b285881d` = 11:30–15:30; `c68a902b` = 22:30–23:00. All checked against the app.
-The app offers only **30-minute steps**. Whether the device accepts other minutes is not
-tested.
+The app offers only **30-minute steps**. The device stores other minutes but did not execute
+them (fourth write test, below).
+
+**Observed by the maintainer in the app, 3 October 2026** (nothing captured): the app accepts
+a window of **00:00–24:00**. It refuses a second task whose window overlaps an existing one
+**even while that existing task is disabled**. With one task over the whole day, no second
+task can therefore exist. The device encodes the end 24:00 as **1440** minutes: `ecoflowd`
+decoded the listed window as 00:00–24:00 in the sixth test (below).
 
 A modify or delete **always carries the full task**, not just the changed field. The
 payloads of the individual steps, in order:
@@ -866,6 +872,15 @@ payload `08 0x 10 yy`: field 2 = the task number, field 1 = 1 or 2. In all nine
 acknowledgements field 1 matched the task's `type`. It is therefore **presumably an echo of
 the type and not a result code**. No rejection was observed. So, unlike `get_reply`, the
 `set_reply` topic of the app channel does carry answers.
+
+**The answers on `set_reply` are not obfuscated**, unlike every frame on the push topic.
+This was established when the captures were turned into test data for `ecoflowd --block`
+(3 Oct 2026). Their header has no field 6, while push frames carry it set to 1. Their
+payload reads as protobuf directly, and **their sequence number is the one of the request
+they answer** (list answer to request `seq` 158: `seq` 158). Run through the push-side
+XOR, they come out as noise. That is why `internal/frames` has `ParseReply` next to
+`Parse`. The topic decides which one is used, not field 6: that field 6 means
+"obfuscated" is only an inference from where it occurs.
 
 **The task list can be requested: `96/127`.** After every change, and when the list is
 opened, the app sends a `96/127` **without a payload** (no field 1, no `dataLen`):
@@ -1064,6 +1079,40 @@ The failure in the fourth test is therefore most likely due to the **off-grid mi
 (created vs. created and then modified), so "off-grid minutes are never executed" is the
 closest explanation, not a proof.
 
+**Sixth test, 3 October 2026, 21:54–22:03: `ecoflowd --block` on the device.** Built from the
+local commit `5d1000a` (the version string was `v0.5.2-0.20261003194909-5d1000a72fe9`). It ran
+on the Raspberry Pi as a second instance next to the installed service (v0.5.1), without a
+broker, on `127.0.0.1` with a test certificate and `--block-ttl 1m`. Beforehand the
+maintainer had set task 7 in the app to daily 00:00–24:00, disabled. Night, PV 0, so the
+battery was supplying the house and a block would show without a large load. Readings are
+from the instance's own output.
+
+| Time (local) | Event | Battery | Grid |
+|---|---|---|---|
+| 21:54:18 | start: `96/127` answered (`seq` 1), task 7 listed as 00:00–24:00, off | discharging ≈ 430–450 W | 0 |
+| – | `GET` without the token | `401` | |
+| 21:56:40 | `PUT`: "on" sent, ack `seq` 2, `96/10` enabled and running, answer within 1 s | | |
+| 21:57–21:59 | renewed every 30 s, every answer `200` | **0 W** from 21:58 | import ≈ 360 W |
+| 22:00:23 | not renewed for 1 min: `ecoflowd` sends "off" by itself, ack, `96/10` off | 0 W until 22:01 | |
+| 22:02:00 | – | discharging 54 W, rising | 315 W |
+| 22:02:35 / 22:02:40 | `PUT`, then `DELETE`: both acknowledged | | |
+| 22:02:55 | `PUT`, then the process killed (SIGKILL) with the task enabled | | |
+| 22:03:00 | restart: list via `96/127` shows task 7 enabled, switched off at start-up, ack | | |
+
+**Every rule of `--block` held on the device:** the switch, the renewal without a new
+command, the fallback when the request is not renewed, `DELETE`, the start-up switch-off,
+and the token. The timings match the fifth test, with the block taking effect within the
+first minute and the battery back about 1.5 minutes after the "off".
+
+One observation: **`is_effect` lags `is_enable` by about a second.** In the answer to the
+`PUT` at 22:02:35, `enabled` was already `true` but `running` still `false`. After the
+`DELETE`, `enabled` was `false` and `running` still `true`. The answer shows the device's
+list at that moment; the next `96/10` brings `running` along.
+
+Not captured in the sixth test: a pushed `96/10` as raw bytes for the test data. The instance
+logged only command and length. The parser reads `96/10` with the layout of the `96/127`
+answer, which the live run confirms indirectly (the state was right after every switch).
+
 **Not tested:**
 
 - the Android header of the template
@@ -1253,26 +1302,37 @@ Open:
   discharge floor. Setting the floor to the current SoC would amount to "hold", but that is an
   inference. Both would have to be assembled from third-party sources, which is exactly the
   case `CLAUDE.md` warns about. On Modbus the equivalent is `min_soc_limit` 40536, still locked
-- [ ] Scheduled tasks: should there be a permanent second write path for them (e.g. in
-  `ecoflowd`)? A decision of its own (`CLAUDE.md`), now with the write test on the table.
-  **Recommendation (27 Sep 2026), not decided:**
-  - `ecoflowd` executes and reports, the home automation decides when.
-  - The scope is as narrow as `fast`: a flag of its own, only enable/disable of an
-    **app-created** task (number set by flag), and frames in the captured form with only
-    `seq` varying.
-  - The task state from `96/10` goes out as a telegram.
-  - The trigger is a local-only HTTP endpoint rather than an MQTT command topic.
-  - The block lapses by itself unless it is renewed.
-  The reasoning is in the `myhome` concept for the discharge block. The precondition, that an
-  app-created task enabled from outside the app takes effect, is **met** (fifth test,
-  27 Sep 2026). Also open: whether off-grid minutes are really the reason a task was stored but
-  not executed; on-grid tasks created from outside the app do run. Further: the natural end of a task (does `96/10` report it?), what happens
-  when overlapping tasks are due (the device stores them; only the app refuses them), the
-  Android header variant, and where the DC Fit takes its self-consumption from while
-  "Laden des Akkus" is active (section 3, "Scheduled tasks")
+- [ ] Scheduled tasks, still open after the decision for `ecoflowd --block` (below):
+  - what the device does at midnight with a daily 00:00–24:00 task (the end is encoded as
+    1440, sixth test);
+  - a pushed `96/10` as raw bytes for the test data;
+  - the natural end of a task (does `96/10` report it?);
+  - whether off-grid minutes are really the reason a task was stored but not executed;
+    on-grid tasks created from outside the app do run;
+  - what happens when overlapping tasks are due. The device stores them, the app refuses
+    them – and, observed in the app on 3 Oct 2026, it refuses an overlap **even while the
+    existing task is disabled**;
+  - the Android header variant;
+  - where the DC Fit takes its self-consumption from while "Laden des Akkus" is active
+    (section 3, "Scheduled tasks").
 
 Answered – the evidence is in the sections named:
 
+- [x] Scheduled tasks as a permanent second write path: **decided on 3 Oct 2026**, built as
+  `ecoflowd --block` (README, "Discharge block").
+  - It switches exactly one app-created task of type 1 on and off. The app task's window
+    decides when a block can apply; times are never written. With no task or several it
+    switches nothing (`409`), unless `--block-task` names one.
+  - Tested on the device on 3 Oct 2026 (sixth test, section 3): switch, renewal, fallback,
+    `DELETE`, start-up switch-off and token all held.
+  - It sends two captured message kinds: `96/127` (empty) and `96/125` with the task
+    exactly as listed, only field 4 changed. A test checks this against the app's own
+    frames byte for byte.
+  - The trigger is HTTPS with a token on a local address, not MQTT. A request lapses
+    unless renewed (`--block-ttl`, default 5 min). At start-up an enabled task is switched
+    off. Switching in the app is left alone.
+  - The precondition was the fifth write test. The reasoning is in the `myhome` concept
+    for the discharge block.
 - [x] `HC31` (DC Fit) gets error 1006 on `quota/all`, while `device/list` lists it
   (section 1)
 - [x] The Open API's MQTT channel is silent and forbids requests (PUBACK 0x87, SUBACK

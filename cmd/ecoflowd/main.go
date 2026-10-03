@@ -15,7 +15,7 @@
 // is what the device turned out to need: subscribing alone keeps it reporting
 // once a minute, measured over 23 minutes without a single message to the
 // cloud. Readings still go to the local broker - that is what the program is
-// for; only --fast writes anything back to the device.
+// for; only --fast and --block write anything back to the device.
 package main
 
 import (

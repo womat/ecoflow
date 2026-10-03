@@ -31,6 +31,13 @@ var (
 	Modules  = Command{96, 3}
 	Ack      = Command{96, 137}
 	Hourly   = Command{254, 32}
+
+	// The scheduled tasks, see tasks.go. TaskList is what the device pushes
+	// by itself, TaskQuery asks for the same list and gets it on set_reply,
+	// and TaskConfig changes a task - and comes back as its acknowledgement.
+	TaskList   = Command{96, 10}
+	TaskConfig = Command{96, 125}
+	TaskQuery  = Command{96, 127}
 )
 
 func (c Command) String() string { return fmt.Sprintf("%d/%d", c.Func, c.ID) }
@@ -54,6 +61,27 @@ var ErrNotAFrame = errors.New("not a device frame")
 // It applies in this direction only. What the app sends to the device is
 // plain — see BuildStreamSwitch.
 func Parse(b []byte) (Frame, error) {
+	return decodeFrame(b, true)
+}
+
+// ParseReply reads one frame from the set_reply topic, where the payload is
+// not obfuscated.
+//
+// Measured on the DC Fit (September 2026): the device's answers to commands -
+// the acknowledgement of a 96/125 and the task list of a 96/127 - arrive in
+// plain text, readable as protobuf as they are. Their header carries no field
+// 6, which every frame on the push topic does (set to 1). Run through Parse
+// they would come out scrambled with the sequence number, which the device
+// copies from the request.
+//
+// Which topic a frame came from decides which of the two to call, not field
+// 6: that the field means "obfuscated" is an inference from where it occurs,
+// and the topics are what was actually observed.
+func ParseReply(b []byte) (Frame, error) {
+	return decodeFrame(b, false)
+}
+
+func decodeFrame(b []byte, obfuscated bool) (Frame, error) {
 	outer, ok := find(parse(b), 1)
 	if !ok || outer.wire != wireBytes {
 		return Frame{}, ErrNotAFrame
@@ -75,6 +103,9 @@ func Parse(b []byte) (Frame, error) {
 
 	if payload, ok := find(header, fieldPayload); ok && payload.wire == wireBytes {
 		key := byte(f.Seq & 0xFF)
+		if !obfuscated {
+			key = 0
+		}
 		f.Payload = make([]byte, len(payload.bytes))
 		for i, c := range payload.bytes {
 			f.Payload[i] = c ^ key

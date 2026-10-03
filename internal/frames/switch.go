@@ -11,8 +11,9 @@ const MaxSwitchSeq = 127
 
 // BuildStreamSwitch returns the message that turns on the device's fast stream.
 //
-// This is the one message anything here sends to a .../set topic, the topic
-// through which a device can actually be changed. It is not derived from
+// It is one of the two kinds of message anything here sends to a .../set
+// topic, the topic through which a device can actually be changed; the other
+// is the task switch in tasks.go. It is not derived from
 // anyone's notes: it was captured off the wire by subscribing to that topic
 // while operating the phone app, and these are those bytes, varying only the
 // sequence number and the serial.
@@ -43,6 +44,18 @@ func BuildStreamSwitch(serial string, seq int) ([]byte, error) {
 	if seq < 1 || seq > MaxSwitchSeq {
 		return nil, fmt.Errorf("sequence %d out of range (1-%d)", seq, MaxSwitchSeq)
 	}
+	return appCommand(serial, seq, 97, []byte{0x08, 0x01, 0x10, 0x01})
+}
+
+// appCommand wraps a payload in the header the captured app put around every
+// command it sent to the energy management unit - the stream switch and the
+// three task commands alike. Only the command id, the payload and the sequence
+// number differ between them; the field list above BuildStreamSwitch is this
+// header.
+//
+// A nil payload leaves out field 1 and dataLen together, which is what the app
+// did for the task list request (96/127). It did not send an empty field 1.
+func appCommand(serial string, seq int, cmdID uint64, payload []byte) ([]byte, error) {
 	if serial == "" || len(serial) > 60 {
 		return nil, fmt.Errorf("serial %q has an unusable length", serial)
 	}
@@ -51,15 +64,19 @@ func BuildStreamSwitch(serial string, seq int) ([]byte, error) {
 	}
 
 	var inner []byte
-	inner = appendBytes(inner, 1, []byte{0x08, 0x01, 0x10, 0x01})
+	if payload != nil {
+		inner = appendBytes(inner, 1, payload)
+	}
 	inner = appendVarint(inner, 2, 32)
 	inner = appendVarint(inner, 3, 96)
 	inner = appendVarint(inner, 4, 1)
 	inner = appendVarint(inner, 5, 1)
 	inner = appendVarint(inner, 7, 3)
 	inner = appendVarint(inner, 8, 96)
-	inner = appendVarint(inner, 9, 97)
-	inner = appendVarint(inner, 10, 4)
+	inner = appendVarint(inner, 9, cmdID)
+	if payload != nil {
+		inner = appendVarint(inner, 10, uint64(len(payload)))
+	}
 	inner = appendVarint(inner, 11, 1)
 	inner = appendVarint(inner, 14, uint64(seq))
 	inner = appendVarint(inner, 16, 3)

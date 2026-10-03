@@ -23,6 +23,29 @@
 # The password there is the EcoFlow account password, not an application token,
 # and the login endpoint carries it base64-encoded rather than hashed. Anyone
 # who can read that file has the account.
+#
+# The discharge block (--block, see the README) needs three more things: the
+# token in the same file,
+#
+#   ECOFLOWD_HTTP_TOKEN=...        (openssl rand -hex 32)
+#
+# and a certificate and key, which the service user - a dynamic one - cannot
+# read from /etc. systemd hands them over with LoadCredential=, and %d names
+# the directory they appear in (systemd 248 or later). %d is not expanded
+# inside $ECOFLOWD_OPTIONS, so the flags go on the command line itself, in a
+# drop-in, /etc/systemd/system/ecoflowd@.service.d/block.conf:
+#
+#   [Service]
+#   LoadCredential=tls.crt:/etc/ecoflowd/tls.crt
+#   LoadCredential=tls.key:/etc/ecoflowd/tls.key
+#   ExecStart=
+#   ExecStart=/usr/local/bin/ecoflowd --sn %i $ECOFLOWD_OPTIONS --block \
+#       --listen 172.17.0.1 --tls-cert %d/tls.crt --tls-key %d/tls.key
+#
+# 172.17.0.1 is Docker's default bridge, for a caller in a container; check it
+# with "ip -4 addr show docker0", and put the same address in the certificate.
+# If the bridge is not up yet when the service starts, binding fails and the
+# service exits with 1 and restarts after RestartSec - no ordering needed.
 
 [Unit]
 Description=EcoFlow PowerOcean %i to local MQTT
