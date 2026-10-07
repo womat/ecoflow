@@ -1,5 +1,10 @@
 # EcoFlow PowerOcean DC Fit – MQTT bridge, Modbus CLI & notes
 
+[![CI](https://github.com/womat/ecoflow/actions/workflows/ci.yml/badge.svg)](https://github.com/womat/ecoflow/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/womat/ecoflow)](https://github.com/womat/ecoflow/releases/latest)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue)](LICENSE)
+[![Go](https://img.shields.io/github/go-mod/go-version/womat/ecoflow)](go.mod)
+
 `ecoflowd` reads live data from an EcoFlow PowerOcean (DC Fit) through the app's cloud
 channel and publishes it to a local MQTT broker – for evcc, Home Assistant or anything
 else that speaks MQTT. Alongside: `modbusread`, a read-only Modbus TCP/RTU CLI, and
