@@ -110,8 +110,11 @@ German — that concerns the chat, not the files.
   delivers; `--hours` and `--modules` can do more than the Go service. Generates the
   `.golden` files
 - `contrib/` – operational extras that are not built: the systemd template for `ecoflowd`
-- `.github/workflows/` – `ci.yml` (gofmt, vet, build, test -race) and `release.yml`
-  (both binaries for six platforms, tag `vX.Y.Z` on `main`)
+- `.github/workflows/` – `ci.yml` (gofmt, vet, build, test -race, govulncheck) and
+  `release.yml` (vet, test and govulncheck again, then both binaries for six platforms,
+  tag `vX.Y.Z` on `main`). Actions are pinned to a commit SHA with the release in a
+  comment, never to a movable tag like `@v7`; `.github/dependabot.yml` proposes weekly
+  updates for them and the Go modules, but not for the `go install` pin of govulncheck
 - `ecoflow-open-demo/` – EcoFlow's official Java demo client, downloaded for reference
   only. Deliberately **not** versioned via `.gitignore`; do not "tidy it up"
 - `README.md` – entry point, disclaimer, summary, list of sources, open points
