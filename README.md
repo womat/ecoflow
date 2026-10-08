@@ -1,12 +1,14 @@
 # ecoflowd
 
+**Live readings from an EcoFlow PowerOcean (DC Fit) on your local MQTT broker – for evcc,
+Home Assistant, Node-RED or anything else that speaks MQTT.**
+
 [![CI](https://github.com/womat/ecoflow/actions/workflows/ci.yml/badge.svg)](https://github.com/womat/ecoflow/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/womat/ecoflow)](https://github.com/womat/ecoflow/releases/latest)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue)](LICENSE)
 [![Go](https://img.shields.io/github/go-mod/go-version/womat/ecoflow)](go.mod)
 
-**Live readings from an EcoFlow PowerOcean (DC Fit) on your local MQTT broker – for evcc,
-Home Assistant, Node-RED or anything else that speaks MQTT.**
+🇩🇪 [Deutsche Kurzfassung](README.de.md)
 
 `ecoflowd` logs in the way the EcoFlow app does, subscribes to the device's cloud channel
 and publishes what arrives as two JSON telegrams: the current power flows every minute,
@@ -83,27 +85,27 @@ docker compose pull && docker compose up -d
 
 ## Quick start: systemd
 
-Get the binary from the [releases](https://github.com/womat/ecoflow/releases) — Linux
-(amd64, arm64, arm with `GOARM=6`), macOS and Windows, statically linked, nothing to
-install:
+Get the archive from the [releases](https://github.com/womat/ecoflow/releases) – Linux
+for every Raspberry Pi and PC, macOS and Windows, statically linked, nothing to install.
+`linux_arm64` is for a Pi with a 64-bit OS, `linux_armv7` for 32-bit, `linux_armv6` for
+the Pi 1 and Zero; the release notes have the full table.
 
 ```bash
-VERSION=v0.7.0   # or the latest, see the releases page
-ARCH=linux-arm64
+VERSION=0.7.0    # or the latest, see the releases page
+ARCH=linux_arm64
 
-curl -LO "https://github.com/womat/ecoflow/releases/download/$VERSION/ecoflowd-$VERSION-$ARCH.tar.gz"
-tar -xzf "ecoflowd-$VERSION-$ARCH.tar.gz"
+curl -LO "https://github.com/womat/ecoflow/releases/download/v$VERSION/ecoflowd_${VERSION}_$ARCH.tar.gz"
+curl -LO "https://github.com/womat/ecoflow/releases/download/v$VERSION/checksums.txt"
+sha256sum -c checksums.txt --ignore-missing
+tar -xzf "ecoflowd_${VERSION}_$ARCH.tar.gz"
 sudo install -m 0755 ecoflowd /usr/local/bin/
 ```
 
-The unit comes as a template — one instance per device, the serial number goes after the
-`@`. The release archive only contains the binary, so the unit comes from the repo, from
-the same tag as the binary (with a checkout,
-`sudo cp contrib/ecoflowd@.service /etc/systemd/system/` does it too):
+The unit is in the archive too. It is a template – one instance per device, the serial
+number goes after the `@`:
 
 ```bash
-sudo curl -fsSL -o /etc/systemd/system/ecoflowd@.service \
-  "https://raw.githubusercontent.com/womat/ecoflow/$VERSION/contrib/ecoflowd@.service"
+sudo install -m 0644 contrib/ecoflowd@.service /etc/systemd/system/
 sudo install -d -m 0700 /etc/ecoflowd
 sudo install -m 0600 /dev/null /etc/ecoflowd/env
 sudo nano /etc/ecoflowd/env
@@ -629,9 +631,15 @@ to `main`; there is no second long-lived branch. CI runs exactly these checks, s
 them first keeps the PR green:
 
 ```bash
-go build ./... && go vet ./... && go test ./...
-gofmt -l ./cmd ./internal      # no output = fine
+make test       # go test -race, the golden files against the python decoder, the script's selftest
+make lint       # gofmt, go vet, govulncheck
+make build      # ./ecoflowd for this machine
+make image      # the container image for this machine, as ecoflowd:dev
+make snapshot   # all release archives into ./dist, without publishing (needs goreleaser)
 ```
+
+`make help` lists the targets, among them `make golden`, which regenerates the golden
+files after a change to either decoder.
 
 - **Docs overlap on purpose.** `README.md`, `docs/mqtt-output.md` and the notes in
   `docs/research/` refer to each other; if a statement changes, carry the other places and
@@ -653,15 +661,16 @@ gofmt -l ./cmd ./internal      # no output = fine
 - **Docker:** `docker build -t ecoflowd .` builds the image for the local platform; CI
   builds it on every PR, so a broken `Dockerfile` shows before a release.
 
-**Release:** a tag `vX.Y.Z` on `main` – `release.yml` builds the binaries and stamps the
-version in via `-X main.version`, then pushes the image to `ghcr.io/womat/ecoflowd` as
-`X.Y.Z`, `X.Y` and `latest`. Never tag another branch: the release would point at a
-state that never existed in `main`.
+**Release:** a tag `vX.Y.Z` on `main`, made with `make release TAG=vX.Y.Z` – it refuses a
+dirty tree, another branch, or a `main` that differs from `origin/main`. `release.yml`
+checks once more that the tag is on `main`, tests the tagged commit again, and GoReleaser
+publishes the archives with a changelog; the version goes in via `-X main.version`. Then
+the image goes to `ghcr.io/womat/ecoflowd` as `X.Y.Z`, `X.Y` and `latest`. Never tag
+another branch: the release would point at a state that never existed in `main`.
 
-```bash
-git checkout main && git pull
-git tag vX.Y.Z && git push origin vX.Y.Z
-```
+Up to v0.6.0 the archives were named `ecoflowd-v0.6.0-linux-arm64.tar.gz` and held only
+the binary; from v0.7.0 on they follow the scheme above and carry the systemd unit,
+`README.md` and `LICENSE`.
 
 **Which number** is decided by the *kind* of change, not its size: patch as long as no
 behaviour changes (help texts, comments and docs do not, however large the diff – `v0.4.1`
@@ -675,3 +684,21 @@ format changes. That is a break and is stated as such in the release notes, as w
 MIT – see [`LICENSE`](./LICENSE). Note that parts of the register information in
 `docs/research/` were taken from MIT-licensed third-party sources; the respective
 original links are given in `docs/research/modbus-registers.md`.
+
+### Third-party licenses
+
+The source tree contains no third-party code, but a **compiled binary – and so the
+container image – statically links** the modules below. Their terms apply to anyone
+distributing that binary, not to the sources here.
+
+| Module                                | License                        |
+|---------------------------------------|--------------------------------|
+| `github.com/eclipse/paho.mqtt.golang` | **EPL-2.0**, dual with EDL-1.0 |
+| `github.com/gorilla/websocket`        | BSD-2-Clause                   |
+| `golang.org/x/net`, `golang.org/x/sync` | BSD-3-Clause                 |
+
+All of these are permissive except the Eclipse Paho MQTT client, which is weak copyleft at
+file level: if you hand out a built binary or image, the source of the EPL-covered parts
+has to remain available (it is, at <https://github.com/eclipse-paho/paho.mqtt.golang>).
+Paho is dual-licensed, so the BSD-style EDL-1.0 may be chosen instead. Neither obliges
+ecoflowd itself to change its license.

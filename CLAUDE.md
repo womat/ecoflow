@@ -26,6 +26,8 @@ in that repo's CLAUDE.md. The notes here still refer to it by name.
 
 ## Commands
 
+`make help` lists the targets; `make test` and `make lint` together run what CI runs.
+
 ```
 go build ./...                 # builds cmd/ecoflowd
 go test ./...                  # everything, runs without hardware
@@ -62,14 +64,21 @@ One permanent branch: **`main`**. Work happens in short-lived feature branches t
 `go install …@latest` resolves to the newest semver tag, not to a branch, so a second
 permanent branch would only create a merge ritual with nothing in return.
 
-A release is a tag `vX.Y.Z` on `main`; the release workflow builds the binaries from it
-and stamps the tag number in via `-X main.version`. Do not tag on other branches —
-otherwise a release points at a state that was never in `main`.
+A release is a tag `vX.Y.Z` on `main`, made with `make release TAG=vX.Y.Z`; the release
+workflow refuses a tag that is not on `main`, tests again, lets GoReleaser
+(`.goreleaser.yaml`) build the archives – binary, systemd unit, README, LICENSE – and
+stamps the tag in via `-X main.version`, then pushes the image. Do not tag on other
+branches — otherwise a release points at a state that was never in `main`. CI and release
+build with Go `stable`, not with `go-version-file`, on purpose: standard library security
+fixes reach a release through the toolchain.
 
 ## Language
 
 **Everything in the repo is English: documentation, code comments, `--help` text, error
-messages and program output.** New or changed Markdown sections too.
+messages and program output.** New or changed Markdown sections too. The one exception is
+`README.de.md`, a German summary of about 50 lines like the maintainer's other public
+repos have; it links to the English README for every detail instead of repeating it, and
+carries along only what it states itself (install paths, topic names, the licence note).
 
 Why: `ecoflowd` should be usable without reading German, and the repo is
 public. The research notes were originally written in German and translated in Sep 2026;
@@ -110,7 +119,12 @@ German — that concerns the chat, not the files.
 - `scripts/ecoflow-frames.py` – unpacks the frames that `ecoflow-api.sh live|fast`
   delivers; `--hours` and `--modules` can do more than the Go service. Generates the
   `.golden` files
-- `contrib/` – operational extras that are not built: the systemd template for `ecoflowd`
+- `contrib/` – operational extras that are not built: the systemd template for `ecoflowd`,
+  shipped in every release archive
+- `Makefile` – `make help`; `test` also runs the golden check and the script selftest,
+  `golden` regenerates the `.golden` files
+- `docs/social-preview.png` – rendered from `docs/social-preview.html` with headless Chrome
+  (command in the file) and uploaded by hand under Settings → Social preview
 - `Dockerfile`, `docker-compose.yaml`, `.env.example` – the Docker way to run it. The
   image is `scratch` plus the binary and the CA bundle, built by cross-compiling (no
   emulation), user `65532`. The compose file uses `restart: on-failure:3`, **not**
@@ -118,8 +132,8 @@ German — that concerns the chat, not the files.
   and an endless restart would repeat a rejected login for ever. `--block` listens on the
   container's name (`--listen=ecoflowd:8089`), never on `0.0.0.0` and never via `ports:`
 - `.github/workflows/` – `ci.yml` (gofmt, vet, build, test -race, govulncheck, and a
-  `docker build`) and `release.yml` (vet, test and govulncheck again, then the binary for
-  six platforms, tag `vX.Y.Z` on `main`; afterwards the image for four Linux platforms to
+  `docker build`) and `release.yml` (tag on `main`?, vet, test and govulncheck again, then
+  GoReleaser for seven platform archives; afterwards the image for four Linux platforms to
   `ghcr.io/womat/ecoflowd`). Actions are pinned to a commit SHA with the release in a
   comment, never to a movable tag like `@v7`; `.github/dependabot.yml` proposes weekly
   updates for them and the Go modules, but not for the `go install` pin of govulncheck
