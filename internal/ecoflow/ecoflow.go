@@ -1,7 +1,7 @@
 // Package ecoflow talks to the consumer app's side of the EcoFlow cloud.
 //
 // This is not the documented Developer API. That one refuses the PowerOcean
-// family with error 1006 and its MQTT topics stay silent; see api-status.md.
+// family with error 1006 and its MQTT topics stay silent; see docs/research/api-status.md.
 // What works is the channel the phone app uses: a session token from the
 // consumer portal, credentials fetched with it, and an MQTT broker that
 // actually publishes. None of it is documented or promised by EcoFlow, so
@@ -185,7 +185,7 @@ func (b Broker) Address() string { return b.Host + ":" + b.Port }
 // Certification fetches the MQTT credentials belonging to a session.
 //
 // The portal has a second endpoint for this that returns the same fields
-// AES-encrypted and needs no user id. It is described in api-status.md and
+// AES-encrypted and needs no user id. It is described in docs/research/api-status.md and
 // deliberately not used: this one answers in plain JSON, and a crypto path in
 // a service is code that can quietly produce the wrong bytes.
 func (c *Client) Certification(ctx context.Context, s Session) (Broker, error) {

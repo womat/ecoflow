@@ -18,7 +18,7 @@ import (
 // The app task decides *when* a block may apply - its window and repetition
 // are the frame within which it can take effect. This program decides only
 // *whether*, on request over HTTPS, and never touches the times. Measured on
-// the DC Fit (api-status.md, section 3): enabled from outside the app such a
+// the DC Fit (docs/research/api-status.md, section 3): enabled from outside the app such a
 // task stops the battery discharging about 25 s later, and disabling it frees
 // the battery within one to one and a half minutes.
 //

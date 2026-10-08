@@ -362,7 +362,7 @@ report_code() {
 		cat >&2 <<-'HINT'
 			ecoflow-api.sh: code 1006 - this device model is not exposed through the
 			Developer API. This is a model blocklist on EcoFlow's side, not a
-			configuration problem; see api-status.md. Note that a blocked device can
+			configuration problem; see docs/research/api-status.md. Note that a blocked device can
 			still show up in "devices" - the block hits the data call. Use local
 			Modbus TCP instead.
 		HINT
@@ -653,7 +653,7 @@ mqtt_tls_opts() {
 #
 # The portal's own variant of this endpoint
 # (/iot-auth/enterprise-development/user/certification) returns the same fields
-# AES-encrypted and needs no userId; it is described in api-status.md but not
+# AES-encrypted and needs no userId; it is described in docs/research/api-status.md but not
 # implemented here, because this one answers in plain JSON.
 app_credentials() {
 	local user_id="${ECOFLOW_USER_ID:-}"
@@ -822,7 +822,7 @@ hex_lines() {
 #
 # The payloads are unverified transcriptions from other projects' reverse
 # engineering, so the output stays deliberately raw: this is a measuring tool
-# first. See api-status.md for what is established and what is not.
+# first. See docs/research/api-status.md for what is established and what is not.
 mqtt_live() {
 	local sn="$1" mode="${2:-}"
 

@@ -24,7 +24,7 @@ type Command struct {
 // fields but arrive differently: Minutely comes on its own once a minute with
 // its timestamp rounded to the minute, Fast every two to three seconds with a
 // timestamp to the second, but only while something keeps the stream switched
-// on. See api-status.md.
+// on. See docs/research/api-status.md.
 var (
 	Fast     = Command{96, 33}
 	Minutely = Command{96, 34}

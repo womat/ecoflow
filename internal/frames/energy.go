@@ -7,7 +7,7 @@ import "time"
 // Confirmed by arithmetic rather than by trust: in every captured frame
 // PV equals battery plus house plus grid to within a thousandth of a watt. A
 // wrong assignment would not land on that. Other PowerOcean models number
-// these differently — see api-status.md.
+// these differently — see docs/research/api-status.md.
 const (
 	energyGrid      = 1
 	energyDCDC      = 2
@@ -64,7 +64,7 @@ func (f Frame) Energy() (Energy, bool) {
 	// By the same rule a PV of exactly 0 would not be sent either, and this
 	// check would then drop the frame. At night it does not: reports keep
 	// arriving every minute with "pv":0 after rounding - probably because PV
-	// is small rather than zero. See mqtt-output.md, section 3.
+	// is small rather than zero. See docs/mqtt-output.md, section 3.
 	var e Energy
 	var seen bool
 	for _, fl := range body {

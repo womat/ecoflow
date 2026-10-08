@@ -4,15 +4,18 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this repo is
 
-Research notes and the tools they were produced with:
+**`ecoflowd`** is the product: a service that reads the **EcoFlow PowerOcean DC Fit**
+over the app's cloud channel and publishes the readings to a local MQTT broker. It ships
+as release binaries (systemd, `contrib/`) and as a container image (`Dockerfile`,
+`docker-compose.yaml`). The README is written for its users and leads with installing it.
 
-1. **Research notes** (Markdown) on the ways to integrate the **EcoFlow PowerOcean DC
-   Fit** – cloud paths vs. local Modbus TCP, register map.
+Behind it, as background rather than as the subject of the repo:
+
+1. **Research notes** in `docs/research/` on the ways to integrate the DC Fit – cloud
+   paths vs. local Modbus TCP, register map, open points.
 2. **`scripts/ecoflow-api.sh`** and **`scripts/ecoflow-frames.py`** – the measuring tool
-   on the cloud channel and the frame decoder. Practically all findings in these notes
-   were made with them.
-3. **`cmd/ecoflowd`** – the service for continuous operation on the same channel: reads
-   the readings and publishes them to a local MQTT broker.
+   on the cloud channel and the frame decoder, described in `docs/research/tools.md`.
+   Practically all findings in these notes were made with them.
 
 The Modbus CLI used to check the register claims on the device, `modbusread`, lived here
 as `cmd/modbusread` up to v0.6.0 and now has its own repo,
@@ -108,34 +111,48 @@ German — that concerns the chat, not the files.
   delivers; `--hours` and `--modules` can do more than the Go service. Generates the
   `.golden` files
 - `contrib/` – operational extras that are not built: the systemd template for `ecoflowd`
-- `.github/workflows/` – `ci.yml` (gofmt, vet, build, test -race, govulncheck) and
-  `release.yml` (vet, test and govulncheck again, then both binaries for six platforms,
-  tag `vX.Y.Z` on `main`). Actions are pinned to a commit SHA with the release in a
+- `Dockerfile`, `docker-compose.yaml`, `.env.example` – the Docker way to run it. The
+  image is `scratch` plus the binary and the CA bundle, built by cross-compiling (no
+  emulation), user `65532`. The compose file uses `restart: on-failure:3`, **not**
+  `unless-stopped`: it is the counterpart to `RestartPreventExitStatus=78` in the unit,
+  and an endless restart would repeat a rejected login for ever. `--block` listens on the
+  container's name (`--listen=ecoflowd:8089`), never on `0.0.0.0` and never via `ports:`
+- `.github/workflows/` – `ci.yml` (gofmt, vet, build, test -race, govulncheck, and a
+  `docker build`) and `release.yml` (vet, test and govulncheck again, then the binary for
+  six platforms, tag `vX.Y.Z` on `main`; afterwards the image for four Linux platforms to
+  `ghcr.io/womat/ecoflowd`). Actions are pinned to a commit SHA with the release in a
   comment, never to a movable tag like `@v7`; `.github/dependabot.yml` proposes weekly
   updates for them and the Go modules, but not for the `go install` pin of govulncheck
 - `ecoflow-open-demo/` – EcoFlow's official Java demo client, downloaded for reference
   only. Deliberately **not** versioned via `.gitignore`; do not "tidy it up"
-- `README.md` – entry point, disclaimer, summary, list of sources, open points
-- `api-status.md` – the *decision level*: cloud REST (EcoFlow Developer/Open API,
+- `README.md` – entry point for users of `ecoflowd`: what it does, quick start with
+  Docker and systemd, configuration, MQTT output, `--fast`, `--block`, how it works; the
+  research only as a short section with links
+- `docs/research/README.md` – entry point to the research: disclaimer, summary, open
+  points, sources, the pointer to `modbusread`
+- `docs/research/tools.md` – usage of `ecoflow-api.sh` and `ecoflow-frames.py`
+- `docs/research/api-status.md` – the *decision level*: cloud REST (EcoFlow Developer/Open API,
   HMAC-signed, often returns error 1006 for PowerOcean) vs. local **Modbus TCP** (port
   502, unlocked only by the installer via the EcoFlow **Pro app**)
-- `mqtt-output.md` – the *output side*: how `ecoflowd` publishes to the local broker and
+- `docs/mqtt-output.md` – the *output side*: how `ecoflowd` publishes to the local broker and
   why — two JSON telegrams instead of, as up to v0.4.x, one topic per value. Contains the
   reasoning (time of measurement in the payload instead of heartbeat and last will,
   camelCase, missing field = 0 because of proto3, `dcdc` only once understood) and the
   measurements it rests on
-- `modbus-registers.md` – the *detail level*: register map, encoding conventions, Python
+- `docs/research/modbus-registers.md` – the *detail level*: register map, encoding conventions, Python
   decoding snippets (pymodbus), known gaps
 
-The four Markdown files overlap on purpose: the README links all three, `api-status.md`
+The Markdown files overlap on purpose: the README links the others, `api-status.md`
 refers to `modbus-registers.md` for the mapping and to `mqtt-output.md` for the output
 side. On changes of substance (e.g. error 1006 solved, unlocking path found) **carry all
 affected places along**, including the "Open questions" checklist in `api-status.md` and
-"Open points" in the README.
+"Open points" in `docs/research/README.md`.
 
 The same has applied to the tools since the cloud channel: whoever changes
 `scripts/ecoflow-api.sh`, `scripts/ecoflow-frames.py` or `cmd/ecoflowd` carries the
-matching README sections and the `--help` text along. **This has been skipped several
+matching README sections (for the scripts: `docs/research/tools.md`) and the `--help`
+text along; a new or changed flag or environment variable of `ecoflowd` also goes into
+`docker-compose.yaml`, `.env.example` and the systemd unit. **This has been skipped several
 times** — one review found about 60 places where the docs described what used to be
 true: among them the promise that the script "cannot change anything on the device", and
 an explanation for the REST timestamp freezing that its own later measurement had
@@ -184,7 +201,7 @@ refuted. When catching up, the code counts, not the older prose.
   mapping was "determined on the Plus and questionable for the DC Fit" is thereby
   outdated — nothing is confirmed because of it, only the suspicion is a different one.
   Do not cut the caveat from register statements, but do not preserve it in the old form
-  either; the current one is in `modbus-registers.md`.
+  either; the current one is in `docs/research/modbus-registers.md`.
 
   **For the protobuf field numbers of the cloud channel, on the other hand, it applies
   sharply and in the original direction:** `cmd_func 96 / cmd_id 33` uses different

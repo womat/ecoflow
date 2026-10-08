@@ -31,7 +31,7 @@ ecoflow/energy  {"sn":"HC31XXXXXXXXXXXX","timestamp":"2026-09-22T09:13:18Z","pv"
 ```
 
 The values are decoded from `internal/frames/testdata/fast.txt`; the tests in
-`cmd/ecoflowd/telegram_test.go` check exactly these. The field tables are in the README,
+`cmd/ecoflowd/telegram_test.go` check exactly these. The field tables are in the [README](../README.md#mqtt-output),
 section "To the local broker".
 
 - `state` goes out on every new measurement: every minute without `--fast`, every two to
@@ -52,7 +52,7 @@ section "To the local broker".
 ecoflow/block   {"sn":"HC31XXXXXXXXXXXX","timestamp":"2026-10-03T12:00:01Z","task":7,"requested":true,"until":"2026-10-03T12:05:00Z","enabled":true,"running":true,"window":"00:00-24:00"}
 ```
 
-The state of the discharge block (README, "Discharge block"), the same object the HTTPS
+The state of the discharge block ([README, "Discharge block"](../README.md#discharge-block---block)), the same object the HTTPS
 endpoint answers with. It goes out whenever the device reports its task list: pushed as
 `96/10` after every change and when a task starts, and as the answer to the `96/127`
 sent once per connection. Not retained, like the other two.
@@ -69,7 +69,7 @@ sent once per connection. Not retained, like the other two.
   payload" cannot be kept, and so it is said here.
 - The example above is illustrative; unlike `state` and `energy`, no telegram from a live
   `--block` run is pinned by a test. The device test on 3 Oct 2026 ran without a broker; the
-  same object came back over HTTPS and was right after every switch (`api-status.md`, sixth
+  same object came back over HTTPS and was right after every switch ([`api-status.md`](research/api-status.md), sixth
   test).
 
 ### The earlier format (up to v0.4.x)
@@ -86,7 +86,7 @@ ecoflow/HC31XXXXXXXXXXXX/status    online        ← retained, last will
 ```
 
 It published on change, plus once a minute even when unchanged. The retained `status`
-stays on the broker after the move until you delete it (README, "Moving from v0.4.x").
+stays on the broker after the move until you delete it ([README, "Moving from v0.4.x"](../README.md#moving-from-v04x)).
 
 ## 2. Why the old format was dropped
 
@@ -174,7 +174,7 @@ behaviour.
 
 **Night readings still arrive.** By the same rule a PV of exactly 0 would be left out, and
 both decoders drop a frame without PV. That does not happen at night: the night capture in
-`api-status.md` (`96/110`) has an energy report every minute, and on 25 Sep 2026 at
+[`api-status.md`](research/api-status.md) (`96/110`) has an energy report every minute, and on 25 Sep 2026 at
 22:47 UTC `ecoflowd` published `"pv":0` in the dark. Probably PV is small rather than zero
 then – the string report showed about 0.4 W that night – so the field is still sent. The
 raw value of a night-time PV field has not been captured: plausible, not proven. The PV

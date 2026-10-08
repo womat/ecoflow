@@ -20,7 +20,7 @@ wants reliability pursues the Modbus unlocking.
 
 This file covers the path *to the device*. How `ecoflowd` passes the values it obtains on
 to the local broker — two JSON telegrams, and why in this form — is in
-[`mqtt-output.md`](./mqtt-output.md).
+[`mqtt-output.md`](../mqtt-output.md).
 
 ## 1. EcoFlow Developer/Open API (cloud)
 
@@ -55,7 +55,7 @@ to the local broker — two JSON telegrams, and why in this form — is in
   On **this** channel `.../set` stays outside `scripts/ecoflow-api.sh`; `.../get` is
   reachable through the command `request`, whose topic suffix is hard-wired. (On the *app*
   channel `fast` does publish to `set` – see "The command for the fast rate".)
-- Callable fully signed with [`scripts/ecoflow-api.sh`](./scripts/ecoflow-api.sh).
+- Callable fully signed with [`scripts/ecoflow-api.sh`](../../scripts/ecoflow-api.sh).
 
 ### Error 1006 is a model blocklist
 
@@ -287,7 +287,7 @@ POST https://api-e.ecoflow.com/auth/login
 → data.token, data.user.userId
 ```
 
-`scripts/ecoflow-api.sh login` does this (usage in the README). The password travels
+`scripts/ecoflow-api.sh login` does this (usage in [tools.md](tools.md)). The password travels
 **base64-encoded, not hashed**; the browser token is the smaller secret and expires by
 itself. Source for the flow: `shuette42/ecoflow-energy-ha`, `enhanced_auth.py`.
 
@@ -549,7 +549,7 @@ wrong in four places (obfuscated instead of plain payload, `0a020801` instead of
 `08011001`, a six-digit sequence number, two invented and two missing fields); only
 `cmd_func 96` and `cmd_id 97` were right. On a write topic that is a shot in the dark.
 
-Implemented as `scripts/ecoflow-api.sh fast <SN>` (see the README) and `ecoflowd --fast`.
+Implemented as `scripts/ecoflow-api.sh fast <SN>` (see [tools.md](tools.md#fast-rate-fast)) and `ecoflowd --fast`.
 
 **Measured on the device (22 September 2026):**
 
@@ -1282,8 +1282,8 @@ Open:
   access presumably not, but that is not established
 - [ ] What does field 2 of the energy report (`dcdc`) measure? Not part of the energy
   balance, same sign as the battery, 63–103 % of its value (26 Sep 2026); `ecoflowd` does
-  not publish it until it is clear – details in `mqtt-output.md`, §3
-- [x] Do energy reports get through the decoders at night? → **Yes**, `mqtt-output.md`, §3
+  not publish it until it is clear – details in [`mqtt-output.md`](../mqtt-output.md), §3
+- [x] Do energy reports get through the decoders at night? → **Yes**, [`mqtt-output.md`](../mqtt-output.md), §3
 - [ ] Does the fast stream end after the last switch for reasons of time, or because the
   MQTT connection dropped? Measured on 22 Sep 2026: the last switch at 14:25:57Z, then
   exactly six more `96/33` at an even **4-second rate** (14:26:01 to 14:26:21Z), then
@@ -1319,7 +1319,7 @@ Open:
 Answered – the evidence is in the sections named:
 
 - [x] Scheduled tasks as a permanent second write path: **decided on 3 Oct 2026**, built as
-  `ecoflowd --block` (README, "Discharge block").
+  `ecoflowd --block` ([README, "Discharge block"](../../README.md#discharge-block---block)).
   - It switches exactly one app-created task of type 1 on and off. The app task's window
     decides when a block can apply; times are never written. With no task or several it
     switches nothing (`409`), unless `--block-task` names one.
@@ -1348,7 +1348,7 @@ Answered – the evidence is in the sections named:
 - [x] The device does not switch the fast stream on by itself: none in the 23-minute
   control. Once it had appeared without our doing anything – **presumably** another
   client; only the negative control is established
-- [x] A missing power field means "0" (`mqtt-output.md`, §3)
+- [x] A missing power field means "0" ([`mqtt-output.md`](../mqtt-output.md), §3)
 - [x] `254/32`, `96/3`, `96/137`, `96/1`, `96/108`, `96/109`, `96/111`, `96/136` are decoded,
   including the component roles and the daily yield against the portal (section 3)
 - [x] How the app enables, disables, changes, creates and deletes scheduled tasks: one
