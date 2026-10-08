@@ -1,10 +1,10 @@
 // Command ecoflowd reads an EcoFlow PowerOcean over the consumer app's cloud
 // channel and keeps reading it.
 //
-// It is the long-running counterpart to modbusread, which is a probe. Where
-// that one knows nothing about any device on purpose, this one is specific
-// down to the protobuf field numbers — that knowledge lives in
-// internal/frames and internal/ecoflow so modbusread stays universal.
+// It is the long-running counterpart to modbusread (github.com/womat/modbusread),
+// which is a probe. Where that one knows nothing about any device on purpose,
+// this one is specific down to the protobuf field numbers — that knowledge
+// lives in internal/frames and internal/ecoflow.
 //
 // Nothing here is documented or promised by EcoFlow. The login endpoint, the
 // credentials, the client id format, the frame layout: all of it was measured

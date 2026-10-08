@@ -13,25 +13,26 @@ Research notes and the tools they were produced with:
    were made with them.
 3. **`cmd/ecoflowd`** – the service for continuous operation on the same channel: reads
    the readings and publishes them to a local MQTT broker.
-4. **`modbusread`** – a Go CLI used to check the claims in these notes on the device.
-   Deliberately **universal**: it contains no EcoFlow knowledge, no built-in register
-   map and no device-specific messages. Speaks Modbus TCP and Modbus RTU (serial); the
-   transport follows from the target argument (`cmd/modbusread/target.go`), not from a
-   flag.
+
+The Modbus CLI used to check the register claims on the device, `modbusread`, lived here
+as `cmd/modbusread` up to v0.6.0 and now has its own repo,
+[womat/modbusread](https://github.com/womat/modbusread): it is deliberately universal and
+knows nothing about EcoFlow, so it does not belong next to a device-specific service. Its
+code conventions (read-only, addresses never converted, raw words always shown) are kept
+in that repo's CLAUDE.md. The notes here still refer to it by name.
 
 ## Commands
 
 ```
-go build ./...                 # builds cmd/modbusread and cmd/ecoflowd
+go build ./...                 # builds cmd/ecoflowd
 go test ./...                  # everything, runs without hardware
-go test -run TestParseAddr ./internal/decode/   # a single test
+go test -run TestEnergyBalances ./internal/frames/   # a single test
 go vet ./...
 gofmt -l ./cmd ./internal      # no output = fine; CI fails on it
 scripts/ecoflow-api.sh selftest # signature and stream switch frame, no network
 ```
 
-The integration tests start the Modbus server from `github.com/simonvetter/modbus` on a
-free port and read against it – no device needed. `internal/frames` and `cmd/ecoflowd`
+`internal/frames` and `cmd/ecoflowd`
 test against anonymised captures from the real device in `internal/frames/testdata/`;
 the `.golden` files there are the output of `scripts/ecoflow-frames.py` over the same
 captures and are read by `cmd/ecoflowd/ecoflowd_test.go` — they keep the Go and the
@@ -67,7 +68,7 @@ otherwise a release points at a state that was never in `main`.
 **Everything in the repo is English: documentation, code comments, `--help` text, error
 messages and program output.** New or changed Markdown sections too.
 
-Why: `ecoflowd` and `modbusread` should be usable without reading German, and the repo is
+Why: `ecoflowd` should be usable without reading German, and the repo is
 public. The research notes were originally written in German and translated in Sep 2026;
 keeping a German copy alongside would have been a
 second version that falls behind. Conversations with the maintainer may still be in
@@ -75,7 +76,6 @@ German — that concerns the chat, not the files.
 
 ## Structure & how the files fit together
 
-- `cmd/modbusread/` – CLI: flags, reading with chunking/error isolation, output, polling
 - `cmd/ecoflowd/` – service for continuous operation on the cloud channel: flags,
   connection loop with backoff, and the output side – it publishes the readings to a
   local MQTT broker as two JSON telegrams (`<topic>/state`, `<topic>/energy`) with serial
@@ -84,17 +84,15 @@ German — that concerns the chat, not the files.
   deliberately missing. None of it is on disk; the session lives in the process. With
   `--block` a third telegram (`<topic>/block`) and an HTTPS endpoint join it: the
   discharge block (`block.go` the state, `https.go` the endpoint), see the write paths
-  below. Unlike `modbusread`, deliberately device-specific; the knowledge for that lives
-  in `internal/frames` and `internal/ecoflow`
-- `internal/decode/` – pure functions over `[]uint16` (types, word/byte order, address
-  parsing). This is where the logic lives that produces *wrong numbers* rather than
-  crashes when it errs – hence kept network-free and fully testable
+  below. Deliberately device-specific; the knowledge for that lives in
+  `internal/frames` and `internal/ecoflow`
 - `internal/frames/` – pure functions over `[]byte`: the protobuf frames of the app MQTT
   channel (wrapper, XOR obfuscation, energy reports, hourly history, component list,
   scheduled task lists, building the stream switch and the task commands). Replies on
   `set_reply` are plain, everything on the push topic is XORed – hence `ParseReply`
-  next to `Parse`. Network-free for the same reason as `internal/decode`.
-  **This is where the EcoFlow knowledge lives**, so that `modbusread` stays universal.
+  next to `Parse`. Network-free: a misread field produces a plausible *wrong number*
+  rather than a crash, so the interpretation has to be directly testable.
+  **This is where the EcoFlow knowledge lives.**
   The tests run against anonymised captures from the real device in `testdata/` and
   check the two arithmetic identities that established the field assignment. The
   `.golden` files live here, but they are read by `cmd/ecoflowd` – that is where the
@@ -145,9 +143,6 @@ refuted. When catching up, the code counts, not the older prose.
 
 ## Code conventions
 
-- **Read-only is a hard property, not a default:** `modbusread` calls no `Write*` method
-  of the library. The mapping is unconfirmed (see below); a tool without a write path
-  cannot write by accident. Do not soften this.
 - **The two write paths in the repo, and how they are fenced in:** on the app MQTT channel
   there are exactly two, both on `.../set`.
   - The first is the `EnergyStreamSwitch` (`96/97`), which switches on the fast data
@@ -176,19 +171,6 @@ refuted. When catching up, the code counts, not the older prose.
   this is so strict: an attempt assembled from third-party sources was wrong in four
   places – on a topic through which the device can be reconfigured. And the fourth write
   test showed that a task with self-chosen times is stored but not executed.
-- **Addresses are never converted** – what is typed goes on the wire as it is (0-based).
-  Many sources document 1-based; converting is deliberately left to the human, so the
-  tool does not hide an assumption.
-- **The tool computes word/byte order itself**, the client runs fixed on
-  `BIG_ENDIAN, HIGH_WORD_FIRST` and only reads `ReadRegisters`. That way the raw words
-  are always available for the output and the decoding stays purely testable.
-- **Flags that cannot take effect are rejected rather than ignored** – the serial
-  parameters on a TCP target are an error. A baud rate that silently has no effect sends
-  people debugging the hardware.
-- **Raw words are always in the output**, even when a value was decoded – in reverse
-  engineering the raw value matters more than the interpretation.
-- **Address parsing deliberately does not use `strconv.ParseUint(s, 0, …)`** (base 0
-  would read `042` as octal 34).
 
 ## Content conventions (docs)
 

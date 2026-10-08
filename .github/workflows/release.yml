@@ -41,7 +41,7 @@ jobs:
           # the same: this stays one loop over targets instead of a loop over
           # targets with exceptions, and a darwin build is handy for trying it
           # out on a laptop.
-          for cmd in modbusread ecoflowd
+          for cmd in ecoflowd
           do
             for target in \
               linux/amd64 linux/arm64 linux/arm \

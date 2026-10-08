@@ -1,4 +1,4 @@
-# EcoFlow PowerOcean DC Fit – MQTT bridge, Modbus CLI & notes
+# EcoFlow PowerOcean DC Fit – MQTT bridge & notes
 
 [![CI](https://github.com/womat/ecoflow/actions/workflows/ci.yml/badge.svg)](https://github.com/womat/ecoflow/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/womat/ecoflow)](https://github.com/womat/ecoflow/releases/latest)
@@ -7,8 +7,8 @@
 
 `ecoflowd` reads live data from an EcoFlow PowerOcean (DC Fit) through the app's cloud
 channel and publishes it to a local MQTT broker – for evcc, Home Assistant or anything
-else that speaks MQTT. Alongside: `modbusread`, a read-only Modbus TCP/RTU CLI, and
-research notes on the cloud API and the local Modbus registers.
+else that speaks MQTT. Alongside: research notes on the cloud API and the local Modbus
+registers, and the measuring tools they were made with.
 
 > **Disclaimer:** These notes are mostly based on community reverse engineering, not on
 > official EcoFlow documentation. EcoFlow does not officially support or confirm the
@@ -22,117 +22,25 @@ research notes on the cloud API and the local Modbus registers.
 | [`api-status.md`](./api-status.md)                   | Overview: cloud REST API vs. local Modbus TCP, known problems (e.g. error 1006), unlocking              |
 | [`modbus-registers.md`](./modbus-registers.md)       | Register map (SOC, battery, PV, grid, energy counters, control registers) with decoding examples          |
 | [`mqtt-output.md`](./mqtt-output.md)                 | The output format of `ecoflowd` on the local broker – why two JSON telegrams and what they look like   |
-| [`cmd/modbusread`](./cmd/modbusread)                 | Small Go CLI for checking the registers on the device (see below)                                      |
 | [`scripts/ecoflow-api.sh`](./scripts/ecoflow-api.sh) | Shell script for all four cloud paths: Developer API, portal, app MQTT, stream switch (see below)       |
 | [`scripts/ecoflow-frames.py`](./scripts/ecoflow-frames.py) | Unpacks the live frames from `ecoflow-api.sh live` – current readings and hourly balance (see below) |
 | [`cmd/ecoflowd`](./cmd/ecoflowd)                     | Go service that reads the same channel continuously and publishes to an MQTT broker (see below)         |
 
 ## `modbusread`
 
-A universal, **read-only** Modbus reader – address, register and type in, value out. No
-EcoFlow knowledge in the tool, no built-in register map; so it is just as useful for any
-other Modbus device. Meant for checking the community-derived registers from
-`modbus-registers.md` against your own device.
+The registers in `modbus-registers.md` are checked on the device with
+[`modbusread`](https://github.com/womat/modbusread), a universal, read-only Modbus TCP/RTU
+reader – address, register and type in, value out, raw words always shown, addresses
+never converted. It knows nothing about EcoFlow on purpose, and therefore has its own
+repo:
 
 ```
-go build ./cmd/modbusread
-
-modbusread <target> <address> <type> [flags]
+go install github.com/womat/modbusread@latest
 ```
 
-Address in decimal (`42082`) or hex (`0xA462`), type `raw`, `uint16`, `int16`, `uint32`,
-`int32`, `float32`, `float64` or `string`.
-
-The **target** decides the transport, without an extra flag:
-
-| Input                                             | Transport                            |
-|---------------------------------------------------|--------------------------------------|
-| `192.168.1.50`, `plc.local:1502`                  | Modbus TCP (port defaults to 502)    |
-| `/dev/ttyUSB0`, `/dev/tty.usbserial-…`, `COM3`    | Modbus RTU over the serial line      |
-| `rtu://…`, `tcp://…`, `udp://…`, `rtuovertcp://…`, `rtuoverudp://…` | explicit, overrides the detection |
-
-`tcp+tls://` is rejected outright rather than silently ignored – the library could do
-it, but offering it untested would be a promise with nothing behind it.
-
-```console
-$ modbusread 192.168.1.50 42082 uint16
-addr     raw                  value
-42082    0x0064               100
-
-# Total PV power: float with swapped words (EcoFlow convention)
-$ modbusread 192.168.1.50 40574 float32 --word-order low
-
-# Dump a range to find unknown registers
-$ modbusread 192.168.1.50 40520 raw --count 120 --out hex
-
-# Find out which register reacts to a change in the app
-$ modbusread 192.168.1.50 40520 raw --count 120 --interval 1s --on-change
-```
-
-Important: **addresses are never converted** – they go on the wire exactly as typed
-(0-based). Whether the tables in `modbus-registers.md` are meant 1-based or 0-based is
-unresolved; the file itself now doubts its earlier 1-based claim. Converting is
-therefore left to the human, so the tool does not hide an assumption.
-
-With a serial target the line parameters come in – `--baud` (19200), `--databits` (8),
-`--parity` (none) and `--stopbits`. For the latter, `0` follows the Modbus rule: two stop
-bits without parity, one with. They have to match the device exactly, otherwise you get
-garbage or nothing at all. A bus typically has several devices on it, so `--unit` is no
-longer a formality there:
-
-```console
-$ modbusread /dev/ttyUSB0 40069 uint16 --baud 9600 --parity even --unit 3
-```
-
-On a TCP target these flags are **rejected** rather than ignored – a baud rate that
-silently has no effect sends you off debugging the wiring.
-
-More flags: `--unit`, `--fc holding|input`, `--byte-order`, `--timeout`, `--json`,
-`--samples`. `modbusread --help` shows everything.
-
-### Installation
-
-With a Go toolchain, straight from the repo:
-
-```
-go install github.com/womat/ecoflow/cmd/modbusread@latest
-```
-
-For machines **without Go** – such as the Raspberry Pi next to the system – ready-made
-binaries are under [Releases](https://github.com/womat/ecoflow/releases). They are
-statically linked (`CGO_ENABLED=0`), so there is nothing to install: unpack and run.
-
-```bash
-VERSION=v0.5.0   # or the latest, see the releases page
-ARCH=linux-arm64 # see the table below
-
-curl -LO "https://github.com/womat/ecoflow/releases/download/$VERSION/modbusread-$VERSION-$ARCH.tar.gz"
-tar -xzf "modbusread-$VERSION-$ARCH.tar.gz"
-./modbusread --version
-```
-
-| Machine                                         | `ARCH`          |
-|-------------------------------------------------|-----------------|
-| Raspberry Pi 3/4/5 with 64-bit Raspberry Pi OS  | `linux-arm64`   |
-| Raspberry Pi with a 32-bit OS, incl. Zero and Pi 1 | `linux-arm`  |
-| ordinary Linux PC/server, NAS                   | `linux-amd64`   |
-| Mac with Apple Silicon                          | `darwin-arm64`  |
-| Mac with Intel                                  | `darwin-amd64`  |
-| Windows                                         | `windows-amd64` |
-
-The 32-bit archive is built with `GOARM=6` and therefore also runs on the older ARMv6
-models. The download can be checked against the `checksums.txt` of the same release:
-
-```bash
-curl -LO "https://github.com/womat/ecoflow/releases/download/$VERSION/checksums.txt"
-sha256sum -c checksums.txt --ignore-missing
-```
-
-`modbusread --version` reports the commit and Go version from the build info that Go
-stamps in by itself during `go build`; release binaries carry the tag number.
-
-A release is made from a tag `vX.Y.Z` on `main`; the workflow builds all targets and
-attaches them, with checksums, to the GitHub release.
+Up to v0.6.0 it lived here as `cmd/modbusread`; those releases and
+`go install github.com/womat/ecoflow/cmd/modbusread@v0.6.0` keep working, newer versions
+come from [womat/modbusread](https://github.com/womat/modbusread/releases).
 
 ## `scripts/ecoflow-api.sh`
 
@@ -593,8 +501,9 @@ in [`internal/frames/frame.go`](internal/frames/frame.go).
 
 ### On the Raspberry Pi
 
-Get the binary from the [releases](https://github.com/womat/ecoflow/releases) — the same
-platforms as for `modbusread`, statically linked, nothing to install:
+Get the binary from the [releases](https://github.com/womat/ecoflow/releases) — Linux
+(amd64, arm64, arm with `GOARM=6`), macOS and Windows, statically linked, nothing to
+install:
 
 ```bash
 VERSION=v0.5.0   # or the latest, see the releases page
