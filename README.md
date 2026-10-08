@@ -1,512 +1,94 @@
-# EcoFlow PowerOcean DC Fit – MQTT bridge & notes
+# ecoflowd
 
 [![CI](https://github.com/womat/ecoflow/actions/workflows/ci.yml/badge.svg)](https://github.com/womat/ecoflow/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/womat/ecoflow)](https://github.com/womat/ecoflow/releases/latest)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue)](LICENSE)
 [![Go](https://img.shields.io/github/go-mod/go-version/womat/ecoflow)](go.mod)
 
-`ecoflowd` reads live data from an EcoFlow PowerOcean (DC Fit) through the app's cloud
-channel and publishes it to a local MQTT broker – for evcc, Home Assistant or anything
-else that speaks MQTT. Alongside: research notes on the cloud API and the local Modbus
-registers, and the measuring tools they were made with.
+**Live readings from an EcoFlow PowerOcean (DC Fit) on your local MQTT broker – for evcc,
+Home Assistant, Node-RED or anything else that speaks MQTT.**
 
-> **Disclaimer:** These notes are mostly based on community reverse engineering, not on
-> official EcoFlow documentation. EcoFlow does not officially support or confirm the
-> Modbus registers described here. Use at your own risk, especially when writing to
-> registers.
+`ecoflowd` logs in the way the EcoFlow app does, subscribes to the device's cloud channel
+and publishes what arrives as two JSON telegrams: the current power flows every minute,
+and the day's energy totals. Optionally it switches on the per-second stream, and it can
+keep the battery from discharging on request, e.g. while the car charges.
+
+- **One static binary or an 11 MB container image**, no state on disk, nothing to install.
+- **Read-only by default:** without `--fast` or `--block` it sends nothing to the device.
+- **Survives the cloud coming and going:** it reconnects by itself and logs in again only
+  when the token is really gone.
+
+> **Unofficial.** EcoFlow neither documents nor supports the channel `ecoflowd` uses: the
+> login endpoint, the frame layout and the field numbers were all measured, and can stop
+> working without notice. How it was established is in the
+> [research notes](docs/research/README.md).
 
 ## Contents
 
-| File                                                 | Description                                                                                            |
-|------------------------------------------------------|--------------------------------------------------------------------------------------------------------|
-| [`api-status.md`](./api-status.md)                   | Overview: cloud REST API vs. local Modbus TCP, known problems (e.g. error 1006), unlocking              |
-| [`modbus-registers.md`](./modbus-registers.md)       | Register map (SOC, battery, PV, grid, energy counters, control registers) with decoding examples          |
-| [`mqtt-output.md`](./mqtt-output.md)                 | The output format of `ecoflowd` on the local broker – why two JSON telegrams and what they look like   |
-| [`scripts/ecoflow-api.sh`](./scripts/ecoflow-api.sh) | Shell script for all four cloud paths: Developer API, portal, app MQTT, stream switch (see below)       |
-| [`scripts/ecoflow-frames.py`](./scripts/ecoflow-frames.py) | Unpacks the live frames from `ecoflow-api.sh live` – current readings and hourly balance (see below) |
-| [`cmd/ecoflowd`](./cmd/ecoflowd)                     | Go service that reads the same channel continuously and publishes to an MQTT broker (see below)         |
+- [Quick start: Docker](#quick-start-docker)
+- [Quick start: systemd](#quick-start-systemd)
+- [Configuration](#configuration)
+- [MQTT output](#mqtt-output), with [evcc](#evcc) and [Home Assistant](#home-assistant)
+- [Per-second values: `--fast`](#per-second-values---fast)
+- [Discharge block: `--block`](#discharge-block---block)
+- [How ecoflowd gets its data](#how-ecoflowd-gets-its-data)
+- [Background and research](#background-and-research)
+- [Working on this repo](#working-on-this-repo)
 
-## `modbusread`
+## Quick start: Docker
 
-The registers in `modbus-registers.md` are checked on the device with
-[`modbusread`](https://github.com/womat/modbusread), a universal, read-only Modbus TCP/RTU
-reader – address, register and type in, value out, raw words always shown, addresses
-never converted. It knows nothing about EcoFlow on purpose, and therefore has its own
-repo:
+The image `ghcr.io/womat/ecoflowd` is built with every release for `linux/amd64`,
+`linux/arm64`, `linux/arm/v7` and `linux/arm/v6` (every Raspberry Pi). It holds the
+binary and the CA certificates, nothing else – no shell, and it runs as a non-root user.
 
-```
-go install github.com/womat/modbusread@latest
-```
-
-Up to v0.6.0 it lived here as `cmd/modbusread`; those releases and
-`go install github.com/womat/ecoflow/cmd/modbusread@v0.6.0` keep working, newer versions
-come from [womat/modbusread](https://github.com/womat/modbusread/releases).
-
-## `scripts/ecoflow-api.sh`
-
-The counterpart to `modbusread` for the cloud path: a small shell script that builds the
-HMAC signature of the EcoFlow Developer/Open API and prints the answer raw.
-
-**With one exception it only reads.** The exception deserves naming rather than hiding:
-`fast` publishes to a `.../set` topic and is thus the only command that can change the
-device (see below). `values` and `login` use POST — they are still reads, the endpoints
-just want it that way; the script does not know the writing PUT counterpart.
-
-Needs `bash`, `curl` and `openssl`. **`jq` is required for most commands** — only
-`devices`, `quota`, `get`, `cert`, `portal`, `portal-get` and `selftest` get by without
-it, and there it just prettifies the output. The other nine abort without `jq`.
-
-Credentials come from the environment, never from the repo. **There are two kinds, and
-most commands need the second:** the API key pair only works for the Developer API
-(`devices`, `quota`, `get`, `values`, `cert`, `mqtt`, `request`) — and that is exactly
-the one that refuses the DC Fit its readings. Everything that actually delivers data goes
-through the portal token (`login`, `portal`, `status`, `portal-get`, `app-cert`,
-`app-mqtt`, `live`, `fast`); that needs **no** key pair.
+You need [`docker-compose.yaml`](docker-compose.yaml) and
+[`.env.example`](.env.example) from this repo:
 
 ```bash
-export ECOFLOW_ACCESS_KEY='…'   # developer-eu.ecoflow.com → Security
-export ECOFLOW_SECRET_KEY='…'
-# ECOFLOW_HOST sets the host, default https://api-e.ecoflow.com (EU)
-
-scripts/ecoflow-api.sh devices                    # devices on the account
-scripts/ecoflow-api.sh quota <SN>                  # all values of a device
-scripts/ecoflow-api.sh -v get /iot-open/sign/device/list   # any GET, with debug output
-scripts/ecoflow-api.sh values <SN> bpSoc bpPwr     # selected values (POST endpoint)
-scripts/ecoflow-api.sh cert                       # MQTT credentials of the account
-scripts/ecoflow-api.sh mqtt <SN>                  # subscribe to a topic (Ctrl-C ends)
-scripts/ecoflow-api.sh request <SN> bpSoc         # request values over MQTT
-export ECOFLOW_PORTAL_TOKEN="$(scripts/ecoflow-api.sh login)"   # get a token by logging in
-scripts/ecoflow-api.sh portal <SN>                # consumer portal instead of Developer API
-scripts/ecoflow-api.sh status <SN>                # the same data as a short overview
-scripts/ecoflow-api.sh portal-get <path>          # any GET against the portal API
-scripts/ecoflow-api.sh app-cert                   # MQTT credentials of the app channel
-scripts/ecoflow-api.sh live <SN>                  # subscribe to the app channel, keep it alive
-scripts/ecoflow-api.sh fast <SN>                  # the same at the fast rate (writes!)
-scripts/ecoflow-api.sh app-mqtt <SN>              # listen to what the app sends the device
-scripts/ecoflow-api.sh selftest                   # signature and stream switch frame
+mkdir ecoflowd && cd ecoflowd
+curl -fsSLO https://raw.githubusercontent.com/womat/ecoflow/main/docker-compose.yaml
+curl -fsSL -o .env https://raw.githubusercontent.com/womat/ecoflow/main/.env.example
+chmod 600 .env
+nano .env            # serial number, EcoFlow e-mail and password, broker
+docker compose up -d
+docker compose logs -f
 ```
 
-`values` uses `POST /iot-open/sign/device/quota`, the way EcoFlow's PowerOcean docs
-describe for selected quantities (`bpSoc`, `bpPwr`, `mpptPwr`, `sysLoadPwr`,
-`sysGridPwr`, `pcsAPhase` …). POST is the *read* endpoint here; the script deliberately
-does not know the PUT counterpart that sets values.
+**`.env` is the EcoFlow account password**, not an application token: the login endpoint
+carries it base64-encoded rather than hashed. `chmod 600` is the counterpart to
+`/etc/ecoflowd/env` under systemd.
 
-`mqtt` fetches the credentials via `/iot-open/sign/certification` and subscribes to
-`/open/<certificateAccount>/<SN>/quota` (a second argument changes the suffix, e.g.
-`status`, `get_reply` or `#`). Every message gets a timestamp – a silent recording is only
-evidence if you know when it was silent. Additionally needs `jq` and `mosquitto_sub`
-(`brew install mosquitto` or `apt install mosquitto-clients`).
+**Where the broker is.** The default, `tcp://host.docker.internal:1883`, is a broker on the
+Docker host. On Linux, Mosquitto 2 listens on `localhost` only unless it has a `listener`
+of its own, and a container cannot reach that. A broker that runs in a container is
+better reached by name: put both on a shared network (`networks:` in the compose file)
+and set `ECOFLOWD_BROKER=tcp://mosquitto:1883`.
 
-`portal` takes a different path: it queries `provider-service/user/device/detail` – the
-endpoint the consumer portal itself uses. It answers even for devices the Developer API
-blocks with 1006, and returns SOC, live power, energy counters and the firmware's raw
-blocks (69 EMS fields, DCDC status, energy stream). Authentication is not with the API
-keys but with the **portal's session token** in `ECOFLOW_PORTAL_TOKEN`. The token
-expires; fetch a new one on HTTP 401. Keep it out of the repo and, where possible, out of
-the shell history.
+**Why `restart: on-failure:3`, not `unless-stopped`.** `ecoflowd` never exits on network or
+broker trouble – it retries by itself, with a growing pause. It exits only on a
+configuration error (`1`) or when the cloud rejects the credentials (`78`), and waiting
+fixes neither. With `unless-stopped`, a wrong password would be tried against the login
+endpoint every minute, for ever; with `on-failure:3` the container stops after the third
+attempt and `docker compose ps` shows `Exited (78)`. Once `.env` is right,
+`docker compose up -d` starts it again.
 
-### Fetching live values
-
-`status` and `portal` need **no** API key pair – only the portal token. A one-off query
-from a fresh shell, login and query in one command:
-
-```console
-$ ECOFLOW_PORTAL_TOKEN="$(scripts/ecoflow-api.sh login first.last@example.com)" \
-    scripts/ecoflow-api.sh status HC31XXXXXXXXXXXX
-Password (not echoed):
-logged in as user 1000000000000…
-device   : Home (online)
-SoC      : 18 %
-PV       : 1045 W
-grid     : 0 W (idle)
-house    : 446 W
-battery  : 599 W (charging)
-
-yield    : today 1.90 | month 282.67 | year 4548.79 | total 5236.71 kWh
-measured : 2026-09-17T08:39:26Z
-```
-
-`measured` is the timestamp from the firmware's energy stream block – the **time of
-measurement, not the time of the query**. If it stands still across several calls, the
-display is a still image: the endpoint hands out whatever was last pushed to the cloud.
-Why it freezes is open (see `api-status.md`); current values come from `live`, not from
-`status`.
-
-The assignment in front **without `export`** only applies to this one command: afterwards
-the shell does not know the variable, the token is in no other process environment, and
-there is nothing to clean up – not even after an error or Ctrl-C. The password prompt
-comes from the terminal (`/dev/tty`) and therefore also works inside the command
-substitution: `login` writes **only** the token to stdout, everything else to stderr.
-The e-mail may be left out; it is then asked for or taken from `ECOFLOW_EMAIL`. Needs
-`jq` (`brew install jq`).
-
-For several queries without typing the password each time, export the token once – but
-**`unset`** it at the end, and with `;` rather than `&&`, otherwise it stays around
-precisely when something fails. `export ECOFLOW_PORTAL_TOKEN=` does not delete it; it
-sets it empty and leaves it exported:
+Flags go into `command:` in the compose file, one per line – `--topic`, `--mqtt-user`,
+`--fast`, `--block`; see [Configuration](#configuration). Updating:
 
 ```bash
-export ECOFLOW_PORTAL_TOKEN="$(scripts/ecoflow-api.sh login)"
-scripts/ecoflow-api.sh status HC31XXXXXXXXXXXX
-scripts/ecoflow-api.sh portal HC31XXXXXXXXXXXX
-unset ECOFLOW_PORTAL_TOKEN
+docker compose pull && docker compose up -d
 ```
 
-A subshell takes the token with it when it exits, which saves the cleanup:
+`latest` follows the newest release; `ECOFLOWD_VERSION=0.7.0` in `.env` pins one.
 
-```bash
-( export ECOFLOW_PORTAL_TOKEN="$(scripts/ecoflow-api.sh login)"
-  scripts/ecoflow-api.sh status HC31XXXXXXXXXXXX )
-```
-
-`status` renders the answer of `portal` as an overview. The portal reports house and
-battery power as **negative**, while its own UI shows them as positive. `status` therefore
-prints the magnitude and writes the direction next to it, instead of passing on a sign you
-would first have to interpret. If you get *"the response carried no data"* instead of the
-overview, `ECOFLOW_PRODUCT_TYPE` does not match the device (default `85` = PowerOcean).
-
-Two ways to the token:
-
-- **From the browser:** in the logged-in portal under *Local Storage → `S1_JWT`*.
-- **With `login`:** asks for e-mail and password (password without echo, optionally from
-  `ECOFLOW_PASSWORD` – better not, an exported variable outlives the shell that set it and
-  ends up in process environments).
-
-To weigh it up: `login` uses the consumer app's login endpoint, which sends the password
-**base64-encoded, not hashed** – base64 is encoding, not encryption; only the TLS channel
-protects it. The browser token is the smaller secret and expires by itself; the password
-is the more convenient way. Both are unofficial interfaces.
-
-### Keeping the channel alive: `live`
-
-`live` subscribes to the app's MQTT channel the way the app does; the device then reports
-into it once a minute:
-
-```bash
-export ECOFLOW_PORTAL_TOKEN="$(scripts/ecoflow-api.sh login)"
-export ECOFLOW_USER_ID=1000000000000000000   # "login" prints this ready to export
-scripts/ecoflow-api.sh live HC31XXXXXXXXXXXX
-```
-
-It fetches the app MQTT channel's credentials via `app-cert`, subscribes to the device's
-three topics and sends a request every `ECOFLOW_LIVE_INTERVAL` seconds (default 30). Runs
-until Ctrl-C. Needs `jq`, `mosquitto_sub` and `mosquitto_pub`.
-
-**That request is unnecessary, though** — measured at the device: with
-`ECOFLOW_LIVE_INTERVAL=0`, i.e. without any publish at all, minute values kept coming
-without a gap for 23 minutes. The subscription alone keeps the device talking. The
-default of 30 stays for now, because other models may need it; if you want to work
-strictly read-only, set `ECOFLOW_LIVE_INTERVAL=0` — then `live` publishes nothing at all:
-
-```bash
-ECOFLOW_LIVE_INTERVAL=0 scripts/ecoflow-api.sh live HC31XXXXXXXXXXXX
-```
-
-The output of `live` is **raw** – timestamp, topic, length and payload as hex, because the
-push is protobuf, not JSON:
-
-```console
-2026-09-22T10:18:05+0200 /app/device/property/HC31... 74 0a480a26f6ddf1e70b98...
-```
-
-### Current readings: `ecoflow-frames.py`
-
-For reading there is `scripts/ecoflow-frames.py`, which unpacks the frames. It only needs
-`python3`, no further packages:
-
-```console
-$ scripts/ecoflow-api.sh live HC31XXXXXXXXXXXX | python3 scripts/ecoflow-frames.py
-08:18:00Z  PV     969 W | house    352 W | battery    530 W (charging) | grid     87 W (export) | SoC 60 %
-08:19:00Z  PV     976 W | house    349 W | battery    540 W (charging) | grid     87 W (export) | SoC 61 %
-```
-
-This is the way to current values – **not** `status`. Measured at the device
-(22 September 2026): while `live` was running and frames stamped `08:19Z` were arriving,
-`status` kept reporting `measured : 07:13:28Z`. So the detour through the cloud is not
-refreshed even by a running listener.
-
-The timestamp on the left is the device's (UTC). The device sends some frames twice;
-identical consecutive lines are suppressed, but two different values within the same
-second are not — those happen. How the frames are built, why the payload is
-XOR-obfuscated and what the field assignment rests on is in `api-status.md`.
-
-**Caveat:** the field numbers apply to the **DC Fit**. On the PowerOcean Plus the same
-quantities sit on different numbers – there the script produced plausible numbers under
-the wrong names. The assignment here is backed by the energy balance: in every frame,
-`PV = battery + house + grid` adds up to two decimal places.
-
-Python because it needs nothing beyond the standard library on the Mac and the Pi; the
-continuous-operation counterpart in Go is `ecoflowd`, whose output matches this script
-character for character.
-
-### Fast rate: `fast`
-
-Every few seconds instead of every minute – that is what `fast` is for, in place of
-`live`. It needs the same two variables as `live`:
-
-```bash
-export ECOFLOW_PORTAL_TOKEN="$(scripts/ecoflow-api.sh login)"
-export ECOFLOW_USER_ID=1000000000000000000     # "login" prints this ready to export
-
-scripts/ecoflow-api.sh fast HC31XXXXXXXXXXXX | python3 scripts/ecoflow-frames.py
-```
-
-It does everything `live` does and additionally switches on the fast data stream.
-
-**This is the only command in the script that writes to a `.../set` topic** – that is, to
-the path through which the device could also be reconfigured. That is why it is a command
-of its own: the write never happens on the side, only when you type `fast`.
-
-What gets sent is **not guessed**. The command was captured by subscribing to the `set`
-topic while operating the phone app (`app-mqtt`, see below); the script replays those
-bytes unchanged and only changes the sequence number. It carries no parameters. An earlier
-attempt to assemble it from third-party sources was wrong in four places — see
-`api-status.md`.
-
-```console
-09:13:19Z  PV     970 W | house    415 W | battery    482 W (charging) | grid     72 W (export) | SoC 63 %
-09:13:20Z  PV     963 W | house    403 W | battery    476 W (charging) | grid     83 W (export) | SoC 63 %
-09:13:22Z  PV     967 W | house    403 W | battery    472 W (charging) | grid     92 W (export) | SoC 63 %
-```
-
-Measured: 131 values over a little more than four minutes, on average every 1.9 s —
-instead of four. The timestamp here is **accurate to the second**; in the minute report it
-is rounded to the minute.
-
-While the fast stream is running, the minute report is **not** shown as well: it carries
-the same timestamp as a per-second report that already existed, and with its rounded time
-it would look like a standstill. When the fast stream dries up, it appears again.
-
-`ECOFLOW_FAST_INTERVAL` sets the repeat rate, default 3 seconds — the app's rhythm.
-**Longer is not more economical, it simply does not work:** at 10 seconds the device fell
-back to the minute rate. The switch only lasts a few seconds.
-
-It has a cost: each switch starts its own `mosquitto_pub`, i.e. a new connection every
-three seconds. Fine for a measurement, not nice for continuous operation.
-
-### Today's hourly values: `--hours`
-
-On the side, the device sends the **energy balance of the current day, hour by hour**. It
-is in the most frequent frame of all, but only arrives in fast mode:
-
-```console
-$ scripts/ecoflow-api.sh fast HC31XXXXXXXXXXXX | python3 scripts/ecoflow-frames.py --hours
-hourly energy in Wh, device day up to 2026-09-22 09:13:18Z
-
-flow             0     1     2     3     4     5     6     7     8     9   total
-PV               0     0     0     0    43   183   738  1350   793   194    3301
-battery in       0     0     0     0     0     0   288   798   357   102    1545
-battery out    261   245   248   297   353   158     0     0     0     0    1562
-grid in          1     0     0    11    32    13     1     1     3     0      62
-grid out         0     0     0     0     0     2    68    81    24     0     175
-house          262   246   249   308   427   352   383   473   415    91    3206
-balance          0    -1    -1     0     1     0     0    -1     0     1
-```
-
-It waits for a complete report, prints the table and **then exits** — the data stream
-stops along with it. The hours are UTC; the current one is still filling up.
-
-The `balance` row is the check and belongs to the output: in every hour,
-`PV + battery out + grid in` must equal `house + battery in + grid out`. If it shows
-anything other than a rounding difference, the field assignment no longer holds — for
-instance because a firmware shifted the numbers. That is exactly how it was established in
-the first place; details in `api-status.md`.
-
-### Which components the system reports: `--modules`
-
-```console
-$ scripts/ecoflow-api.sh fast HC31XXXXXXXXXXXX | python3 scripts/ecoflow-frames.py --modules
-modules reported by the system
-
-  system     HC31XXXXXXXXXXXX
-  converter  HC31YYYYYYYYYYYY
-  battery    HJ3AXXXXXXXXXXXX
-  battery    HJ3AYYYYYYYYYYYY
-```
-
-Serial numbers and configuration without app or portal — here a 5 kW converter with two
-battery modules. Like `--hours`, it waits for the first report and then exits.
-
-The labels are **not guessed from the prefixes** but checked against the portal's display:
-`user-portal.ecoflow.com` lists the same serial numbers with type and model under
-*System information → Component information*. Firmware versions and activation date are
-only there, though, not in the frame.
-
-### Listening to what the app sends: `app-mqtt`
-
-```bash
-scripts/ecoflow-api.sh app-mqtt HC31XXXXXXXXXXXX        # default topic: set
-```
-
-Subscribes to one of the app topics under `/app/<userId>/<SN>/thing/property/` and shows
-what arrives there. The default is `set` — the topic the script otherwise writes nothing
-to. Operate the phone app while this is running and you see its commands in the original.
-Pure subscription, no write access. With `set_reply` as the suffix you see the device's
-answers as well. This is how the stream switch and the scheduled tasks (`96/125`, see
-`api-status.md`, section 3) were captured.
-
-Besides `fast`, only `request` and `live` publish, and only read requests to a `get`
-topic; all other commands just subscribe.
-
-`request` subscribes to **two** topics — `.../get_reply` and `.../quota` —, sends the
-request to `.../get` and waits `ECOFLOW_WAIT` seconds (default 15). Listening on both is
-not overeagerness: on some accounts the ACL refuses `.../get_reply` while granting
-`.../quota`. The suffix is hard-wired; there is no free topic argument. Additionally needs
-`mosquitto_pub`.
-
-Four exit codes, not two — if you only check for "non-zero", you mistake a network error
-for an API answer:
-
-| Code | Meaning                                                    |
-|------|------------------------------------------------------------|
-| `0`  | the API answered with `code 0`                             |
-| `1`  | usage or configuration error (missing variable …)          |
-| `2`  | the API answered with a different code                     |
-| `3`  | the request itself failed — network, TLS, name resolution  |
-
-**`2` with code 1006** is the interesting answer: it means the model is excluded from the
-Developer API (see `api-status.md`) and only the app MQTT channel or local Modbus remain.
-The device has to be bound to your own EcoFlow account, otherwise the list stays empty.
-
-## `ecoflowd`
-
-The counterpart to `modbusread` for continuous operation: a Go service that reads the app
-MQTT channel instead of opening it for a single measurement. Meant for a Raspberry Pi
-under systemd.
-
-It connects, reconnects after a drop, prints the readings to stdout and passes them on to
-a local MQTT broker.
-
-```bash
-export ECOFLOW_EMAIL='first.last@example.com'
-export ECOFLOW_PASSWORD='…'
-
-go build ./cmd/ecoflowd
-./ecoflowd --sn HC31XXXXXXXXXXXX --stdout
-```
-
-| Flag | Meaning |
-|---|---|
-| `--sn` | serial number of the device (required) |
-| `--broker` | local MQTT broker, e.g. `tcp://127.0.0.1:1883` |
-| `--topic` | prefix on the local broker, default `ecoflow` |
-| `--mqtt-user` | user for the local broker; password via `MQTT_PASSWORD` |
-| `--stdout` | also write every reading to stdout |
-| `--fast` | switch on the fast stream — **writes**, see below |
-| `--switch-every` | repeat rate for it, default 3s; below 1s is rejected |
-| `--block` | switch the discharge block task on request — **writes**, see [Discharge block](#discharge-block---block) |
-| `--listen` | address of the HTTPS endpoint of `--block`, e.g. `172.17.0.1`; port 8089 if none is given |
-| `--tls-cert`, `--tls-key` | certificate and key for it |
-| `--block-ttl` | how long a block request holds unless renewed, default 5m, 1m to 15m |
-| `--block-task` | the task to switch; by default the only one of type "Laden des Akkus" |
-| `--host` | different API host; for US accounts `https://api-a.ecoflow.com` |
-| `-v` | report every incoming frame |
-| `--version` | print the version and exit |
-
-Credentials come exclusively from the environment — `ECOFLOW_EMAIL`, `ECOFLOW_PASSWORD`,
-optionally `ECOFLOW_HOST`, `MQTT_PASSWORD` and, with `--block`, `ECOFLOWD_HTTP_TOKEN`. Never from flags: whatever is on the
-command line, anyone on the machine can read in the process list.
-
-Three exit codes, and one of them matters for continuous operation:
-
-| Code | Meaning |
-|---|---|
-| `0` | stopped on a signal |
-| `1` | usage or configuration error |
-| `78` | **the credentials were rejected** — waiting never helps here |
-
-There is no code for "gave up after repeated failure": on network and broker errors the
-service never gives up, it keeps trying with a growing pause (see
-[How ecoflowd gets its data](#how-ecoflowd-gets-its-data)).
-
-The systemd unit lists `78` in `RestartPreventExitStatus`, so that a typo in the
-credentials file does not keep firing login attempts at an unofficial endpoint forever.
-
-What counts as a rejection is deliberately narrow, because `78` stops the service for
-good: only an answer the cloud formed itself that carries a `code` other than `0`. A
-request without an answer, an answer that is not JSON, and a `429` or `5xx` are **not** —
-those are retried like any other failure.
-
-**The known gap:** EcoFlow documents these codes nowhere. A `code` that means something
-other than "wrong password" — a locked account, say — would arrive with `HTTP 200` and
-still land on `78`. The service prints the cloud's message verbatim; if e-mail and
-password are right, a `systemctl start` is the way back.
-
-```console
-connected to mqtt-e.ecoflow.com:8883, subscribed to 3 topics
-10:29:00Z  PV    1511 W | house    480 W | battery    980 W (charging) | grid     52 W (export) | SoC 73 %
-10:30:00Z  PV    1544 W | house    618 W | battery    926 W (charging) | grid      0 W (idle) | SoC 74 %
-```
-
-The output is **character-for-character identical** to `scripts/ecoflow-frames.py`, so both
-can be run side by side and compared; a test holds them together against the same captures.
-
-**Without `--fast` or `--block` it sends nothing to the device.** That is not caution but what the
-device needs: the subscription alone keeps it talking, measured over 23 minutes without a
-single message sent to the cloud. The readings still go to your local broker — just every
-minute instead of every two to three seconds.
-
-### How ecoflowd gets its data
-
-Not through the Developer API — that one refuses the PowerOcean with error 1006, see
-[`api-status.md`](api-status.md) —, but the way the app does it: two REST calls to get in,
-then an MQTT subscription over which the device delivers on its own.
-
-```mermaid
-sequenceDiagram
-    participant D as ecoflowd
-    participant P as EcoFlow portal (REST)
-    participant B as EcoFlow MQTT broker
-    participant G as PowerOcean
-    participant L as local broker
-
-    D->>P: POST /auth/login (e-mail, password base64)
-    P-->>D: token, userId
-    D->>P: GET /iot-auth/app/certification?userId=…
-    P-->>D: host, port, MQTT account, MQTT password
-    D->>B: TLS connect, client id ANDROID_{hex}_{userId}
-    D->>B: subscribe /app/device/property/{SN}, …/get_reply, /app/device/status/{SN}
-    loop unrequested, as long as the subscription stands
-        G->>B: protobuf frame
-        B->>D: protobuf frame
-        Note over D: XOR with low byte of seq,<br/>then cmd_func/cmd_id:<br/>96/34 every minute, 254/32 hourly history
-        D->>L: {topic}/state or {topic}/energy
-    end
-    opt only with --fast
-        loop every 3 s (--switch-every)
-            D->>B: stream switch on …/set
-            B->>G: stream switch
-        end
-        G->>B: 96/33 every 2–3 s
-        B->>D: 96/33
-    end
-```
-
-When something goes wrong, the service tells three cases apart — by whether waiting helps:
-
-- **Connection gone** (network, broker, timeout): it waits and starts over at the
-  certification. The wait starts at 5 s and doubles up to at most 15 min; if the
-  connection stood in between, it starts at 5 s again. The token is kept, so there is no
-  new login – that matters, because the login is the one request that carries the account
-  password. A timeout or an HTML error page from the gateway says nothing about the token. The client id is new on every attempt, because the broker refuses one it has
-  already seen — which is also why paho does not reconnect on its own.
-- **Token rejected** (`401`/`403` or a `code` other than `0` on the certification): the
-  token is discarded, the next attempt starts with a login. The token is never written to
-  disk: that would save one login per restart and be one more copy of a credential.
-- **Credentials rejected**: exit `78`, see above — no restart by systemd.
-
-In the code: the flow in [`cmd/ecoflowd/serve.go`](cmd/ecoflowd/serve.go), login,
-certification and topics in [`internal/ecoflow/`](internal/ecoflow/), unpacking the frames
-in [`internal/frames/frame.go`](internal/frames/frame.go).
-
-### On the Raspberry Pi
+## Quick start: systemd
 
 Get the binary from the [releases](https://github.com/womat/ecoflow/releases) — Linux
 (amd64, arm64, arm with `GOARM=6`), macOS and Windows, statically linked, nothing to
 install:
 
 ```bash
-VERSION=v0.5.0   # or the latest, see the releases page
+VERSION=v0.7.0   # or the latest, see the releases page
 ARCH=linux-arm64
 
 curl -LO "https://github.com/womat/ecoflow/releases/download/$VERSION/ecoflowd-$VERSION-$ARCH.tar.gz"
@@ -556,7 +138,7 @@ neither the owner nor in the group, it would not get in, and the start would fai
   values to the process as environment; the service user has no access to
   `/etc/ecoflowd`.
 
-Exit `78` keeps the unit down (see the exit codes above); any *other* failure restarts
+Exit `78` keeps the unit down (see the [exit codes](#configuration)); any *other* failure restarts
 after 30 seconds, a clean stop by signal does not (`Restart=on-failure`).
 
 ```bash
@@ -564,7 +146,81 @@ systemctl status ecoflowd@HC31XXXXXXXXXXXX
 journalctl -fu ecoflowd@HC31XXXXXXXXXXXX
 ```
 
-### To the local broker: `--broker`
+## Configuration
+
+| Flag | Meaning |
+|---|---|
+| `--sn` | serial number of the device (required) |
+| `--broker` | local MQTT broker, e.g. `tcp://127.0.0.1:1883` |
+| `--topic` | prefix on the local broker, default `ecoflow` |
+| `--mqtt-user` | user for the local broker; password via `MQTT_PASSWORD` |
+| `--stdout` | also write every reading to stdout |
+| `--fast` | switch on the fast stream — **writes**, see below |
+| `--switch-every` | repeat rate for it, default 3s; below 1s is rejected |
+| `--block` | switch the discharge block task on request — **writes**, see [Discharge block](#discharge-block---block) |
+| `--listen` | address of the HTTPS endpoint of `--block`, e.g. `172.17.0.1`, or the container's name under Docker; port 8089 if none is given |
+| `--tls-cert`, `--tls-key` | certificate and key for it |
+| `--block-ttl` | how long a block request holds unless renewed, default 5m, 1m to 15m |
+| `--block-task` | the task to switch; by default the only one of type "Laden des Akkus" |
+| `--host` | different API host; for US accounts `https://api-a.ecoflow.com` |
+| `-v` | report every incoming frame |
+| `--version` | print the version and exit |
+
+Credentials come exclusively from the environment — `ECOFLOW_EMAIL`, `ECOFLOW_PASSWORD`,
+optionally `ECOFLOW_HOST`, `MQTT_PASSWORD` and, with `--block`, `ECOFLOWD_HTTP_TOKEN`. Never from flags: whatever is on the
+command line, anyone on the machine can read in the process list.
+
+Three exit codes, and one of them matters for continuous operation:
+
+| Code | Meaning |
+|---|---|
+| `0` | stopped on a signal |
+| `1` | usage or configuration error |
+| `78` | **the credentials were rejected** — waiting never helps here |
+
+There is no code for "gave up after repeated failure": on network and broker errors the
+service never gives up, it keeps trying with a growing pause (see
+[How ecoflowd gets its data](#how-ecoflowd-gets-its-data)).
+
+The systemd unit lists `78` in `RestartPreventExitStatus`, so that a typo in the
+credentials file does not keep firing login attempts at an unofficial endpoint forever;
+under Docker, `restart: on-failure:3` does the same job (see
+[Quick start: Docker](#quick-start-docker)).
+
+What counts as a rejection is deliberately narrow, because `78` stops the service for
+good: only an answer the cloud formed itself that carries a `code` other than `0`. A
+request without an answer, an answer that is not JSON, and a `429` or `5xx` are **not** —
+those are retried like any other failure.
+
+**The known gap:** EcoFlow documents these codes nowhere. A `code` that means something
+other than "wrong password" — a locked account, say — would arrive with `HTTP 200` and
+still land on `78`. The service prints the cloud's message verbatim; if e-mail and
+password are right, a `systemctl start` or `docker compose up -d` is the way back.
+
+### Running it by hand
+
+```bash
+export ECOFLOW_EMAIL='first.last@example.com'
+export ECOFLOW_PASSWORD='…'
+
+./ecoflowd --sn HC31XXXXXXXXXXXX --stdout
+```
+
+```console
+connected to mqtt-e.ecoflow.com:8883, subscribed to 3 topics
+10:29:00Z  PV    1511 W | house    480 W | battery    980 W (charging) | grid     52 W (export) | SoC 73 %
+10:30:00Z  PV    1544 W | house    618 W | battery    926 W (charging) | grid      0 W (idle) | SoC 74 %
+```
+
+The output is **character-for-character identical** to `scripts/ecoflow-frames.py`, so both
+can be run side by side and compared; a test holds them together against the same captures.
+
+**Without `--fast` or `--block` it sends nothing to the device.** That is not caution but what the
+device needs: the subscription alone keeps it talking, measured over 23 minutes without a
+single message sent to the cloud. The readings still go to your local broker — just every
+minute instead of every two to three seconds.
+
+## MQTT output
 
 ```bash
 ./ecoflowd --sn HC31XXXXXXXXXXXX --broker tcp://127.0.0.1:1883 --topic myhome/ecoflow
@@ -607,7 +263,7 @@ same timestamp are together (without `--fast` roughly every ten minutes):
 totals therefore jump to 0 at 01:00 (CET) or 02:00 (CEST), not at midnight.
 
 Why the format looks like this – the reasoning and the measurements are in
-[`mqtt-output.md`](./mqtt-output.md):
+[`docs/mqtt-output.md`](docs/mqtt-output.md):
 
 - **The timestamp is in the telegram**, so a receiver sees the age of every value by the
   device's clock. That replaces heartbeat, availability topic and last will; every consumer
@@ -615,7 +271,7 @@ Why the format looks like this – the reasoning and the measurements are in
 - **`grid` is 0, not missing:** the device leaves out fields with the value 0 (proto3
   behaviour, inferred, not proven); in every such report the energy balance adds up with
   `grid = 0`.
-- **`dcdc` is not published** until its role is clear (see "Open points").
+- **`dcdc` is not published** until its role is clear (see the [open points](docs/research/README.md#open-points)).
 - **The serial number is in the payload, not in the topic**, so it survives forwarding;
   several devices each need their own `--topic`. Keep topics lowercase – MQTT is
   case-sensitive, and a subscription with one wrong letter gets nothing, not an error.
@@ -628,7 +284,9 @@ Why the format looks like this – the reasoning and the measurements are in
 With `--mqtt-user` and `MQTT_PASSWORD` for a broker that requires authentication. The
 password comes from the environment, because a flag would show up in the process list.
 
-**Moving from v0.4.x.** Up to v0.4.x, `ecoflowd` published one topic per value
+### Moving from v0.4.x
+
+Up to v0.4.x, `ecoflowd` published one topic per value
 (`ecoflow/<SN>/pv`, …, `/energy/…`) and a retained `ecoflow/<SN>/status`. All of that is
 gone without replacement as of v0.5.0. The old retained `status` stays on the broker until
 you delete it:
@@ -637,7 +295,7 @@ you delete it:
 mosquitto_pub -h <broker> -r -n -t ecoflow/HC31XXXXXXXXXXXX/status
 ```
 
-#### evcc
+### evcc
 
 The signs stay as the device measures them — converting is left to the human, the same
 rule as for the addresses in `modbusread`. evcc expects the opposite and has `scale` for
@@ -681,7 +339,7 @@ any age" — a frozen value would then silently keep being used.
 For energy values from `ecoflow/energy`, add `scale: 0.001`, because evcc expects kWh and
 the values here are Wh.
 
-#### Home Assistant
+### Home Assistant
 
 ```yaml
 mqtt:
@@ -698,7 +356,7 @@ mqtt:
 `expire_after` replaces the earlier `availability_topic`: if no telegram comes for three
 minutes, the sensor becomes `unavailable`.
 
-### Per-second values: `--fast`
+## Per-second values: `--fast`
 
 ```bash
 ./ecoflowd --sn HC31XXXXXXXXXXXX --stdout --fast
@@ -710,21 +368,21 @@ every two to three seconds instead of every minute.
 **This is one of the program's two write paths** (the other is [`--block`](#discharge-block---block)),
 on the `.../set` topic through which the device could also be reconfigured – hence a flag,
 not a default. It sends the same captured,
-parameterless switch as `ecoflow-api.sh fast` (see there), with the same 3-second rate;
+parameterless switch as `ecoflow-api.sh fast` ([see there](docs/research/tools.md#fast-rate-fast)), with the same 3-second rate;
 at ten seconds the device falls back to the minute rate.
 
 If the fast stream still does not come, the service says so **once**, after about 60 s,
 and carries on at the minute rate. The broker accepts the switch in any case (`PUBACK RC:0` measured); whether
 it works is shown only by whether fast reports arrive.
 
-### Discharge block: `--block`
+## Discharge block: `--block`
 
 Keeps the battery from discharging on request, e.g. while the car charges. It uses a
 scheduled task of the app: the mode **"Laden des Akkus"** (charge battery) stops the battery
 discharging, PV goes to the loads, the grid covers the rest, and surplus PV still charges
 the battery. Enabled from outside the app, such a task takes effect about 25 s later, and
 within a good minute of disabling it the battery supplies again – measured in the fifth
-write test, see [`api-status.md`](api-status.md), section 3.
+write test, see [`api-status.md`](docs/research/api-status.md), section 3.
 
 **How it is split up:**
 
@@ -750,7 +408,7 @@ export ECOFLOWD_HTTP_TOKEN="$(openssl rand -hex 32)"
 | `GET /block` | the state |
 
 Every request carries `Authorization: Bearer <token>`. The answer is the state as JSON,
-the same as the [`<topic>/block` telegram](mqtt-output.md):
+the same as the [`<topic>/block` telegram](docs/mqtt-output.md):
 
 ```json
 {"sn":"HC31XXXXXXXXXXXX","timestamp":"2026-10-03T12:00:01Z","task":7,"requested":true,
@@ -876,64 +534,93 @@ the certificate, not the key, and need not be secret. Whether TLS is needed at a
 machine was weighed: the traffic does not leave it. TLS was chosen anyway (3 Oct 2026),
 mainly so that the token never crosses a wire in clear, should the setup ever change.
 
-## Summary
+**Under Docker** it is simpler: `ecoflowd` and its caller share a network, and the
+endpoint listens on the container's own name, which resolves to its address on that
+network – `--listen=ecoflowd:8089`. Containers on the network reach it as
+`https://ecoflowd:8089/block`, nothing else does; there is no `ports:` entry, no bridge
+address to look up and no firewall rule. The certificate names the container instead of
+an IP, and the key has to be readable by the image's user, `65532`:
 
-- A specific, officially documented REST API for the DC Fit does not exist.
-- Four paths were examined; **exactly one delivers readings continuously today**, and that
-  is the unofficial MQTT channel of the consumer app.
-- The generic EcoFlow Developer/Open API (cloud) returns error 1006 "not allowed" for the
-  PowerOcean family – a model blocklist, not a bug. The **DC Fit (SN prefix `HC31`) is
-  affected, confirmed on the device**: `device/list` does list it with code 0, but
-  `device/quota/all` refuses the readings with 1006.
-- The **consumer portal** (REST, session token) answers, but only hands out the state last
-  pushed to the cloud – in one measurement it stood still for over an hour.
-- The **app's MQTT channel** (protobuf, reverse-engineered) delivers minute values on its
-  own and per-second values with the stream switch. `scripts/ecoflow-api.sh` and the
-  service `cmd/ecoflowd` run on it.
-- **Local Modbus TCP** (port 502) would be the stable path, but is still locked on the
-  device (`connection refused`): it has to be unlocked by the installer via the EcoFlow
-  Pro app, and the register layout is not officially documented but community-derived.
-- For details see the linked files, and the comparison in `api-status.md`.
+```bash
+openssl req -x509 -newkey rsa:3072 -nodes -days 3650 \
+  -subj "/CN=ecoflowd" -addext "subjectAltName=DNS:ecoflowd" \
+  -keyout tls.key -out tls.crt
+sudo chown 65532 tls.key && sudo chmod 400 tls.key
+```
 
-## Open points
+The compose file has the flags, the `secrets:` for both files and the shared network
+commented out, ready to switch on; `ECOFLOWD_HTTP_TOKEN` goes into `.env`.
 
-- Confirmation of the register mapping on the DC Fit. The current source treats it as the
-  normal case and knows only *one* model-dependent special case, and that one concerns the
-  Plus
-- Which of the two register readings is right: `modbus-registers.md` puts the
-  contradictory addresses of both sources side by side, every row is a single test on the
-  device (e.g. system SOC at 40527 vs. 42082)
-- Confirmation on the device that unlocking really goes through *Control Mode →
-  "Modbus control"* in the Pro app (checklist in `api-status.md`)
-- Which values `product_category`/`product_number` (40002/40003) return on the DC Fit –
-  the reference integration does not know them
-- Whether the fast stream ends after the last switch for reasons of time or because the
-  MQTT connection dropped. **About 25 seconds** of run-on were measured; but the same
-  measurement also reconnected, so it does not separate the two
-- The remaining fields of `cmd_id` 110. A night with PV = 0 split them into three groups
-  (PV-bound, battery discharge, settings) and established fields 45/47 as discharge power;
-  still unclear are, among others, 2, 3, 5, 18, 19, 24, 28, 32 and 48. `cmd_id` 1, 108,
-  109, 111 and 136 are decoded
-- What `dcdc` (field 2 of the energy report) measures. The name comes from a third-party
-  source (`dcdc_pwr`); it is **not** part of the energy balance and follows the battery
-  with the same sign, in the captures at 63–103 % of its value, without a fixed ratio.
-  Until that is clear, `ecoflowd` does not publish it
-- Scheduled tasks: how the app enables, disables, changes, creates and deletes them is
-  captured (`96/125`; the task list comes as `96/127` and is pushed as `96/10`, see
-  `api-status.md`, section 3). Write tests with replayed app frames showed that the device
-  also accepts enable, disable, create and delete from outside the app, and that it stores
-  overlapping tasks, which only the app refuses. Switched that way, tasks **take effect**:
-  an app task enabled from the Mac and a task created from the Mac on the 30-minute grid both
-  blocked the discharge. A task with off-grid times (00:51–01:02) was stored but not
-  executed. Decided on 3 Oct 2026: `ecoflowd --block` switches one app task on and off
-  ([Discharge block](#discharge-block---block)), tested on the device the same evening (sixth
-  test in `api-status.md`). Still open: what the device does at midnight with a 00:00–24:00
-  task; a raw `96/10` for the test data; the natural end of a task; and whether off-grid
-  minutes are really why the fourth test's task did not run
-- Why the portal's daily yield is off in both directions **during the day**. After sunset
-  portal and device agree to within 0.058 %, so they measure the same thing; the portal
-  just updates in jumps. In practice: take daily values from the device, not from the
-  portal
+## How ecoflowd gets its data
+
+Not through the Developer API — that one refuses the PowerOcean with error 1006, see
+[`api-status.md`](docs/research/api-status.md) —, but the way the app does it: two REST calls to get in,
+then an MQTT subscription over which the device delivers on its own.
+
+```mermaid
+sequenceDiagram
+    participant D as ecoflowd
+    participant P as EcoFlow portal (REST)
+    participant B as EcoFlow MQTT broker
+    participant G as PowerOcean
+    participant L as local broker
+
+    D->>P: POST /auth/login (e-mail, password base64)
+    P-->>D: token, userId
+    D->>P: GET /iot-auth/app/certification?userId=…
+    P-->>D: host, port, MQTT account, MQTT password
+    D->>B: TLS connect, client id ANDROID_{hex}_{userId}
+    D->>B: subscribe /app/device/property/{SN}, …/get_reply, /app/device/status/{SN}
+    loop unrequested, as long as the subscription stands
+        G->>B: protobuf frame
+        B->>D: protobuf frame
+        Note over D: XOR with low byte of seq,<br/>then cmd_func/cmd_id:<br/>96/34 every minute, 254/32 hourly history
+        D->>L: {topic}/state or {topic}/energy
+    end
+    opt only with --fast
+        loop every 3 s (--switch-every)
+            D->>B: stream switch on …/set
+            B->>G: stream switch
+        end
+        G->>B: 96/33 every 2–3 s
+        B->>D: 96/33
+    end
+```
+
+When something goes wrong, the service tells three cases apart — by whether waiting helps:
+
+- **Connection gone** (network, broker, timeout): it waits and starts over at the
+  certification. The wait starts at 5 s and doubles up to at most 15 min; if the
+  connection stood in between, it starts at 5 s again. The token is kept, so there is no
+  new login – that matters, because the login is the one request that carries the account
+  password. A timeout or an HTML error page from the gateway says nothing about the token. The client id is new on every attempt, because the broker refuses one it has
+  already seen — which is also why paho does not reconnect on its own.
+- **Token rejected** (`401`/`403` or a `code` other than `0` on the certification): the
+  token is discarded, the next attempt starts with a login. The token is never written to
+  disk: that would save one login per restart and be one more copy of a credential.
+- **Credentials rejected**: exit `78`, see above — no restart by systemd.
+
+In the code: the flow in [`cmd/ecoflowd/serve.go`](cmd/ecoflowd/serve.go), login,
+certification and topics in [`internal/ecoflow/`](internal/ecoflow/), unpacking the frames
+in [`internal/frames/frame.go`](internal/frames/frame.go).
+
+## Background and research
+
+`ecoflowd` is where the work in this repo ended up; the way there is documented
+alongside. Four ways into the PowerOcean DC Fit were examined – the EcoFlow Developer API,
+the consumer portal, the app's MQTT channel and local Modbus TCP – and exactly one
+delivers readings continuously today: the app channel `ecoflowd` uses.
+
+| | |
+|---|---|
+| [`docs/research/`](docs/research/README.md) | Overview, summary of the findings, open points and sources |
+| [`docs/research/api-status.md`](docs/research/api-status.md) | The four paths compared, error 1006, the frames, the write tests |
+| [`docs/research/modbus-registers.md`](docs/research/modbus-registers.md) | Register map for local Modbus TCP, should the installer ever unlock it |
+| [`docs/research/tools.md`](docs/research/tools.md) | [`scripts/ecoflow-api.sh`](scripts/ecoflow-api.sh) and [`scripts/ecoflow-frames.py`](scripts/ecoflow-frames.py), the measuring tools |
+| [`docs/mqtt-output.md`](docs/mqtt-output.md) | Why the output looks the way it does |
+
+The registers are checked with [`modbusread`](https://github.com/womat/modbusread), a
+universal Modbus reader that lived here as `cmd/modbusread` up to v0.6.0.
 
 ## Working on this repo
 
@@ -946,10 +633,11 @@ go build ./... && go vet ./... && go test ./...
 gofmt -l ./cmd ./internal      # no output = fine
 ```
 
-- **Docs overlap on purpose.** `README.md`, `api-status.md`, `modbus-registers.md` and
-  `mqtt-output.md` refer to each other; if a statement changes, carry the other places and
+- **Docs overlap on purpose.** `README.md`, `docs/mqtt-output.md` and the notes in
+  `docs/research/` refer to each other; if a statement changes, carry the other places and
   the open-points lists along. The same goes for the tools: a change to a script or to
-  `ecoflowd` carries its README section and `--help` text along.
+  `ecoflowd` carries its README section and `--help` text along – and, for a flag or an
+  environment variable, `docker-compose.yaml`, `.env.example` and the systemd unit.
 - **Commits:** subject in the imperative, naming the result; below it the *why* – the what
   is in the diff.
 - **Merging:** squash. `git branch --merged` then reports such branches as "not merged"
@@ -960,10 +648,14 @@ gofmt -l ./cmd ./internal      # no output = fine
   Standard library security fixes come from the toolchain used to build – CI and release
   build with `stable`. `go list -m -u all` checks the dependencies, `govulncheck ./...`
   whether a known vulnerability reaches the code; what sits only in an included module is
-  updated too.
+  updated too. The image is built with `golang:1.27-alpine` instead, which
+  picks up every 1.27.x patch release by itself; dependabot proposes the next minor.
+- **Docker:** `docker build -t ecoflowd .` builds the image for the local platform; CI
+  builds it on every PR, so a broken `Dockerfile` shows before a release.
 
 **Release:** a tag `vX.Y.Z` on `main` – `release.yml` builds the binaries and stamps the
-version in via `-X main.version`. Never tag another branch: the release would point at a
+version in via `-X main.version`, then pushes the image to `ghcr.io/womat/ecoflowd` as
+`X.Y.Z`, `X.Y` and `latest`. Never tag another branch: the release would point at a
 state that never existed in `main`.
 
 ```bash
@@ -978,19 +670,8 @@ added – and, while the number starts with `0.`, also when one is removed or an
 format changes. That is a break and is stated as such in the release notes, as with
 `v0.5.0`.
 
-## Sources
-
-- https://developer.ecoflow.com
-- https://github.com/Feberdin/ecoflow-powerocean-ha
-- https://github.com/MaxGrmm/ecoflow-poweroceanplus-modbus
-- https://github.com/MaxGrmm/EF-PowerOcean-TcpModbus
-- https://github.com/windmark/EF-PowerOcean-TcpModbus
-- https://docs.evcc.io/en/meters/ecoflow-powerocean-modbus
-- https://github.com/shuette42/ecoflow-energy-ha
-- https://www.photovoltaikforum.com/thread/247994-ecoflow-powerocean-modbus-protokoll/
-
 ## License
 
-MIT – see [`LICENSE`](./LICENSE). Note that parts of the register information were taken
-from MIT-licensed third-party sources (see above); the respective original links are given
-in `modbus-registers.md`.
+MIT – see [`LICENSE`](./LICENSE). Note that parts of the register information in
+`docs/research/` were taken from MIT-licensed third-party sources; the respective
+original links are given in `docs/research/modbus-registers.md`.

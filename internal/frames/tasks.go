@@ -9,7 +9,7 @@ import (
 //
 // A task switches the system into a mode for a time window. Type 1, which the
 // app calls "Laden des Akkus" (charge the battery), keeps the battery from
-// discharging while it runs - measured on the DC Fit, see api-status.md,
+// discharging while it runs - measured on the DC Fit, see docs/research/api-status.md,
 // section 3. That is why anything here deals with tasks at all.
 //
 // Field by field, as measured on the DC Fit; the names follow

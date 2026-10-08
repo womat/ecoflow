@@ -22,7 +22,7 @@ What it knows, and how that was established (September 2026, PowerOcean DC Fit):
     decimals on every frame: PV = battery + house + grid.
 
 The mapping is for the DC Fit. Other PowerOcean models number these fields
-differently - see api-status.md. Read-only: this only ever reads stdin.
+differently - see docs/research/api-status.md. Read-only: this only ever reads stdin.
 """
 
 import struct

@@ -24,3 +24,10 @@ updates:
       actions:
         patterns:
           - "*"
+
+  # The base images in the Dockerfile. golang:1.27-alpine already follows the
+  # patch releases; this proposes the next minor.
+  - package-ecosystem: docker
+    directory: /
+    schedule:
+      interval: weekly

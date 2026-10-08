@@ -1,0 +1,8 @@
+# Only go.mod, go.sum, cmd/ and internal/ go into the image; keep the context small
+# and keep anything secret (.env, certificates) out of it.
+*
+!go.mod
+!go.sum
+!cmd/
+!internal/
+internal/frames/testdata/

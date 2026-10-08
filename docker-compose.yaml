@@ -1,0 +1,73 @@
+# ecoflowd in Docker. Copy .env.example to .env, fill it in, then:
+#
+#   chmod 600 .env
+#   docker compose up -d
+#   docker compose logs -f
+#
+# The README ("Quick start: Docker") explains each part; this file is meant to
+# be edited, it is not a black box.
+
+services:
+  ecoflowd:
+    image: ghcr.io/womat/ecoflowd:${ECOFLOWD_VERSION:-latest}
+    container_name: ecoflowd
+
+    # Credentials reach the process as environment, never as flags: a flag shows
+    # up in "docker inspect" and in the process list.
+    env_file: .env
+
+    command:
+      - --sn=${ECOFLOW_SN:?set ECOFLOW_SN in .env}
+      - --broker=${ECOFLOWD_BROKER:-tcp://host.docker.internal:1883}
+      # - --topic=myhome/ecoflow
+      # - --mqtt-user=ecoflowd          # password from MQTT_PASSWORD in .env
+      # - --fast                        # writes - see "Per-second values" in the README
+
+    # A broker on the Docker host itself. On Linux, Mosquitto 2 listens on
+    # localhost only unless configured otherwise, so it needs a listener the
+    # bridge can reach. Not needed for a broker in a container on a shared
+    # network (see "networks" below).
+    extra_hosts:
+      - host.docker.internal:host-gateway
+
+    # ecoflowd never exits on network or broker trouble - it retries by itself,
+    # with a growing pause. It exits only on a configuration error (1) or when
+    # the cloud rejects the credentials (78), and waiting fixes neither. So no
+    # "unless-stopped": with a wrong password that would repeat the login
+    # against an unofficial endpoint every minute, for ever. This is the
+    # counterpart to RestartPreventExitStatus=78 in the systemd unit.
+    restart: on-failure:3
+
+    # Nothing is written to disk and no privilege is needed.
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+
+    # Discharge block (--block, see the README). Add to "command":
+    #
+    #   - --block
+    #   - --listen=ecoflowd:8089
+    #   - --tls-cert=/run/secrets/tls.crt
+    #   - --tls-key=/run/secrets/tls.key
+    #
+    # ECOFLOWD_HTTP_TOKEN goes into .env. --listen takes the container's own
+    # name, which resolves to its address on the compose network: the endpoint
+    # is reachable from containers on that network and from nowhere else.
+    # There is deliberately no "ports:" - it is not meant for the LAN.
+    #
+    # secrets: [tls.crt, tls.key]
+
+    # To share a network with an existing broker or with the caller of --block
+    # (evcc, Node-RED), join that network instead of the default one:
+    #
+    # networks: [smarthome]
+
+# secrets:
+#   tls.crt:
+#     file: ./tls.crt
+#   tls.key:
+#     file: ./tls.key       # chown 65532 tls.key && chmod 400 tls.key
+
+# networks:
+#   smarthome:
+#     external: true

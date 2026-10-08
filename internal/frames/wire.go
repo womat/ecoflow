@@ -7,7 +7,7 @@
 //
 // Nothing in here comes from EcoFlow documentation. The frame layout, the
 // obfuscation and the field numbering were measured at a PowerOcean DC Fit in
-// September 2026 and are written up in api-status.md. Other models number the
+// September 2026 and are written up in docs/research/api-status.md. Other models number the
 // same quantities differently.
 package frames
 
