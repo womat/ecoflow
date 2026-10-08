@@ -1,9 +1,8 @@
 // Package frames decodes the protobuf frames an EcoFlow PowerOcean publishes
 // on the consumer app's MQTT channel.
 //
-// Like internal/decode it is deliberately free of network and device access:
-// everything here is a pure function over []byte. That matters for the same
-// reason it matters there — a misread field produces a plausible wrong number
+// It is deliberately free of network and device access: everything here is a
+// pure function over []byte. A misread field produces a plausible wrong number
 // rather than a crash, so the interpretation has to be directly testable.
 //
 // Nothing in here comes from EcoFlow documentation. The frame layout, the

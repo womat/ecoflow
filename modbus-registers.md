@@ -63,8 +63,9 @@ switch the mode.
 | Max. registers per read | 125 (Modbus limit of one response) |
 
 **On addressing:** The reference integration passes the 4xxxx numbers unchanged to
-pymodbus, so they go on the wire exactly like that. `modbusread` does the same (see
-[`README.md`](./README.md): addresses are never converted) – the tables below can thus be
+pymodbus, so they go on the wire exactly like that.
+[`modbusread`](https://github.com/womat/modbusread) does the same (addresses are never
+converted) – the tables below can thus be
 **used 1:1**. The earlier claim "register numbering 1-based" in these notes is thereby put
 in serious doubt, but can only be settled for good on the device.
 
@@ -314,9 +315,9 @@ Both are unofficial and can change at any time.
 
 ## Caution with write access
 
-`modbusread` never writes – there is no code path in this program that issues a Modbus
-write command. (The repo's second binary, `ecoflowd`, has a write path, but to the cloud
-and only behind the `--fast` flag; it does not touch Modbus.) If you write by other means:
+`modbusread` never writes – there is no code path in that program that issues a Modbus
+write command. (This repo's `ecoflowd` has two write paths, but to the cloud and only
+behind the `--fast` and `--block` flags; it does not touch Modbus.) If you write by other means:
 
 - The mapping is reverse-engineered and not confirmed by EcoFlow; firmware updates can
   change addresses and behaviour.
