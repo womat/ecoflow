@@ -1,0 +1,56 @@
+<!doctype html>
+<!--
+  Source of docs/social-preview.png (1280x640). Render it with headless Chrome:
+
+    "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" --headless \
+      --window-size=1280,640 --hide-scrollbars --force-device-scale-factor=1 \
+      --screenshot=docs/social-preview.png docs/social-preview.html
+
+  Then upload it under the repo's Settings -> Social preview; GitHub does not
+  take it from the repository. The readings are the README's example values.
+-->
+<meta charset="utf-8">
+<style>
+  body { margin: 0; width: 1280px; height: 640px; background: #f3f5f7; font-family: system-ui, sans-serif;
+         display: flex; align-items: center; gap: 40px; padding: 0 0 0 72px; box-sizing: border-box; overflow: hidden; }
+  .text { display: flex; flex-direction: column; gap: 22px; width: 400px; flex: none; }
+  .brand { display: flex; align-items: center; gap: 20px; }
+  svg { width: 62px; height: 62px; color: #2563a8; flex: none; }
+  h1 { margin: 0; font-size: 66px; letter-spacing: -.02em; color: #17202b; }
+  h1 b { color: #2563a8; }
+  p { margin: 0; font-size: 30px; line-height: 1.3; color: #3d4a58; }
+  .tags { font-size: 21px; color: #5d6b7a; }
+  .term { width: 700px; height: 400px; flex: none; border-radius: 14px; background: #17202b; color: #d7dee6;
+          box-shadow: 0 20px 50px rgba(23, 32, 43, .18); overflow: hidden; }
+  .bar { height: 38px; background: #222d3a; display: flex; align-items: center; gap: 9px; padding-left: 16px; }
+  .bar i { width: 13px; height: 13px; border-radius: 50%; background: #3d4a58; }
+  pre { margin: 0; padding: 24px 28px; font: 16px/1.55 ui-monospace, "SF Mono", Menlo, monospace; white-space: pre; }
+  .p { color: #6fa8dc; }
+  .h { color: #8494a6; }
+  .r { color: #e3b341; }
+  .g { color: #7fc97f; }
+</style>
+<div class="text">
+  <div class="brand">
+    <svg viewBox="0 0 30 30" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M17 2L6 17h8l-2 11 12-16h-8z"/>
+    </svg>
+    <h1><b>ecoflow</b>d</h1>
+  </div>
+  <p>EcoFlow PowerOcean readings on your local MQTT broker.</p>
+  <span class="tags">evcc · Home Assistant · Node-RED<br>Docker · systemd · Raspberry Pi</span>
+</div>
+<div class="term">
+  <div class="bar"><i></i><i></i><i></i></div>
+<pre><span class="p">$</span> docker logs -f ecoflowd
+<span class="h">connected to mqtt-e.ecoflow.com:8883, subscribed to 3 topics</span>
+
+<span class="p">$</span> mosquitto_sub -t 'ecoflow/#' -v
+<span class="g">ecoflow/state</span>
+{"sn":"HC31XXXXXXXXXXXX","timestamp":"2026-09-22T09:13:16Z",
+ "pv":<span class="r">975</span>,"house":<span class="r">-459</span>,"battery":<span class="r">515</span>,"grid":<span class="r">0</span>,"soc":<span class="r">63</span>}
+<span class="g">ecoflow/energy</span>
+{"sn":"HC31XXXXXXXXXXXX","timestamp":"2026-09-22T09:13:18Z",
+ "pv":<span class="r">3301</span>,"house":<span class="r">3206</span>,"batteryIn":<span class="r">1545</span>,
+ "batteryOut":<span class="r">1562</span>,"gridIn":<span class="r">62</span>,"gridOut":<span class="r">175</span>}</pre>
+</div>
