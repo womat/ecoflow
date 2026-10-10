@@ -35,6 +35,7 @@ go test ./...                  # everything, runs without hardware
 go test -run TestEnergyBalances ./internal/frames/   # a single test
 go vet ./...
 gofmt -l ./cmd ./internal      # no output = fine; CI fails on it
+golangci-lint run ./...        # exclusions and their reasons in .golangci.yml
 scripts/ecoflow-api.sh selftest # signature and stream switch frame, no network
 ```
 
@@ -61,7 +62,7 @@ python3 scripts/ecoflow-frames.py < internal/frames/testdata/fast.txt \
 ## Branches & releases
 
 One permanent branch: **`main`**. Work happens in short-lived feature branches that go to
-`main` via PR — CI (`gofmt`, `vet`, `build`, `test -race`, `govulncheck`, `docker build`) has to be green. No `develop`:
+`main` via PR — CI (`gofmt`, `vet`, `build`, `test -race`, `golangci-lint`, `govulncheck`, `docker build`) has to be green. No `develop`:
 `go install …@latest` resolves to the newest semver tag, not to a branch, so a second
 permanent branch would only create a merge ritual with nothing in return.
 
@@ -145,12 +146,12 @@ German — that concerns the chat, not the files.
   web page the port is published on one host address only
   (`ports: ["192.168.1.10:8089:8089"]`, decided 10 Oct 2026) – `/block` is then on that
   address too, behind token and TLS
-- `.github/workflows/` – `ci.yml` (gofmt, vet, build, test -race, govulncheck, and a
-  `docker build`) and `release.yml` (tag on `main`?, vet, test and govulncheck again, then
+- `.github/workflows/` – `ci.yml` (gofmt, vet, build, test -race, golangci-lint,
+  govulncheck, and a `docker build`) and `release.yml` (tag on `main`?, vet, test and govulncheck again, then
   GoReleaser for seven platform archives; afterwards the image for four Linux platforms to
   `ghcr.io/womat/ecoflowd`). Actions are pinned to a commit SHA with the release in a
   comment, never to a movable tag like `@v7`; `.github/dependabot.yml` proposes weekly
-  updates for them and the Go modules, but not for the `go install` pin of govulncheck
+  updates for them and the Go modules, but not for the `go install` pins of golangci-lint and govulncheck
 - `ecoflow-open-demo/` – EcoFlow's official Java demo client, downloaded for reference
   only. Deliberately **not** versioned via `.gitignore`; do not "tidy it up"
 - `README.md` – entry point for users of `ecoflowd`: what it does, quick start with

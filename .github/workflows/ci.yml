@@ -32,6 +32,13 @@ jobs:
       - run: go build ./...
       - run: go test -race ./...
 
+      # golangci-lint with the default linters and the exclusions in
+      # .golangci.yml. Pinned like govulncheck; dependabot does not see it.
+      - name: golangci-lint
+        run: |
+          go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.14.0
+          "$(go env GOPATH)/bin/golangci-lint" run ./...
+
       # govulncheck reports known vulnerabilities in the Go version and the modules
       # that the code actually calls. dependabot does not see go install lines -
       # raise the version by hand.

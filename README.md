@@ -705,7 +705,7 @@ them first keeps the PR green:
 
 ```bash
 make test       # go test -race, the golden files against the python decoder, the script's selftest
-make lint       # gofmt, go vet, govulncheck
+make lint       # gofmt, go vet, golangci-lint, govulncheck
 make build      # ./ecoflowd for this machine
 make image      # the container image for this machine, as ecoflowd:dev
 make snapshot   # all release archives into ./dist, without publishing (needs goreleaser)
