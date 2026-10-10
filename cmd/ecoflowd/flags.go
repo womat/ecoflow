@@ -207,7 +207,6 @@ note on --block:
 exit status:
   0  stopped on a signal
   1  usage or configuration error
-  2  gave up after a failure that kept repeating
   78 the account credentials were rejected - waiting will not fix this, so the
      systemd unit should not restart on it
 
@@ -352,7 +351,7 @@ func httpConfig(c *config, o *options, fs *flag.FlagSet) error {
 	}
 
 	if o.tlsCert == "" || o.tlsKey == "" {
-		return errors.New("--listen needs --tls-cert and --tls-key; the endpoint speaks HTTPS only")
+		return errors.New("--listen needs --tls-cert and --tls-key; the server speaks HTTPS only")
 	}
 	cert, err := tls.LoadX509KeyPair(o.tlsCert, o.tlsKey)
 	if err != nil {

@@ -16,6 +16,9 @@
 // once a minute, measured over 23 minutes without a single message to the
 // cloud. Readings still go to the local broker - that is what the program is
 // for; only --fast and --block write anything back to the device.
+//
+// With --listen it also serves HTTPS: a read-only web page and the /status
+// it polls, and with --block the /block endpoint (https.go).
 package main
 
 import (

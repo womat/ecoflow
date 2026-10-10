@@ -5,7 +5,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## What this repo is
 
 **`ecoflowd`** is the product: a service that reads the **EcoFlow PowerOcean DC Fit**
-over the app's cloud channel and publishes the readings to a local MQTT broker. It ships
+over the app's cloud channel and publishes the readings to a local MQTT broker; with
+`--listen` it also shows them on a read-only web page. It ships
 as release binaries (systemd, `contrib/`) and as a container image (`Dockerfile`,
 `docker-compose.yaml`). The README is written for its users and leads with installing it.
 
@@ -60,7 +61,7 @@ python3 scripts/ecoflow-frames.py < internal/frames/testdata/fast.txt \
 ## Branches & releases
 
 One permanent branch: **`main`**. Work happens in short-lived feature branches that go to
-`main` via PR — CI (`gofmt`, `vet`, `build`, `test -race`) has to be green. No `develop`:
+`main` via PR — CI (`gofmt`, `vet`, `build`, `test -race`, `govulncheck`, `docker build`) has to be green. No `develop`:
 `go install …@latest` resolves to the newest semver tag, not to a branch, so a second
 permanent branch would only create a merge ritual with nothing in return.
 
@@ -153,7 +154,7 @@ German — that concerns the chat, not the files.
 - `ecoflow-open-demo/` – EcoFlow's official Java demo client, downloaded for reference
   only. Deliberately **not** versioned via `.gitignore`; do not "tidy it up"
 - `README.md` – entry point for users of `ecoflowd`: what it does, quick start with
-  Docker and systemd, configuration, MQTT output, `--fast`, `--block`, how it works; the
+  Docker and systemd, configuration, MQTT output, the web page (`--listen`), `--fast`, `--block`, how it works; the
   research only as a short section with links
 - `docs/research/README.md` – entry point to the research: disclaimer, summary, open
   points, sources, the pointer to `modbusread`

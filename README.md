@@ -89,7 +89,7 @@ Flags go into `command:` in the compose file, one per line – `--topic`, `--mqt
 docker compose pull && docker compose up -d
 ```
 
-`latest` follows the newest release; `ECOFLOWD_VERSION=0.7.0` in `.env` pins one.
+`latest` follows the newest release; `ECOFLOWD_VERSION=0.8.0` in `.env` pins one.
 
 ## Quick start: systemd
 
@@ -99,7 +99,7 @@ for every Raspberry Pi and PC, macOS and Windows, statically linked, nothing to 
 the Pi 1 and Zero; the release notes have the full table.
 
 ```bash
-VERSION=0.7.0    # or the latest, see the releases page
+VERSION=0.8.0    # or the latest, see the releases page
 ARCH=linux_arm64
 
 curl -LO "https://github.com/womat/ecoflow/releases/download/v$VERSION/ecoflowd_${VERSION}_$ARCH.tar.gz"
@@ -308,7 +308,7 @@ mosquitto_pub -h <broker> -r -n -t ecoflow/HC31XXXXXXXXXXXX/status
 ### evcc
 
 The signs stay as the device measures them — converting is left to the human, the same
-rule as for the addresses in `modbusread`. evcc expects the opposite and has `scale` for
+rule as for the register addresses in [modbusread](https://github.com/womat/modbusread). evcc expects the opposite and has `scale` for
 it; `jq` pulls the value out of the telegram:
 
 ```yaml
