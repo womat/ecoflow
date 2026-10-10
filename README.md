@@ -429,7 +429,7 @@ browser:
 
 ```bash
 openssl req -x509 -newkey rsa:3072 -nodes -days 3650 -subj "/CN=ecoflowd" \
-  -addext "subjectAltName=IP:172.17.0.1,IP:192.168.1.10,DNS:mysmarthome.fritz.box" \
+  -addext "subjectAltName=IP:172.17.0.1,IP:192.168.1.10,DNS:raspberrypi.local" \
   -keyout /etc/ecoflowd/tls.key -out /etc/ecoflowd/tls.crt
 ```
 
