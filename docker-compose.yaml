@@ -43,19 +43,28 @@ services:
     cap_drop: [ALL]
     security_opt: ["no-new-privileges:true"]
 
-    # Discharge block (--block, see the README). Add to "command":
+    # Web page and discharge block (--listen, --block, see the README). Add to
+    # "command":
     #
-    #   - --block
     #   - --listen=ecoflowd:8089
     #   - --tls-cert=/run/secrets/tls.crt
     #   - --tls-key=/run/secrets/tls.key
+    #   - --block                       # writes - only for the discharge block
     #
     # ECOFLOWD_HTTP_TOKEN goes into .env. --listen takes the container's own
-    # name, which resolves to its address on the compose network: the endpoint
-    # is reachable from containers on that network and from nowhere else.
-    # There is deliberately no "ports:" - it is not meant for the LAN.
+    # name, which resolves to its address on the compose network: without
+    # "ports:" the server is reachable from containers on that network and
+    # from nowhere else - enough for a caller of --block.
     #
     # secrets: [tls.crt, tls.key]
+    #
+    # For the web page in the browser, publish the port on one host address,
+    # never on all of them, and give the container the machine's name for the
+    # page's header. With --block, /block is then on that address as well,
+    # behind the token and TLS. The certificate has to name that address.
+    #
+    # ports: ["192.168.1.10:8089:8089"]
+    # hostname: pi-home
 
     # To share a network with an existing broker or with the caller of --block
     # (evcc, Node-RED), join that network instead of the default one:

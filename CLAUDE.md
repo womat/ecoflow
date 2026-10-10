@@ -94,10 +94,17 @@ German — that concerns the chat, not the files.
   number and time of measurement in the payload; no retain, no availability topic, no
   heartbeat. Only what is understood goes into the telegram — `dcdc` is therefore
   deliberately missing. None of it is on disk; the session lives in the process. With
-  `--block` a third telegram (`<topic>/block`) and an HTTPS endpoint join it: the
-  discharge block (`block.go` the state, `https.go` the endpoint), see the write paths
-  below. Deliberately device-specific; the knowledge for that lives in
-  `internal/frames` and `internal/ecoflow`
+  `--listen` an HTTPS server joins it (`https.go`): the web page (`ui.go`, embedded
+  `ui/index.html`, public, no data in it) and `GET /status` (token), fed by `status.go`,
+  which keeps the last reading, the day's totals and the connection state for the
+  lifetime of the process. The page follows the sibling projects' pages (s0meter,
+  smartmeter, modbusgateway: same tokens and parts, flow strip with the client left and
+  the device right) and is **read-only** – a switch on it would be a third write path, see
+  below. Its screenshots come from `docs/screenshots/capture.py`. With `--block` a third
+  telegram (`<topic>/block`) and the `/block` endpoint on the same server join it: the
+  discharge block (`block.go` the state, `https.go` the endpoint and the list of its
+  callers), see the write paths below. Deliberately device-specific; the knowledge for
+  that lives in `internal/frames` and `internal/ecoflow`
 - `internal/frames/` – pure functions over `[]byte`: the protobuf frames of the app MQTT
   channel (wrapper, XOR obfuscation, energy reports, hourly history, component list,
   scheduled task lists, building the stream switch and the task commands). Replies on
@@ -129,8 +136,14 @@ German — that concerns the chat, not the files.
   image is `scratch` plus the binary and the CA bundle, built by cross-compiling (no
   emulation), user `65532`. The compose file uses `restart: on-failure:3`, **not**
   `unless-stopped`: it is the counterpart to `RestartPreventExitStatus=78` in the unit,
-  and an endless restart would repeat a rejected login for ever. `--block` listens on the
-  container's name (`--listen=ecoflowd:8089`), never on `0.0.0.0` and never via `ports:`
+  and an endless restart would repeat a rejected login for ever. `--listen` takes a
+  comma-separated list of concrete addresses (on a host: `172.17.0.1,<LAN address>`,
+  the LAN address fixed in the router), never `0.0.0.0`; in Docker it takes the
+  container's name (`--listen=ecoflowd:8089`); without `ports:` only
+  containers on the network reach it, which is enough for a caller of `--block`. For the
+  web page the port is published on one host address only
+  (`ports: ["192.168.1.10:8089:8089"]`, decided 10 Oct 2026) – `/block` is then on that
+  address too, behind token and TLS
 - `.github/workflows/` – `ci.yml` (gofmt, vet, build, test -race, govulncheck, and a
   `docker build`) and `release.yml` (tag on `main`?, vet, test and govulncheck again, then
   GoReleaser for seven platform archives; afterwards the image for four Linux platforms to
@@ -186,7 +199,7 @@ refuted. When catching up, the code counts, not the older prose.
     on 3 Oct 2026 after the fifth write test). It switches one scheduled task of type
     "Laden des Akkus" on and off. Its fence:
     - a flag of its own, triggered only over a local HTTPS endpoint with a token, never
-      over MQTT;
+      over MQTT, and never from the web page – the page shows the block read-only;
     - exactly two message kinds, both captured from the app: the empty task list request
       `96/127`, and `96/125` carrying the task **exactly as the device listed it**, with
       only field 4 (on/off) changed;
@@ -198,7 +211,8 @@ refuted. When catching up, the code counts, not the older prose.
     this rests on.
 
   A third write path, or widening either of these (creating tasks, writing times, the
-  community's `96/112`/`96/98`), would be a decision of its own, not an extension. Why
+  community's `96/112`/`96/98`, a block switch on the web page), would be a decision of
+  its own, not an extension. Why
   this is so strict: an attempt assembled from third-party sources was wrong in four
   places – on a topic through which the device can be reconfigured. And the fourth write
   test showed that a task with self-chosen times is stored but not executed.

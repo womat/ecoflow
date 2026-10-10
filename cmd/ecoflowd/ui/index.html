@@ -1,0 +1,696 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ecoflowd</title>
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%232563a8'/%3E%3Crect x='9' y='7' width='14' height='20' rx='3' fill='none' stroke='%23fff' stroke-width='2'/%3E%3Crect x='13' y='4.5' width='6' height='2.5' rx='1' fill='%23fff'/%3E%3Cpath d='M17.5 10 12 18h4l-1.5 6 6-8.5h-4z' fill='%23ff4a3d'/%3E%3C/svg%3E">
+<!--
+  Web page of ecoflowd, embedded in the binary and served at GET /.
+  It holds no data itself: it asks for the token once, keeps it in localStorage and polls /status
+  with it. Read-only on purpose - it shows the discharge block but cannot switch it. Self-contained:
+  no external fonts or scripts, the machine may have no internet access.
+-->
+<style>
+/* Layout: as smartmeter - header, then the chain ([block callers] -> ecoflowd -> cloud card with the
+   device as its row; the client left, the device right), then the device: the battery first (SoC,
+   direction, power), PV / house / grid, details and block. Tokens are smartmeter's. */
+:root {
+  --bg: #f3f5f7; --surface: #ffffff; --line: #dde2e8; --fg: #17202b; --muted: #5d6b7a;
+  --accent: #2563a8; --accent-soft: #e4edf8;
+  --ok: #1f7a4d; --ok-soft: #e3f3ea; --warn: #9a5b00; --warn-soft: #fbf0dc;
+  --crit: #b3261e; --crit-soft: #fbe6e4; --off-soft: #e8ecf1;
+  --import: #c2410c; --import-soft: #fbe9df; --export: #1f7a4d; --export-soft: #e3f3ea;
+  --pv: #b7791f; --battery: #2563a8; --soc: #7cc79a; --soc-full: #1f7a4d; --soc-low: #e0a800; --track: #e8ecf1;
+  --led: #22c55e; --led-glow: rgba(34, 197, 94, .55); --logo-red: #e8231a;
+  --font-ui: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-num: ui-monospace, "SF Mono", "Cascadia Mono", Menlo, Consolas, monospace;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #11161c; --surface: #19212a; --line: #2a3541; --fg: #e6ebf0; --muted: #93a1b0;
+    --accent: #6ea8e6; --accent-soft: #1b2a3b;
+    --ok: #5cc98f; --ok-soft: #173326; --warn: #e9b04c; --warn-soft: #36290f;
+    --crit: #f07a70; --crit-soft: #3d1c1a; --off-soft: #1d2630;
+    --import: #f2894f; --import-soft: #3a2316; --export: #5cc98f; --export-soft: #173326;
+    --pv: #e9b04c; --battery: #6ea8e6; --soc: #2f7a52; --soc-full: #4cc283; --soc-low: #e9b04c; --track: #232d38;
+    --led: #4ade80; --led-glow: rgba(74, 222, 128, .6); --logo-red: #ff4a3d;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #11161c; --surface: #19212a; --line: #2a3541; --fg: #e6ebf0; --muted: #93a1b0;
+  --accent: #6ea8e6; --accent-soft: #1b2a3b;
+  --ok: #5cc98f; --ok-soft: #173326; --warn: #e9b04c; --warn-soft: #36290f;
+  --crit: #f07a70; --crit-soft: #3d1c1a; --off-soft: #1d2630;
+  --import: #f2894f; --import-soft: #3a2316; --export: #5cc98f; --export-soft: #173326;
+  --pv: #e9b04c; --battery: #6ea8e6; --soc: #2f7a52; --soc-full: #4cc283; --soc-low: #e9b04c; --track: #232d38;
+  --led: #4ade80; --led-glow: rgba(74, 222, 128, .6); --logo-red: #ff4a3d;
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+body {
+  margin: 0; background: var(--bg); color: var(--fg); font-family: var(--font-ui);
+  font-size: 15px; line-height: 1.45; padding: 0 16px;
+}
+[hidden] { display: none !important; }
+.wrap { max-width: 1080px; margin: 0 auto; padding-block: 16px 40px; }
+.stack { display: flex; flex-direction: column; gap: 20px; }
+button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.num { font-family: var(--font-num); font-variant-numeric: tabular-nums; }
+.label { font-size: 11px; text-transform: uppercase; letter-spacing: .07em; color: var(--muted); }
+.ts { display: inline-block; width: .2em; }
+
+/* Header */
+header {
+  display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px 20px;
+  padding-bottom: 14px; border-bottom: 1px solid var(--line);
+}
+.brand { display: flex; align-items: center; gap: 12px; min-width: 0; }
+.brand .mark { width: 30px; height: 34px; color: var(--accent); flex: none; }
+.brand .mark .red { fill: var(--logo-red); }
+.brand .words { display: flex; flex-direction: column; line-height: 1.1; }
+.brand h1 { margin: 0; font-size: 22px; font-weight: 700; letter-spacing: -.01em; font-weight: 400; }
+.brand h1 b { color: var(--accent); font-weight: 600; }
+.brand .sub { font-size: 11px; text-transform: uppercase; letter-spacing: .09em; color: var(--muted); }
+.brand .device { min-width: 0; padding-left: 14px; margin-left: 2px; border-left: 1px solid var(--line); }
+.brand .host { font-size: 22px; font-weight: 400; letter-spacing: -.01em; overflow-wrap: anywhere; }
+.meta { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
+.pill {
+  display: inline-flex; align-items: center; gap: 6px; padding: 3px 10px; border-radius: 999px;
+  font-size: 12px; font-weight: 600; white-space: nowrap;
+}
+.pill::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+.pill.ok { color: var(--ok); background: var(--ok-soft); }
+.pill.crit { color: var(--crit); background: var(--crit-soft); }
+.pill.off { color: var(--muted); background: var(--off-soft); }
+.signout {
+  font: inherit; font-size: 12px; font-weight: 600; color: var(--muted); background: var(--surface);
+  border: 1px solid var(--line); border-radius: 6px; padding: 3px 10px; cursor: pointer;
+  display: inline-flex; align-items: center; gap: 6px;
+}
+.signout:hover { color: var(--fg); border-color: var(--muted); }
+.signout svg { width: 14px; height: 14px; }
+
+.banner {
+  display: flex; gap: 10px; align-items: center; padding: 10px 14px; border-radius: 8px;
+  background: var(--crit-soft); color: var(--crit); font-weight: 500;
+}
+.content.stale { opacity: .45; filter: grayscale(.8); }
+
+/* The hub, as in smartmeter */
+.node {
+  background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px;
+  min-width: 0; display: flex; flex-direction: column; gap: 2px;
+}
+.node h3 { margin: 0; font-size: 15px; font-weight: 600; }
+.node .addr { font-family: var(--font-num); font-size: 12px; color: var(--muted); }
+.node .addr span { white-space: nowrap; }
+.node.hub { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+.node.hub h3 { font-weight: 700; }
+.node.hub h3 b { color: var(--accent); font-weight: 700; }
+/* The chain: [block callers] - ecoflowd - cloud with the device. */
+.chain {
+  display: grid; align-items: stretch;
+  grid-template-columns: minmax(0, 1fr) 56px minmax(0, .75fr) 56px minmax(0, 1fr);
+}
+/* Listener group, as in modbusgateway: the listener as a header, its clients as rows */
+.group { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; min-width: 0; }
+.ghead { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; padding: 9px 12px; border-bottom: 1px solid var(--line); }
+.ghead .where { font-family: var(--font-num); font-size: 13px; font-weight: 600; }
+.ghead .set { font-size: 12px; color: var(--muted); }
+.ghead .extra { font-size: 12px; color: var(--muted); margin-left: auto; }
+.ghead .extra b { color: var(--fg); font-family: var(--font-num); }
+.kind { font-size: 10px; font-weight: 700; letter-spacing: .06em; padding: 1px 6px; border-radius: 4px; background: var(--off-soft); color: var(--muted); flex: none; white-space: nowrap; }
+.kind.rest { background: var(--accent-soft); color: var(--accent); }
+.kind.cloud { background: var(--ok-soft); color: var(--ok); }
+.crow .ip.dev { font-family: var(--font-ui); font-size: 14px; }
+.clients { display: flex; flex-direction: column; }
+.crow { display: grid; grid-template-columns: 12px minmax(0, 1fr) auto; gap: 2px 10px; align-items: center; padding: 7px 12px; }
+.crow .ip { font-family: var(--font-num); font-size: 13px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.crow .to { grid-column: 2 / 4; font-size: 12px; color: var(--muted); }
+.crow .to b { color: var(--fg); font-weight: 500; font-family: var(--font-num); }
+.crow .rate { font-size: 12px; color: var(--muted); white-space: nowrap; text-align: right; }
+.crow .rate b { color: var(--fg); font-family: var(--font-num); }
+.led { width: 9px; height: 9px; border-radius: 50%; background: var(--ok-soft); box-shadow: 0 0 0 1px var(--ok); transition: background .35s, box-shadow .35s; }
+.led.on { background: var(--led); box-shadow: 0 0 0 1px var(--ok), 0 0 8px 2px var(--led-glow); transition: none; }
+.chain.noclient { grid-template-columns: minmax(0, .75fr) 56px minmax(0, 1fr); }
+/* Same height for every box in the chain; the wires stay in the middle. */
+.chain > .node, .chain > .group { justify-content: center; }
+.chain > .link { height: auto; min-height: 46px; }
+.chain.noclient .client { display: none; }
+.link { position: relative; height: 46px; display: flex; flex-direction: column; justify-content: center; align-items: center; }
+.link .wire {
+  position: absolute; left: 0; right: 0; top: 50%; height: 2px; transform: translateY(-50%);
+  background: repeating-linear-gradient(90deg, currentColor 0 7px, transparent 7px 12px); color: var(--line);
+}
+.link.ok .wire { color: var(--ok); }
+.link.crit .wire { color: var(--crit); }
+.link .dot {
+  position: relative; width: 12px; height: 12px; border-radius: 50%; border: 2px solid var(--surface);
+  background: var(--muted); box-shadow: 0 0 0 1px var(--line);
+}
+.link.ok .dot { background: var(--ok-soft); box-shadow: 0 0 0 1px var(--ok); transition: background .3s, box-shadow .3s; }
+.link.ok .dot.on { background: var(--led); box-shadow: 0 0 0 1px var(--ok), 0 0 10px 3px var(--led-glow); transition: none; }
+.link.crit .dot { background: var(--crit); }
+.link .tag {
+  position: absolute; top: calc(50% + 9px); font-size: 11px; color: var(--muted); white-space: nowrap;
+  background: var(--bg); padding: 0 4px; border-radius: 3px;
+}
+@media (max-width: 760px) {
+  .chain, .chain.noclient { grid-template-columns: minmax(0, 1fr); }
+  .link { height: 44px; }
+  .link .wire {
+    left: 50%; right: auto; top: 0; bottom: 0; width: 2px; height: auto; transform: translateX(-50%);
+    background: repeating-linear-gradient(180deg, currentColor 0 7px, transparent 7px 12px);
+  }
+  .link .tag { top: 50%; left: calc(50% + 12px); transform: translateY(-50%); }
+}
+@media (prefers-reduced-motion: reduce) { .link.ok .dot.on { box-shadow: 0 0 0 1px var(--ok); } }
+
+/* Device section */
+.device-head { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 6px 16px; }
+.device-head h2 { margin: 0; font-size: 17px; font-weight: 400; }
+.device-head .units { font-size: 13px; color: var(--muted); }
+.panel { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 16px 18px; min-width: 0; }
+
+/* PV, house, grid */
+.three { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+@media (max-width: 640px) { .three:not(.tiles) { grid-template-columns: minmax(0, 1fr); } }
+
+.details { margin: 0; display: grid; grid-template-columns: auto 1fr; gap: 6px 12px; font-size: 13px; align-content: start; }
+.details dt { color: var(--muted); }
+.details dd { margin: 0; text-align: right; font-family: var(--font-num); font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.details dd.fresh { color: var(--ok); }
+/* Battery: SoC, a cell that fills, direction and power */
+.battery { display: flex; flex-direction: column; gap: 14px; }
+.bat-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.bat-main { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 18px 24px; }
+.soc-val .num { font-size: 52px; font-weight: 600; letter-spacing: -.03em; line-height: 1; }
+.soc-val .unit, .bat-power .unit { font-size: 20px; color: var(--muted); margin-left: 4px; }
+.cell { position: relative; height: 56px; border: 3px solid var(--fg); border-radius: 10px; padding: 4px; margin-right: 10px; }
+.cell::after { content: ""; position: absolute; right: -11px; top: 50%; width: 7px; height: 22px; transform: translateY(-50%); background: var(--fg); border-radius: 0 4px 4px 0; }
+.cell-fill { height: 100%; border-radius: 5px; background: var(--soc); transition: width .6s ease, background .3s; position: relative; overflow: hidden; }
+/* Stripes run the way the energy goes: right while charging, left while discharging. */
+.cell-fill::after { content: ""; position: absolute; inset: 0; opacity: 0;
+  background: repeating-linear-gradient(-45deg, rgba(255,255,255,.28) 0 10px, transparent 10px 20px); background-size: 28.28px 100%; }
+.charging .cell-fill::after { opacity: 1; animation: run 1s linear infinite; }
+.discharging .cell-fill::after { opacity: 1; animation: run 1s linear infinite reverse; }
+/* The colour is the charge level only: light green, dark green when full, yellow below 20 %.
+   The direction is told by the stripes and the pill. */
+.full .cell-fill { background: var(--soc-full); }
+.low .cell-fill { background: var(--soc-low); }
+@keyframes run { from { background-position: 0 0; } to { background-position: 28.28px 0; } }
+@media (prefers-reduced-motion: reduce) { .cell-fill::after { animation: none !important; } }
+.bat-power { display: flex; flex-direction: column; align-items: flex-end; }
+.bat-power .val { font-size: 32px; font-weight: 600; letter-spacing: -.02em; line-height: 1; }
+.bat-power .hint { font-size: 12px; color: var(--muted); margin-top: 4px; }
+.bat-today { display: flex; flex-wrap: wrap; gap: 6px 24px; font-size: 13px; color: var(--muted); padding-top: 12px; border-top: 1px solid var(--line); }
+.bat-today b { color: var(--fg); font-weight: 600; }
+.dir { font-size: 13px; font-weight: 700; text-transform: uppercase; letter-spacing: .08em; padding: 3px 10px; border-radius: 999px; }
+.dir.idle { color: var(--muted); background: var(--off-soft); }
+.dir.charge { color: var(--ok); background: var(--ok-soft); }
+.dir.discharge { color: var(--import); background: var(--import-soft); }
+.dir.full { color: var(--soc-full); background: var(--ok-soft); }
+/* Blocked is deliberate, not a fault: blue, not the amber of a warning. */
+.dir.blocked { color: var(--accent); background: var(--accent-soft); }
+.pill.held { color: var(--accent); background: var(--accent-soft); }
+.muted { color: var(--muted); }
+@media (max-width: 640px) {
+  .bat-main { grid-template-columns: auto minmax(0, 1fr); }
+  .bat-power { grid-column: 1 / -1; flex-direction: row; align-items: baseline; gap: 8px; }
+  .soc-val .num { font-size: 42px; }
+}
+
+/* PV, house, grid: one number each, today below */
+.tile { display: flex; flex-direction: column; gap: 6px; }
+.tval { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+.tval .num { font-size: 24px; font-weight: 600; letter-spacing: -.02em; }
+.tsub { font-size: 12.5px; color: var(--muted); }
+.tsub b { color: var(--fg); font-weight: 600; }
+.pill-s { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .08em; padding: 2px 8px; border-radius: 999px; }
+.pill-s.import { color: var(--import); background: var(--import-soft); }
+.pill-s.export { color: var(--export); background: var(--export-soft); }
+.pill-s.idle { color: var(--muted); background: var(--off-soft); }
+.short { display: none; }
+/* Phones: PV, house and grid stay side by side, smaller. */
+@media (max-width: 640px) {
+  .three.tiles { gap: 8px; }
+  .tile { padding: 10px 10px 12px; gap: 4px; }
+  .tval { flex-direction: column; align-items: flex-start; gap: 3px; }
+  .tval .num { font-size: 17px; }
+  .pill-s { font-size: 9.5px; padding: 1px 6px; }
+  .tsub { font-size: 11px; }
+  .long { display: none; }
+  .short { display: inline; }
+}
+.pair { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(320px, 100%), 1fr)); gap: 12px; }
+/* Block */
+.block-head { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 6px 16px; margin-bottom: 12px; }
+.block-head h3 { margin: 0; font-size: 15px; font-weight: 400; }
+.block-head .hint { font-size: 13px; color: var(--muted); }
+
+footer { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px; font-size: 13px; color: var(--muted); }
+
+/* Login, as in s0meter */
+.keybox {
+  max-width: 380px; margin: 40px auto; background: var(--surface); border: 1px solid var(--line);
+  border-radius: 10px; padding: 24px; display: flex; flex-direction: column; gap: 14px;
+}
+.keybox h2 { margin: 0; font-size: 18px; }
+.keybox p { margin: 0; font-size: 13px; color: var(--muted); }
+.keybox input {
+  font: inherit; font-family: var(--font-num); padding: 9px 11px; border-radius: 6px;
+  border: 1px solid var(--line); background: var(--bg); color: var(--fg); width: 100%;
+}
+.keybox button {
+  align-self: flex-end; font: inherit; font-weight: 600; color: var(--surface); background: var(--accent);
+  border: none; border-radius: 6px; padding: 8px 18px; cursor: pointer;
+}
+
+.keybox p.err { color: var(--crit); }
+.empty-row { padding: 9px 12px; font-size: 12.5px; color: var(--muted); }
+.details dd.crit { color: var(--crit); }
+.link.idle .wire { color: var(--muted); opacity: .6; }
+.led.off { background: var(--track); box-shadow: 0 0 0 1px var(--line); }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <section id="login" hidden>
+    <form class="keybox" id="keyform">
+      <h2>ecoflowd</h2>
+      <p id="keyerr" class="err" hidden>The token was rejected. It is ECOFLOWD_HTTP_TOKEN of this instance.</p>
+      <label for="token" class="label">Token</label>
+      <input id="token" type="password" autocomplete="current-password" placeholder="ECOFLOWD_HTTP_TOKEN" required>
+      <p>Stored in this browser only and sent as Authorization: Bearer.</p>
+      <button type="submit">Connect</button>
+    </form>
+  </section>
+
+  <section id="main" hidden>
+    <div class="stack">
+      <header>
+        <div class="brand">
+          <!-- The storage as a line icon: battery housing with terminal, the bolt in red. -->
+          <svg class="mark" viewBox="0 0 30 34" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <rect x="11" y="1.5" width="8" height="3" rx="1" stroke-width="1.8"/>
+            <rect x="4" y="4.5" width="22" height="28" rx="4"/>
+            <path class="red" d="M17 9.5 10 20h5l-2 7.5 7.5-10.5h-5z" stroke="none"/>
+          </svg>
+          <div class="words"><h1>eco<b>flowd</b></h1><span class="sub">EcoFlow PowerOcean to MQTT</span></div>
+          <div class="words device"><span class="host" id="host">–</span><span class="sub">host</span></div>
+        </div>
+        <div class="meta">
+          <span class="pill off" id="cloudpill">Cloud …</span>
+          <span class="pill off" id="mqttpill">MQTT …</span>
+          <button type="button" class="signout" id="signout">
+            <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 2.5H3.5a1 1 0 0 0-1 1v9a1 1 0 0 0 1 1H6"/><path d="M10.5 11 13.5 8l-3-3"/><path d="M13.5 8H6"/></svg>Sign out
+          </button>
+        </div>
+      </header>
+
+      <div id="banner" class="banner" role="alert" hidden><span aria-hidden="true">⚠</span><span id="bannertext"></span></div>
+
+      <div id="content" class="stack content">
+        <!-- The request runs left to right: whoever asks for the block, then ecoflowd, which is
+             the client of the EcoFlow cloud, which relays to the device. The local broker gets
+             no tile, only the MQTT pill in the header, as in s0meter and tadl. -->
+        <div class="chain noclient" id="chain">
+          <!-- The listener as a header, its callers as rows, as in modbusgateway. -->
+          <div class="group client">
+            <div class="ghead"><span class="kind rest">REST</span><span class="where num" id="listen">–</span><span class="set">· HTTPS</span>
+              <span class="extra" id="ncallers"></span></div>
+            <div class="clients" id="callers"></div>
+          </div>
+          <div class="link idle client" id="linkBlock" title="Requests to /block; the LED flashes per request"><span class="wire"></span><span class="dot"></span></div>
+          <div class="node hub"><span class="label">Serves as</span><h3>eco<b>flowd</b></h3><span class="addr" id="serves"></span></div>
+          <div class="link idle" id="linkCloud" title="Logged in and subscribed; the LED flashes per report"><span class="wire"></span><span class="dot" id="ledLink"></span></div>
+          <!-- The cloud as a listener-style card, mirroring the REST card: the cloud is the
+               header, the device behind it a row. -->
+          <div class="group">
+            <div class="ghead"><span class="kind cloud">CLOUD</span><span class="where" id="cloudserver" title="app MQTT">–</span>
+              <span class="extra"><b>1</b> device</span></div>
+            <div class="clients">
+              <div class="crow">
+                <span class="led off" id="ledDevice"></span>
+                <span class="ip dev">PowerOcean DC Fit</span><span class="rate" id="devrate"></span>
+                <span class="to" id="devinfo"></span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="device-head">
+          <h2>PowerOcean DC Fit</h2>
+          <span class="units">measured <span class="num" id="measured">–</span></span>
+        </div>
+
+        <!-- The battery first: how full it is and which way the energy goes. -->
+        <div class="panel battery" id="battery">
+          <div class="bat-head">
+            <span class="label">Battery</span>
+            <span class="dir idle" id="batDir">–</span>
+          </div>
+          <div class="bat-main">
+            <div class="soc-val"><span class="num" id="soc">–</span><span class="unit">%</span></div>
+            <div class="cell" aria-hidden="true"><div class="cell-fill" id="cellFill" style="width:0"></div></div>
+            <div class="bat-power">
+              <span class="num val" id="batW">–</span>
+              <span class="hint" id="batHint"></span>
+            </div>
+          </div>
+          <div class="bat-today">
+            <span>Charged today <b class="num" id="batIn">–</b></span>
+            <span>Discharged today <b class="num" id="batOut">–</b></span>
+          </div>
+        </div>
+
+        <div class="three tiles">
+          <div class="panel tile">
+            <span class="label">PV</span>
+            <span class="tval"><span class="num" id="pv">–</span></span>
+            <span class="tsub today"><b class="num" id="pvDay">–</b><span class="long"> today</span></span>
+          </div>
+          <div class="panel tile">
+            <span class="label">House</span>
+            <span class="tval"><span class="num" id="house">–</span></span>
+            <span class="tsub today"><b class="num" id="houseDay">–</b><span class="long"> today</span></span>
+          </div>
+          <div class="panel tile">
+            <span class="label">Grid</span>
+            <span class="tval"><span class="num" id="grid">–</span><span class="pill-s idle" id="gridDir">–</span></span>
+            <span class="tsub today"><span class="long">import <b class="num" id="gridIn">–</b> · export <b class="num" id="gridOut">–</b> today</span><span class="short">↓ <b class="num" id="gridInS">–</b> ↑ <b class="num" id="gridOutS">–</b></span></span>
+          </div>
+        </div>
+
+        <div class="pair">
+          <dl class="panel details">
+            <dt>Cloud channel</dt><dd id="dCloud">–</dd>
+            <dt>Fast stream</dt><dd id="dFast">–</dd>
+            <dt>Last reading</dt><dd id="dReading">–</dd>
+            <dt>Day's totals</dt><dd id="dTotals">–</dd>
+          </dl>
+          <div class="panel" id="blockCard" hidden>
+            <div class="block-head"><h3>Discharge block</h3></div>
+            <dl class="details" id="blockDl"></dl>
+          </div>
+        </div>
+      </div>
+
+      <footer>
+        <span>Updated <span class="num" id="updated">–</span> · refreshes every 3 s</span>
+        <span>up <span class="num" id="uptime">–</span> · <span class="num" id="version">–</span></span>
+      </footer>
+    </div>
+  </section>
+</div>
+
+<script>
+"use strict";
+const POLL_MS = 3000;
+const KEY = "ecoflowd.token";
+const LOW = 20;   // % below which the cell turns yellow: the battery is nearly empty
+const STILL = 20; // W within which battery and grid count as idle
+const $ = id => document.getElementById(id);
+
+let token = load();
+let timer = null;
+let lastOk = null;      // time of the last successful poll, for the stale banner
+let seen = {};          // what the LEDs last flashed for
+
+function load() { try { return localStorage.getItem(KEY) || ""; } catch { return ""; } }
+function store(v) { try { v ? localStorage.setItem(KEY, v) : localStorage.removeItem(KEY); } catch {} }
+
+function esc(s) {
+  return String(s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
+}
+const hms = d => d.toTimeString().slice(0, 8);
+const hm = d => d.toTimeString().slice(0, 5);
+const time = iso => iso ? hms(new Date(iso)) : "–";
+
+// 1m, 3h 12m, 2d 4h: the two largest units, as on the sibling pages.
+function uptime(sec) {
+  const d = Math.floor(sec / 86400), h = Math.floor(sec % 86400 / 3600), m = Math.floor(sec % 3600 / 60);
+  if (d) return `${d}d ${h}h`;
+  if (h) return `${h}h ${m}m`;
+  return `${m}m`;
+}
+// How long ago: 4 s ago, 3 min ago, 2 h ago.
+function ago(iso) {
+  if (!iso) return "never";
+  const s = Math.max(0, (Date.now() - Date.parse(iso)) / 1000);
+  if (s < 90) return `${Math.round(s)} s ago`;
+  if (s < 5400) return `${Math.round(s / 60)} min ago`;
+  return `${Math.round(s / 3600)} h ago`;
+}
+
+// Whole watts with a narrow thousands gap; the sign is shown in words elsewhere.
+const group = n => String(Math.round(Math.abs(n))).replace(/\B(?=(\d{3})+(?!\d))/g, '<span class="ts"></span>');
+const W = w => group(w) + " W";
+const kWh = wh => wh == null ? "–" : (wh / 1000).toFixed(1) + " kWh";
+const kWhBare = wh => wh == null ? "–" : (wh / 1000).toFixed(1);
+
+function flash(el) {
+  el.classList.add("on");
+  setTimeout(() => el.classList.remove("on"), 180);
+}
+// Flash once per new value of key - a new report, a new request.
+function flashOnChange(key, value, ...els) {
+  if (value && seen[key] && seen[key] !== value) els.forEach(flash);
+  seen[key] = value;
+}
+
+function render(v) {
+  $("host").textContent = v.host || "–";
+  $("version").textContent = v.version;
+  $("uptime").textContent = uptime(v.uptimeSeconds);
+  document.title = `ecoflowd · ${v.host || v.sn}`;
+
+  renderPills(v);
+  renderChain(v);
+  renderBattery(v);
+  renderTiles(v);
+  renderDetails(v);
+  renderBlock(v);
+}
+
+function renderPills(v) {
+  const c = v.cloud, m = v.mqtt;
+  const cp = $("cloudpill");
+  cp.className = "pill " + (c.connected ? "ok" : "crit");
+  cp.textContent = c.connected ? "Cloud connected" : "Cloud disconnected";
+  cp.title = c.connected ? `EcoFlow cloud ${c.server} · ${c.fast ? "fast stream on" : "minute reports"}`
+    : c.since ? `since ${time(c.since)}` : "not connected yet";
+
+  const mp = $("mqttpill");
+  const st = !m.configured ? ["off", "MQTT not configured"] : m.connected ? ["ok", "MQTT connected"] : ["crit", "MQTT disconnected"];
+  mp.className = "pill " + st[0];
+  mp.textContent = st[1];
+  mp.title = m.configured ? `${m.broker} · topic ${m.topic}` : "no --broker given";
+}
+
+function renderChain(v) {
+  const c = v.cloud, m = v.mqtt;
+  $("chain").classList.toggle("noclient", !v.block);
+
+  if (v.block) {
+    // The port, as on the sibling pages; the addresses behind it in the tooltip.
+    const listen = v.listen || [];
+    $("listen").textContent = listen.length ? listen[0].replace(/^.*:/, ":") : "–";
+    $("listen").title = "bound to " + listen.join(", ");
+    const list = v.callers || [];
+    $("ncallers").innerHTML = `<b>${list.length}</b> client${list.length === 1 ? "" : "s"}`;
+    $("callers").innerHTML = list.length ? list.map(k => {
+      const pct = k.perHour ? Math.round(k.errors * 100 / k.perHour) : 0;
+      return `<div class="crow">
+        <span class="led" data-caller="${esc(k.address)}"></span>
+        <span class="ip">${esc(k.address)}</span><span class="rate"><b>${k.perHour}</b>/h · err <b>${pct} %</b> · ${ago(k.lastSeen)}</span>
+        <span class="to">→ <b>${esc(k.last)}</b></span>
+      </div>`;
+    }).join("") : `<div class="empty-row">No request to /block in the last hour.</div>`;
+    for (const k of list) {
+      const led = document.querySelector(`[data-caller="${CSS.escape(k.address)}"]`);
+      flashOnChange("caller:" + k.address, k.lastSeen, led, $("linkBlock").querySelector(".dot"));
+    }
+    $("linkBlock").className = "link client " + (list.length ? "ok" : "idle");
+  }
+
+  $("serves").innerHTML = m.configured
+    ? `<span>MQTT ${esc(m.topic)}/</span> <span>· ${m.telegramsPerMinute}/min</span>`
+    : `<span>MQTT not configured</span>`;
+
+  $("linkCloud").className = "link " + (c.connected ? "ok" : "crit");
+  $("cloudserver").textContent = c.server ? c.server.replace(/:\d+$/, "") : "–";
+  $("cloudserver").title = c.server ? `app MQTT · ${c.server}` : "not connected";
+  $("ledDevice").className = "led" + (c.reportsPerMinute ? "" : " off");
+  $("devrate").innerHTML = `<b>${c.reportsPerMinute}</b>/min · ${ago(c.lastReport)}`;
+  $("devinfo").innerHTML = `SN <b>${esc(v.sn)}</b> · ${c.fast ? "fast stream on" : "minute reports"}`;
+  flashOnChange("report", c.lastReport, $("ledDevice"), $("ledLink"));
+}
+
+// What the battery does. A block holds it: enabled and inside its window, the
+// battery does not discharge - unless the sun charges it, which a block allows.
+function batteryState(s, block) {
+  const b = s.battery;
+  const held = block && block.enabled && block.running;
+  if (held && b <= STILL) return "blocked";
+  if (s.soc >= 100 && Math.abs(b) < STILL) return "full";
+  if (b > STILL) return "charging";
+  if (b < -STILL) return "discharging";
+  return "idle";
+}
+
+function renderBattery(v) {
+  const s = v.state;
+  if (!s) {
+    $("measured").textContent = "–";
+    return;
+  }
+  $("measured").textContent = time(s.timestamp);
+  const state = batteryState(s, v.block);
+  const pill = { charging: ["charge", "Charging"], discharging: ["discharge", "Discharging"], full: ["full", "Full"],
+    idle: ["idle", "Idle"], blocked: ["blocked", "Discharge blocked"] }[state];
+  $("battery").className = "panel battery " + state + (s.soc < LOW ? " low" : "");
+  $("batDir").className = "dir " + pill[0];
+  $("batDir").textContent = pill[1];
+  $("soc").textContent = s.soc;
+  $("cellFill").style.width = Math.min(100, s.soc) + "%";
+  const b = s.battery;
+  $("batW").innerHTML = (b > STILL ? "+" : b < -STILL ? "−" : "") + group(b) + '<span class="unit">W</span>';
+
+  let hint = { charging: "into the battery", discharging: "out of the battery" }[state] || "no flow";
+  if (state === "blocked") {
+    const until = v.block.requested && v.block.until ? `held until ${hm(new Date(v.block.until))}` : "held by the task";
+    hint = until + (s.grid < -STILL ? " · house runs on the grid" : "");
+  }
+  $("batHint").textContent = hint;
+
+  const e = v.energy;
+  $("batIn").textContent = kWh(e && e.batteryIn);
+  $("batOut").textContent = kWh(e && e.batteryOut);
+}
+
+function renderTiles(v) {
+  const s = v.state, e = v.energy;
+  if (s) {
+    $("pv").innerHTML = W(s.pv);
+    // The device reports the house negative while it consumes.
+    $("house").innerHTML = W(Math.abs(s.house));
+    $("grid").innerHTML = W(s.grid);
+    // The device's own sign: positive grid is export.
+    const g = Math.abs(s.grid) < STILL ? ["idle", "Balanced"] : s.grid > 0 ? ["export", "Export"] : ["import", "Import"];
+    $("gridDir").className = "pill-s " + g[0];
+    $("gridDir").textContent = g[1];
+  }
+  $("pvDay").textContent = kWh(e && e.pv);
+  $("houseDay").textContent = kWh(e && e.house);
+  $("gridIn").textContent = kWhBare(e && e.gridIn);
+  $("gridOut").textContent = kWh(e && e.gridOut);
+  $("gridInS").textContent = kWhBare(e && e.gridIn);
+  $("gridOutS").textContent = kWh(e && e.gridOut);
+  const title = e ? `UTC day, as of ${time(e.timestamp)}, from the device's hourly history` : "no hourly history yet";
+  document.querySelectorAll(".today").forEach(el => el.title = title);
+}
+
+function renderDetails(v) {
+  const c = v.cloud;
+  $("dCloud").textContent = c.connected ? `connected since ${time(c.since)}`
+    : c.since ? `disconnected since ${time(c.since)}` : "connecting …";
+  $("dCloud").className = c.connected ? "fresh" : "crit";
+  $("dFast").textContent = c.fast ? `on · renewed every ${c.switchEverySeconds} s` : "off · minute reports";
+  $("dReading").textContent = v.state ? `${time(v.state.timestamp)} · ${ago(v.state.timestamp)}` : "none yet";
+  $("dTotals").textContent = v.energy ? `as of ${time(v.energy.timestamp)}` : "none yet";
+}
+
+// The block card: what GET /block returns, in words. Read-only on purpose.
+function renderBlock(v) {
+  const b = v.block;
+  $("blockCard").hidden = !b;
+  if (!b) return;
+  const rows = [`<dt>State</dt><dd>${b.enabled ? '<span class="pill held">on</span>' : '<span class="pill off">off</span>'}</dd>`];
+  if (b.requested) {
+    const renewed = b.renewedAt ? ` <span class="muted">· renewed ${hm(new Date(b.renewedAt))} by ${esc(b.renewedBy)}</span>` : "";
+    rows.push(`<dt>Until</dt><dd>${b.until ? hm(new Date(b.until)) : "–"}${renewed}</dd>`);
+  }
+  if (b.task) {
+    rows.push(`<dt>Task</dt><dd>#${b.task} Laden des Akkus · ${esc(b.window || "?")}${b.running ? " · <b>running</b>" : ""}</dd>`);
+  }
+  if (b.problem) rows.push(`<dt>Problem</dt><dd class="crit">${esc(b.problem)}</dd>`);
+  $("blockDl").innerHTML = rows.join("");
+}
+
+// ---- Polling -----------------------------------------------------------------------------
+async function poll() {
+  let res;
+  try {
+    res = await fetch("status", { headers: { Authorization: "Bearer " + token }, cache: "no-store" });
+  } catch {
+    return stale();
+  }
+  if (res.status === 401) return showLogin(true);
+  if (!res.ok) return stale();
+  const v = await res.json();
+  lastOk = new Date();
+  $("banner").hidden = true;
+  $("content").classList.remove("stale");
+  $("updated").textContent = hms(lastOk);
+  render(v);
+}
+
+function stale() {
+  $("banner").hidden = false;
+  $("bannertext").textContent = lastOk
+    ? `No answer from ecoflowd since ${hms(lastOk)}. The values are stale.`
+    : "No answer from ecoflowd.";
+  $("content").classList.add("stale");
+}
+
+function start() {
+  stop();
+  poll();
+  timer = setInterval(poll, POLL_MS);
+}
+function stop() {
+  if (timer) clearInterval(timer);
+  timer = null;
+}
+
+function showLogin(rejected) {
+  stop();
+  $("main").hidden = true;
+  $("login").hidden = false;
+  $("keyerr").hidden = !rejected;
+  $("token").focus();
+}
+
+$("keyform").addEventListener("submit", e => {
+  e.preventDefault();
+  token = $("token").value.trim();
+  store(token);
+  $("token").value = "";
+  $("login").hidden = true;
+  $("main").hidden = false;
+  start();
+});
+$("signout").addEventListener("click", () => {
+  token = "";
+  store("");
+  showLogin(false);
+});
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden) stop();
+  else if (token && $("login").hidden) start();
+});
+
+if (token) {
+  $("main").hidden = false;
+  start();
+} else {
+  showLogin(false);
+}
+</script>
+</body>
+</html>

@@ -57,6 +57,7 @@ type publisher struct {
 	client broker
 	prefix string
 	serial string
+	url    string // the broker as given, for the web page
 	stderr io.Writer
 }
 
@@ -109,6 +110,7 @@ func newPublisher(cfg *config, stderr io.Writer) (*publisher, error) {
 	p := &publisher{
 		prefix: strings.Trim(cfg.topic, "/"),
 		serial: cfg.serial,
+		url:    broker,
 		stderr: stderr,
 	}
 
@@ -231,6 +233,15 @@ func (p *publisher) send(leaf string, v any) {
 // block publishes the state of the discharge block.
 func (p *publisher) block(s blockState) {
 	p.send(leafBlock, s)
+}
+
+// connected says whether the broker connection stands, for the web page. A
+// client that cannot tell - the fake in the tests - counts as connected.
+func (p *publisher) connected() bool {
+	if c, ok := p.client.(interface{ IsConnected() bool }); ok {
+		return c.IsConnected()
+	}
+	return true
 }
 
 // close hangs up.

@@ -34,15 +34,23 @@ func serve(ctx context.Context, cfg *config, stdout, stderr io.Writer) int {
 		out = p
 	}
 
-	// The block lives as long as the process, not as one connection: a
-	// request has to outlast a reconnect to the cloud.
+	// The block and what the page shows live as long as the process, not as
+	// one connection: a request has to outlast a reconnect to the cloud, and
+	// the page has to be able to say since when the cloud is gone.
 	var block *blocker
 	if cfg.block {
 		block = newBlocker(cfg, stderr)
 		if out != nil {
 			block.publish = out.block
 		}
-		if _, err := startHTTPS(ctx, cfg, block, stderr); err != nil {
+	}
+	var st *status
+	if len(cfg.listen) > 0 {
+		st = newStatus(cfg)
+		if out != nil {
+			st.mqtt, st.broker = out.connected, brokerHost(out.url)
+		}
+		if _, err := startHTTPS(ctx, cfg, st, block, stderr); err != nil {
 			fmt.Fprintln(stderr, "error:", err)
 			return exitUsage
 		}
@@ -56,7 +64,7 @@ func serve(ctx context.Context, cfg *config, stdout, stderr io.Writer) int {
 	wait := backoffStart
 
 	for {
-		connected, err := session(ctx, cfg, &s, out, block, stdout, stderr)
+		connected, err := session(ctx, cfg, &s, out, block, st, stdout, stderr)
 
 		// A connection that actually stood is not something to back off from.
 		// Without this the wait only ever grows: a service that reconnects
@@ -100,7 +108,7 @@ func serve(ctx context.Context, cfg *config, stdout, stderr io.Writer) int {
 // the subscription ever stood, which is what tells a failed attempt apart from
 // a connection that worked and later dropped.
 func session(ctx context.Context, cfg *config, s *ecoflow.Session,
-	out *publisher, block *blocker, stdout, stderr io.Writer) (bool, error) {
+	out *publisher, block *blocker, st *status, stdout, stderr io.Writer) (bool, error) {
 
 	client := &ecoflow.Client{Host: cfg.host}
 
@@ -127,13 +135,13 @@ func session(ctx context.Context, cfg *config, s *ecoflow.Session,
 	}
 
 	topics := ecoflow.TopicsFor(s.UserID, cfg.serial)
-	return listen(ctx, cfg, out, block, broker, *s, topics, stdout, stderr)
+	return listen(ctx, cfg, out, block, st, broker, *s, topics, stdout, stderr)
 }
 
 // listen subscribes and reports what arrives, until the connection or the
 // context ends.
-func listen(ctx context.Context, cfg *config, out *publisher, block *blocker, broker ecoflow.Broker,
-	s ecoflow.Session, topics ecoflow.Topics, stdout, stderr io.Writer) (bool, error) {
+func listen(ctx context.Context, cfg *config, out *publisher, block *blocker, st *status,
+	broker ecoflow.Broker, s ecoflow.Session, topics ecoflow.Topics, stdout, stderr io.Writer) (bool, error) {
 
 	id, err := ecoflow.ClientID(s.UserID)
 	if err != nil {
@@ -198,6 +206,8 @@ func listen(ctx context.Context, cfg *config, out *publisher, block *blocker, br
 	}
 	fmt.Fprintf(stderr, "connected to %s, subscribed to %d topics\n",
 		broker.Address(), len(subscribe))
+	st.cloudUp(broker.Address())
+	defer st.cloudDown()
 
 	if block != nil {
 		block.connected(func(frame []byte) error {
@@ -261,12 +271,18 @@ func listen(ctx context.Context, cfg *config, out *publisher, block *blocker, br
 			}
 
 			if part, ok := f.Hourly(); ok {
-				if parts, complete := day.add(part); complete && out != nil {
-					out.totals(parts)
+				if parts, complete := day.add(part); complete {
+					st.totals(parts)
+					if out != nil {
+						out.totals(parts)
+					}
 				}
 				continue
 			}
 
+			if _, ok := f.Energy(); ok {
+				st.report()
+			}
 			line, e, ok := seen.add(f)
 			if !ok {
 				continue
@@ -277,6 +293,7 @@ func listen(ctx context.Context, cfg *config, out *publisher, block *blocker, br
 			if out != nil {
 				out.energy(e)
 			}
+			st.reading(e, out != nil)
 		}
 	}
 }
