@@ -61,8 +61,8 @@ python3 scripts/ecoflow-frames.py < internal/frames/testdata/fast.txt \
 
 ## Branches & releases
 
-One permanent branch: **`main`**. Work happens in short-lived feature branches that go to
-`main` via PR — CI (`gofmt`, `vet`, `build`, `test -race`, `golangci-lint`, `govulncheck`, `docker build`) has to be green. No `develop`:
+One permanent branch: **`main`**. Work is committed to
+`main` directly; CI (`gofmt`, `vet`, `build`, `test -race`, `golangci-lint`, `govulncheck`, `docker build`) runs on every push and has to be green before a release. A short-lived branch with a PR only when someone should review the change first. No `develop`:
 `go install …@latest` resolves to the newest semver tag, not to a branch, so a second
 permanent branch would only create a merge ritual with nothing in return.
 
