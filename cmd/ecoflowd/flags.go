@@ -50,7 +50,7 @@ type config struct {
 	verbose      bool
 
 	block          bool
-	listen         string
+	listen         []string
 	tlsCertificate tls.Certificate
 	httpToken      string
 	blockTTL       time.Duration
@@ -92,7 +92,7 @@ func newFlagSet(o *options, stderr io.Writer) *flag.FlagSet {
 	fs.BoolVar(&o.block, "block", false,
 		"switch the discharge block task on request - this publishes, see the note below")
 	fs.StringVar(&o.listen, "listen", "",
-		"address for the HTTPS endpoint of --block, e.g. 172.17.0.1 (port 8089 if none is given)")
+		"addresses for the web page and the --block endpoint, comma-separated, e.g. 172.17.0.1,192.168.1.10 (port 8089 if none is given)")
 	fs.StringVar(&o.tlsCert, "tls-cert", "", "certificate file for --listen")
 	fs.StringVar(&o.tlsKey, "tls-key", "", "private key file for --listen")
 	fs.DurationVar(&o.blockTTL, "block-ttl", defaultBlockTTL,
@@ -132,8 +132,9 @@ credentials, from the environment and never from flags:
   ECOFLOW_HOST         API host, overridden by --host
   MQTT_PASSWORD        password for the local broker, if it wants one. A flag
                        would put it in the process list for anyone to read.
-  ECOFLOWD_HTTP_TOKEN  the token every request to the --block endpoint has to
-                       carry as "Authorization: Bearer <token>"; at least 16
+  ECOFLOWD_HTTP_TOKEN  with --listen: the token the web page asks for and every
+                       request to /status and /block has to carry as
+                       "Authorization: Bearer <token>"; at least 16
                        characters, e.g. from "openssl rand -hex 32".
 
 options:
@@ -159,6 +160,20 @@ note on --fast:
   Ten seconds was measured to be too slow - the device falls back to its minute
   cadence - so three is the default, which is what the app itself uses.
 
+note on --listen:
+  Starts an HTTPS server with a web page: the battery's state of charge and
+  which way it goes, PV, house and grid, the day's energy, and how the
+  connections stand. The page is read-only - it shows the discharge block but
+  cannot switch it. It holds no data itself and asks for the token once; the
+  data comes from GET /status, which needs the token.
+
+  It listens on the addresses given, comma-separated, never on every
+  interface: 0.0.0.0 is refused. For the page that is the machine's LAN
+  address - one the router always hands out the same - and next to it, for a
+  caller of --block in a container, the Docker bridge, e.g.
+  --listen 172.17.0.1,192.168.1.10. The certificate has to name every one. TLS 1.3 only; under systemd, pass certificate
+  and key with LoadCredential=, see contrib/ecoflowd@.service.
+
 note on --block:
   The discharge block. In the app, set up exactly one scheduled task of type
   "Laden des Akkus" (charge battery); its window and repetition decide when a
@@ -167,7 +182,8 @@ note on --block:
   Measured: about 25 s after the task is enabled the battery stops
   discharging, and within a good minute of disabling it, it supplies again.
 
-  The request comes over HTTPS on --listen, never over MQTT:
+  The request comes over HTTPS on --listen, never over MQTT - the same
+  server as the web page:
     PUT    /block   switch on, or renew; holds for --block-ttl
     DELETE /block   switch off now
     GET    /block   the state, as JSON
@@ -184,10 +200,9 @@ note on --block:
   listed it with only its on/off field changed. Nothing is created, deleted or
   moved. The state also goes to <topic>/block on the local broker.
 
-  The endpoint speaks TLS 1.3 only. The certificate has to name the address
-  given with --listen; under systemd, pass certificate and key with
-  LoadCredential=, see contrib/ecoflowd@.service. Bind it to the Docker bridge
-  or localhost, not to the LAN - an address is required for that reason.
+  For the caller alone, bind --listen to the Docker bridge or localhost. On a
+  LAN address as well, for the page, /block is reachable there too -
+  protected by the token and TLS.
 
 exit status:
   0  stopped on a signal
@@ -200,8 +215,10 @@ examples:
   ecoflowd --sn HC31XXXXXXXXXXXX --stdout
   ecoflowd --sn HC31XXXXXXXXXXXX --stdout --fast
   ecoflowd --sn HC31XXXXXXXXXXXX --broker tcp://127.0.0.1:1883
+  ecoflowd --sn HC31XXXXXXXXXXXX --broker tcp://127.0.0.1:1883 \
+           --listen 192.168.1.10 --tls-cert tls.crt --tls-key tls.key
   ecoflowd --sn HC31XXXXXXXXXXXX --broker tcp://127.0.0.1:1883 --block \
-           --listen 172.17.0.1:8089 --tls-cert tls.crt --tls-key tls.key
+           --listen 172.17.0.1,192.168.1.10 --tls-cert tls.crt --tls-key tls.key
 `)
 	}
 
@@ -279,46 +296,63 @@ func buildConfig(o *options, fs *flag.FlagSet) (*config, error) {
 	if c.fast && c.switchEvery < time.Second {
 		return nil, fmt.Errorf("--switch-every %s is too short; the app uses 3s", c.switchEvery)
 	}
-	if err := blockConfig(c, o, fs); err != nil {
+	if err := httpConfig(c, o, fs); err != nil {
 		return nil, err
 	}
 
 	return c, nil
 }
 
-// blockConfig checks the --block flags. Flags that belong to it are an error
-// without it: an endpoint that silently does not exist sends people debugging
-// the network.
-func blockConfig(c *config, o *options, fs *flag.FlagSet) error {
-	if !o.block {
-		var stray []string
+// httpConfig checks the HTTPS flags. --listen starts the server with the web
+// page; --block adds its endpoint to it and needs it. Flags that belong to
+// either are an error without it: an endpoint that silently does not exist
+// sends people debugging the network.
+func httpConfig(c *config, o *options, fs *flag.FlagSet) error {
+	visited := func(names ...string) []string {
+		var got []string
 		if fs != nil {
 			fs.Visit(func(f *flag.Flag) {
-				switch f.Name {
-				case "listen", "tls-cert", "tls-key", "block-ttl", "block-task":
-					stray = append(stray, "--"+f.Name)
+				for _, n := range names {
+					if f.Name == n {
+						got = append(got, "--"+f.Name)
+					}
 				}
 			})
 		}
-		if len(stray) > 0 {
+		return got
+	}
+
+	if !o.block {
+		if stray := visited("block-ttl", "block-task"); len(stray) > 0 {
 			return fmt.Errorf("%s only work together with --block", strings.Join(stray, ", "))
+		}
+	}
+	if strings.TrimSpace(o.listen) == "" {
+		if o.block {
+			return errors.New("--block needs --listen, e.g. 172.17.0.1 for the Docker bridge or 127.0.0.1")
+		}
+		if stray := visited("tls-cert", "tls-key"); len(stray) > 0 {
+			return fmt.Errorf("%s only work together with --listen", strings.Join(stray, ", "))
 		}
 		return nil
 	}
 
-	c.block, c.blockTTL, c.blockTask = true, o.blockTTL, o.blockTask
-	if c.blockTTL < minBlockTTL || c.blockTTL > maxBlockTTL {
-		return fmt.Errorf("--block-ttl %s is outside %s to %s", c.blockTTL, minBlockTTL, maxBlockTTL)
+	for _, s := range strings.Split(o.listen, ",") {
+		if strings.TrimSpace(s) == "" {
+			continue
+		}
+		listen, err := listenAddress(s)
+		if err != nil {
+			return err
+		}
+		c.listen = append(c.listen, listen)
 	}
-
-	listen, err := listenAddress(o.listen)
-	if err != nil {
-		return err
+	if len(c.listen) == 0 {
+		return fmt.Errorf("--listen %q names no address", o.listen)
 	}
-	c.listen = listen
 
 	if o.tlsCert == "" || o.tlsKey == "" {
-		return errors.New("--block needs --tls-cert and --tls-key; the endpoint speaks HTTPS only")
+		return errors.New("--listen needs --tls-cert and --tls-key; the endpoint speaks HTTPS only")
 	}
 	cert, err := tls.LoadX509KeyPair(o.tlsCert, o.tlsKey)
 	if err != nil {
@@ -330,20 +364,26 @@ func blockConfig(c *config, o *options, fs *flag.FlagSet) error {
 	// in the process list.
 	c.httpToken = os.Getenv("ECOFLOWD_HTTP_TOKEN")
 	if len(c.httpToken) < minTokenLength {
-		return fmt.Errorf("--block needs ECOFLOWD_HTTP_TOKEN of at least %d characters; see --help",
+		return fmt.Errorf("--listen needs ECOFLOWD_HTTP_TOKEN of at least %d characters; see --help",
 			minTokenLength)
+	}
+
+	if o.block {
+		c.block, c.blockTTL, c.blockTask = true, o.blockTTL, o.blockTask
+		if c.blockTTL < minBlockTTL || c.blockTTL > maxBlockTTL {
+			return fmt.Errorf("--block-ttl %s is outside %s to %s", c.blockTTL, minBlockTTL, maxBlockTTL)
+		}
 	}
 	return nil
 }
 
-// listenAddress checks --listen. An address is required and the unspecified
-// ones are refused: listening on every interface would put the endpoint on
-// the LAN, which is exactly what it is not meant for.
+// listenAddress checks one address of --listen. The unspecified addresses are
+// refused: listening on every interface would put the endpoint on every
+// network the machine is in, including ones nobody thought of. A concrete
+// address - the Docker bridge for a caller in a container, the LAN address for
+// the page - is a choice, and several are given as a list.
 func listenAddress(s string) (string, error) {
 	s = strings.TrimSpace(s)
-	if s == "" {
-		return "", errors.New("--block needs --listen, e.g. 172.17.0.1 for the Docker bridge or 127.0.0.1")
-	}
 	host, port, err := net.SplitHostPort(s)
 	if err != nil {
 		host, port = strings.Trim(s, "[]"), defaultHTTPSPort

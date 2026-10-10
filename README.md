@@ -19,6 +19,13 @@ keep the battery from discharging on request, e.g. while the car charges.
 - **Read-only by default:** without `--fast` or `--block` it sends nothing to the device.
 - **Survives the cloud coming and going:** it reconnects by itself and logs in again only
   when the token is really gone.
+- **A web page** with `--listen`: the battery's state of charge and which way it goes, PV,
+  house and grid, and how the connections stand. Read-only.
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/web-ui-dark.png">
+  <img src="docs/screenshots/web-ui.png" alt="The ecoflowd web page: the battery charging at 72 %, PV, house and grid, the connections to the EcoFlow cloud and the local broker" width="800">
+</picture>
 
 > **Unofficial.** EcoFlow neither documents nor supports the channel `ecoflowd` uses: the
 > login endpoint, the frame layout and the field numbers were all measured, and can stop
@@ -32,6 +39,7 @@ keep the battery from discharging on request, e.g. while the car charges.
 - [Configuration](#configuration)
 - [MQTT output](#mqtt-output), with [evcc](#evcc) and [Home Assistant](#home-assistant)
 - [Per-second values: `--fast`](#per-second-values---fast)
+- [Web page: `--listen`](#web-page---listen)
 - [Discharge block: `--block`](#discharge-block---block)
 - [How ecoflowd gets its data](#how-ecoflowd-gets-its-data)
 - [Background and research](#background-and-research)
@@ -160,7 +168,7 @@ journalctl -fu ecoflowd@HC31XXXXXXXXXXXX
 | `--fast` | switch on the fast stream — **writes**, see below |
 | `--switch-every` | repeat rate for it, default 3s; below 1s is rejected |
 | `--block` | switch the discharge block task on request — **writes**, see [Discharge block](#discharge-block---block) |
-| `--listen` | address of the HTTPS endpoint of `--block`, e.g. `172.17.0.1`, or the container's name under Docker; port 8089 if none is given |
+| `--listen` | addresses of the HTTPS server, comma-separated: the [web page](#web-page---listen) and, with `--block`, its endpoint; e.g. `172.17.0.1,192.168.1.10`, or the container's name under Docker; port 8089 if none is given; never `0.0.0.0` |
 | `--tls-cert`, `--tls-key` | certificate and key for it |
 | `--block-ttl` | how long a block request holds unless renewed, default 5m, 1m to 15m |
 | `--block-task` | the task to switch; by default the only one of type "Laden des Akkus" |
@@ -169,7 +177,7 @@ journalctl -fu ecoflowd@HC31XXXXXXXXXXXX
 | `--version` | print the version and exit |
 
 Credentials come exclusively from the environment — `ECOFLOW_EMAIL`, `ECOFLOW_PASSWORD`,
-optionally `ECOFLOW_HOST`, `MQTT_PASSWORD` and, with `--block`, `ECOFLOWD_HTTP_TOKEN`. Never from flags: whatever is on the
+optionally `ECOFLOW_HOST`, `MQTT_PASSWORD` and, with `--listen`, `ECOFLOWD_HTTP_TOKEN`. Never from flags: whatever is on the
 command line, anyone on the machine can read in the process list.
 
 Three exit codes, and one of them matters for continuous operation:
@@ -377,6 +385,69 @@ If the fast stream still does not come, the service says so **once**, after abou
 and carries on at the minute rate. The broker accepts the switch in any case (`PUBACK RC:0` measured); whether
 it works is shown only by whether fast reports arrive.
 
+## Web page: `--listen`
+
+With `--listen`, `ecoflowd` serves a page that shows what it reads – in the browser, on the
+phone, without a broker or a dashboard in between:
+
+- **The battery first:** state of charge, a cell that fills (light green, dark green when
+  full, yellow below 20 %), stripes that run in while it charges and out while it
+  discharges, the power, and what went in and out today.
+- **PV, house and grid** with today's energy, the grid as import or export.
+- **The connections** as a strip from left to right: who asked for the block, `ecoflowd`,
+  the EcoFlow cloud and the device behind it, with a LED that flashes per report; the local
+  broker as a pill in the header.
+- With `--block`, the **block's state** – on or off, until when, renewed by whom.
+
+**It is read-only.** The page shows the block but cannot switch it: a switch there would be
+another way to write to the device, see [Discharge block](#discharge-block---block).
+
+```bash
+export ECOFLOWD_HTTP_TOKEN="$(openssl rand -hex 32)"
+./ecoflowd --sn HC31XXXXXXXXXXXX --broker tcp://127.0.0.1:1883 \
+           --listen 192.168.1.10 --tls-cert tls.crt --tls-key tls.key
+```
+
+Then open `https://192.168.1.10:8089/` and enter the token once; the browser keeps it until
+"Sign out". The page itself holds no data and needs no token, everything it shows comes
+from `/status`, which does:
+
+| Request | Answer |
+|---|---|
+| `GET /` | the page, self-contained – no external fonts or scripts |
+| `GET /status` | what the page shows, as JSON; needs `Authorization: Bearer <token>` |
+| `PUT`, `DELETE`, `GET /block` | only with `--block`, see below |
+
+**Where to listen:** on the addresses you name, never on every interface – `0.0.0.0` is
+refused. For the page that is the machine's LAN address, and it should be one the router
+always hands out the same (in a Fritz!Box: "IPv4-Adresse dauerhaft zuweisen") – if it
+changes, binding fails at the next start. Several addresses go comma-separated: with a
+caller of `--block` in a container, `--listen 172.17.0.1,192.168.1.10` keeps it on the
+Docker bridge and puts the page on the LAN; `/block` is then on the LAN too, protected by
+the token and TLS. The certificate has to name every address and the name you type in the
+browser:
+
+```bash
+openssl req -x509 -newkey rsa:3072 -nodes -days 3650 -subj "/CN=ecoflowd" \
+  -addext "subjectAltName=IP:172.17.0.1,IP:192.168.1.10,DNS:mysmarthome.fritz.box" \
+  -keyout /etc/ecoflowd/tls.key -out /etc/ecoflowd/tls.crt
+```
+
+The browser warns once about a self-signed certificate, or you import `tls.crt` as trusted.
+A caller of `/block` that checks the certificate – Node-RED's `tls-config` – needs the new
+file as well. With ufw, the port has to be allowed from the LAN:
+`sudo ufw allow from 192.168.1.0/24 to any port 8089 proto tcp`.
+
+Under Docker, `--listen` takes the container's name and the port is published on one host
+address only: `ports: ["192.168.1.10:8089:8089"]`, commented out in
+[`docker-compose.yaml`](docker-compose.yaml), together with `hostname:` so the page shows
+the machine's name rather than the container's id.
+
+<p>
+  <img src="docs/screenshots/web-ui-phone.png" alt="The web page on a phone" width="260">
+  <img src="docs/screenshots/web-ui-dark.png" alt="The web page in the dark theme" width="520">
+</p>
+
 ## Discharge block: `--block`
 
 Keeps the battery from discharging on request, e.g. while the car charges. It uses a
@@ -521,8 +592,9 @@ Under systemd the unit hands both files over with `LoadCredential=`, see
 [`contrib/ecoflowd@.service`](contrib/ecoflowd@.service).
 
 **Where to listen:** on the Docker bridge (`172.17.0.1` by default) when the caller runs
-in a container, otherwise on `127.0.0.1`. An address is required and `0.0.0.0` is
-refused: the endpoint is not meant for the LAN. **A host firewall has to let the bridge in:**
+in a container, otherwise on `127.0.0.1` – and the LAN address next to it, if the
+[web page](#web-page---listen) should be reachable there too: `--listen 172.17.0.1,192.168.1.10`.
+An address is required and `0.0.0.0` is refused. **A host firewall has to let the bridge in:**
 with ufw's default "deny incoming", a container's request times out while one from the host
 itself works. Allow the port on the bridge only, not from everywhere:
 
@@ -539,8 +611,9 @@ mainly so that the token never crosses a wire in clear, should the setup ever ch
 **Under Docker** it is simpler: `ecoflowd` and its caller share a network, and the
 endpoint listens on the container's own name, which resolves to its address on that
 network – `--listen=ecoflowd:8089`. Containers on the network reach it as
-`https://ecoflowd:8089/block`, nothing else does; there is no `ports:` entry, no bridge
-address to look up and no firewall rule. The certificate names the container instead of
+`https://ecoflowd:8089/block`, nothing else does; without a `ports:` entry there is no bridge
+address to look up and no firewall rule. Publishing the port for the web page puts
+`/block` on that host address as well. The certificate names the container instead of
 an IP, and the key has to be readable by the image's user, `65532`:
 
 ```bash
@@ -660,6 +733,9 @@ files after a change to either decoder.
   picks up every 1.27.x patch release by itself; dependabot proposes the next minor.
 - **Docker:** `docker build -t ecoflowd .` builds the image for the local platform; CI
   builds it on every PR, so a broken `Dockerfile` shows before a release.
+- **Web page:** `cmd/ecoflowd/ui/index.html` is embedded in the binary, one self-contained
+  file. After a change to it, `docs/screenshots/capture.py` renders the README screenshots
+  against a mocked `/status` (the command is in the file, it needs Docker).
 
 **Release:** a tag `vX.Y.Z` on `main`, made with `make release TAG=vX.Y.Z` – it refuses a
 dirty tree, another branch, or a `main` that differs from `origin/main`. `release.yml`

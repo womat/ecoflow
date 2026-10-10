@@ -24,8 +24,8 @@
 # and the login endpoint carries it base64-encoded rather than hashed. Anyone
 # who can read that file has the account.
 #
-# The discharge block (--block, see the README) needs three more things: the
-# token in the same file,
+# The web page (--listen) and the discharge block (--block, see the README)
+# need three more things: the token in the same file,
 #
 #   ECOFLOWD_HTTP_TOKEN=...        (openssl rand -hex 32)
 #
@@ -41,6 +41,11 @@
 #   ExecStart=
 #   ExecStart=/usr/local/bin/ecoflowd --sn %i $ECOFLOWD_OPTIONS --block \
 #       --listen 172.17.0.1 --tls-cert %d/tls.crt --tls-key %d/tls.key
+#
+# For the web page in the LAN, add the machine's LAN address - one the router
+# always hands out the same - to the list: --listen 172.17.0.1,192.168.1.10.
+# The certificate has to name both; /block is then reachable on the LAN too,
+# behind the token and TLS. Without --block, the LAN address alone will do.
 #
 # 172.17.0.1 is Docker's default bridge, for a caller in a container; check it
 # with "ip -4 addr show docker0", and put the same address in the certificate.

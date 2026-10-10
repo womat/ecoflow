@@ -13,7 +13,8 @@ veröffentlicht, was ankommt, als zwei JSON-Telegramme:
 
 Auf Wunsch schaltet es den Sekundentakt ein (`--fast`) oder hält die Batterie auf Anfrage
 vom Entladen ab, z. B. während das Auto lädt (`--block`). Ohne diese beiden Optionen
-sendet es nichts an das Gerät.
+sendet es nichts an das Gerät. Mit `--listen` zeigt eine Web-Seite Ladestand und Richtung
+des Akkus, PV, Haus und Netz – nur lesend, siehe [Web page](README.md#web-page---listen).
 
 > **Inoffiziell.** EcoFlow dokumentiert diesen Kanal nicht: Login, Frame-Aufbau und
 > Feldnummern sind gemessen und können sich jederzeit ändern. Wie sie ermittelt wurden,

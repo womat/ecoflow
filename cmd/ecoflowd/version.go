@@ -16,6 +16,11 @@ import (
 var version = ""
 
 func versionString() string {
+	return fmt.Sprintf("ecoflowd %s (%s, %s/%s)", shortVersion(), runtime.Version(), runtime.GOOS, runtime.GOARCH)
+}
+
+// shortVersion is the version alone, as the web page shows it.
+func shortVersion() string {
 	v, rev, dirty := version, "", false
 
 	if bi, ok := debug.ReadBuildInfo(); ok {
@@ -47,5 +52,5 @@ func versionString() string {
 		}
 	}
 
-	return fmt.Sprintf("ecoflowd %s (%s, %s/%s)", v, runtime.Version(), runtime.GOOS, runtime.GOARCH)
+	return v
 }
