@@ -15,7 +15,7 @@ Since **v0.5.0**, `ecoflowd` publishes **two JSON telegrams**: `<topic>/state` p
 measurement and `<topic>/energy` with the day's totals, both with serial number and time
 of measurement in the payload, not retained. Up to v0.4.x it was one topic per value with
 a bare number, plus an availability topic with last will; that is gone without
-replacement, and the break was deliberate. With `--block` (since the version after v0.5.0)
+replacement, and the break was deliberate. With `--block` (since v0.6.0)
 a third telegram, `<topic>/block`, joins them.
 
 The reason is not taste: `internal/frames.Energy` is a composite – several readings and
@@ -31,8 +31,8 @@ ecoflow/energy  {"sn":"HC31XXXXXXXXXXXX","timestamp":"2026-09-22T09:13:18Z","pv"
 ```
 
 The values are decoded from `internal/frames/testdata/fast.txt`; the tests in
-`cmd/ecoflowd/telegram_test.go` check exactly these. The field tables are in the [README](../README.md#mqtt-output),
-section "To the local broker".
+`cmd/ecoflowd/telegram_test.go` check exactly these. The field tables are in the README, section
+[MQTT output](../README.md#mqtt-output).
 
 - `state` goes out on every new measurement: every minute without `--fast`, every two to
   three seconds with `--fast`. There is no change detection any more – an unchanged
@@ -44,7 +44,7 @@ section "To the local broker".
   01:00 (CET) or 02:00 (CEST).
 - Watts and watt-hours as measured, signs as the device delivers them – positive `grid` is
   export, positive `battery` is charging. Converting is left to the human, the same rule
-  as for the addresses in `modbusread`.
+  as for the register addresses in [modbusread](https://github.com/womat/modbusread).
 
 ### The third telegram: `block` (only with `--block`)
 
