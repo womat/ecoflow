@@ -25,9 +25,10 @@ test: ## run all tests with the race detector, and the decoder and script self-c
 	done
 	scripts/ecoflow-api.sh selftest
 
-lint: ## gofmt, go vet and govulncheck
+lint: ## gofmt, go vet, golangci-lint and govulncheck
 	@test -z "$$(gofmt -l ./cmd ./internal)" || { echo "not gofmt'ed:"; gofmt -l ./cmd ./internal; exit 1; }
 	go vet ./...
+	go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.14.0 run ./...
 	go run golang.org/x/vuln/cmd/govulncheck@v1.8.0 ./...
 
 golden: ## regenerate the .golden files with the python decoder - after a change to either decoder

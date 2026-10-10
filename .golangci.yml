@@ -1,0 +1,32 @@
+# golangci-lint configuration for github.com/womat/ecoflow, run by make lint
+# and CI. The default linter set is kept. The exclusions below are decisions,
+# not convenience - each one says why, as in golib.
+
+version: "2"
+
+linters:
+  settings:
+    errcheck:
+      # Listed explicitly rather than switching errcheck off, so an unchecked
+      # error from anything else still gets reported.
+      exclude-functions:
+        # Messages to stderr and the --help text: a service that cannot write
+        # to its own stderr has nowhere left to report that either.
+        - fmt.Fprint
+        - fmt.Fprintf
+        - fmt.Fprintln
+        # Closing listeners already bound when a later --listen address
+        # fails: the start is aborted with that error, which is the one that
+        # matters.
+        - (net.Listener).Close
+        # The body of a cloud response that has been read: a failing Close
+        # says nothing about the answer.
+        - (io.ReadCloser).Close
+
+  exclusions:
+    rules:
+      # Test code may ignore what it is not asserting on: a deferred Close of
+      # a capture file, the write of a canned answer in a test server.
+      - path: _test\.go
+        linters:
+          - errcheck
