@@ -11,6 +11,7 @@ import (
 	"net"
 	"net/http"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 )
@@ -29,10 +30,16 @@ import (
 // a switch on the page would be a third way to write to the device, and that
 // is a decision of its own (CLAUDE.md).
 
-// authorized checks the token. Compared in constant time, so the answer's
-// timing says nothing about how much of a guess was right.
+// authorized checks the token of an "Authorization: Bearer <token>" header.
+// The scheme is matched case-insensitively and may be followed by more than
+// one space, as RFC 7235 allows. The token is compared in constant time, so
+// the answer's timing says nothing about how much of a guess was right.
 func authorized(r *http.Request, want []byte) bool {
-	return subtle.ConstantTimeCompare([]byte(r.Header.Get("Authorization")), want) == 1
+	scheme, token, ok := strings.Cut(r.Header.Get("Authorization"), " ")
+	if !ok || !strings.EqualFold(scheme, "Bearer") {
+		return false
+	}
+	return subtle.ConstantTimeCompare([]byte(strings.TrimLeft(token, " ")), want) == 1
 }
 
 func unauthorized(w http.ResponseWriter) {
@@ -42,7 +49,7 @@ func unauthorized(w http.ResponseWriter) {
 
 // blockHandler serves /block.
 func blockHandler(b *blocker, token string) http.Handler {
-	want := []byte("Bearer " + token)
+	want := []byte(token)
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/block" {
@@ -84,7 +91,7 @@ func blockHandler(b *blocker, token string) http.Handler {
 
 // statusHandler serves /status, what the page polls.
 func statusHandler(st *status, b *blocker, calls *callers, listen []string, token string) http.Handler {
-	want := []byte("Bearer " + token)
+	want := []byte(token)
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if !authorized(r, want) {

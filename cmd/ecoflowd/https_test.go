@@ -85,6 +85,8 @@ func TestTokenIsRequired(t *testing.T) {
 		{"wrong", "Bearer " + strings.Repeat("x", len(testToken))},
 		{"without the scheme", testToken},
 		{"basic instead", "Basic " + testToken},
+		{"scheme without a token", "Bearer"},
+		{"scheme and spaces only", "Bearer   "},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -458,5 +460,18 @@ func TestCallersArePrunedAndCapped(t *testing.T) {
 	now = now.Add(callerWindow + time.Minute)
 	if got := c.list(); len(got) != 0 {
 		t.Errorf("after an hour: got %+v, want none", got)
+	}
+}
+
+// TestTokenSchemeAsRFC7235: the scheme in any case and more than one space are
+// accepted, as RFC 7235 allows.
+func TestTokenSchemeAsRFC7235(t *testing.T) {
+	b, _ := newTestBlocker(t)
+	h := blockHandler(b, testToken)
+
+	for _, auth := range []string{"bearer " + testToken, "BEARER " + testToken, "Bearer   " + testToken} {
+		if w := call(t, h, http.MethodGet, auth); w.Code != http.StatusOK {
+			t.Errorf("%q: got %d, want 200", auth, w.Code)
+		}
 	}
 }
