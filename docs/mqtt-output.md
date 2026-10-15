@@ -11,12 +11,10 @@ How `cmd/ecoflowd` puts its readings on the local broker, and why in this form.
 
 ## Summary
 
-Since **v0.5.0**, `ecoflowd` publishes **two JSON telegrams**: `<topic>/state` per
-measurement and `<topic>/energy` with the day's totals, both with serial number and time
-of measurement in the payload, not retained. Up to v0.4.x it was one topic per value with
-a bare number, plus an availability topic with last will; that is gone without
-replacement, and the break was deliberate. With `--block` (since v0.6.0)
-a third telegram, `<topic>/block`, joins them.
+`ecoflowd` publishes **two JSON telegrams**: `<topic>/state` per measurement and
+`<topic>/energy` with the day's totals, both with serial number and time of measurement in
+the payload, not retained. With `--block` a third telegram, `<topic>/block`, joins them.
+There is no topic per value and no availability topic with last will – §2 says why.
 
 The reason is not taste: `internal/frames.Energy` is a composite – several readings and
 one time of measurement from *one* frame. The old format took it apart and then built
@@ -72,25 +70,10 @@ sent once per connection. Not retained, like the other two.
   same object came back over HTTPS and was right after every switch ([`api-status.md`](research/api-status.md), sixth
   test).
 
-### The earlier format (up to v0.4.x)
-
-For reference, in case an old consumer turns up:
-
-```
-ecoflow/HC31XXXXXXXXXXXX/pv        0
-ecoflow/HC31XXXXXXXXXXXX/house     -293
-…
-ecoflow/HC31XXXXXXXXXXXX/measured  2026-09-23T20:39:00Z
-ecoflow/HC31XXXXXXXXXXXX/energy/…  (six daily totals)
-ecoflow/HC31XXXXXXXXXXXX/status    online        ← retained, last will
-```
-
-It published on change, plus once a minute even when unchanged. The retained `status`
-stays on the broker after the move until you delete it ([README, "Moving from v0.4.x"](../README.md#moving-from-v04x)).
-
 ## 2. Why the old format was dropped
 
-Its assumptions did not hold up:
+The old format published one topic per value with a bare number, on change plus once a
+minute, and a retained availability topic with last will. Its assumptions did not hold up:
 
 - **"evcc and Home Assistant need one scalar per topic"** – refuted. evcc's MQTT plugin
   has a `jq:` expression, Home Assistant `value_template: "{{ value_json.pv }}"`; JSON
@@ -148,9 +131,8 @@ are two words.
 
 ### A missing field is 0 – measured, not assumed
 
-Up to v0.4.x this section voiced the worry that a missing field would silently be read as
-0 and could not be told apart from a measured 0; JSON could leave the field out instead.
-The captures answer that differently:
+The worry is that a missing field is silently read as 0 and cannot be told apart from a
+measured 0; JSON could leave the field out instead. The captures answer that differently:
 
 | | `slow.txt` | `fast.txt` | together |
 |---|---|---|---|
@@ -197,9 +179,6 @@ that in place).
 - **No selective subscription.** Whoever only wants the state of charge gets everything.
   Irrelevant with seven fields.
 - **JSON parsing in every consumer.** One line of `jq` or `value_template`.
-- **A break for existing consumers.** Whoever was attached to `ecoflow/<SN>/+` has to
-  switch; by the versioning rule in `0.x` a minor step with a note on the break, hence
-  v0.5.0.
 
 ## 5. Open points
 

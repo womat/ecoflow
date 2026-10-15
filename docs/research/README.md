@@ -31,9 +31,7 @@ repo:
 go install github.com/womat/modbusread@latest
 ```
 
-Up to v0.6.0 it lived here as `cmd/modbusread`; those releases and
-`go install github.com/womat/ecoflow/cmd/modbusread@v0.6.0` keep working, newer versions
-come from [womat/modbusread](https://github.com/womat/modbusread/releases).
+Releases and documentation are in [womat/modbusread](https://github.com/womat/modbusread).
 
 ## Summary
 

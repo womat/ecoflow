@@ -18,12 +18,8 @@ Behind it, as background rather than as the subject of the repo:
    on the cloud channel and the frame decoder, described in `docs/research/tools.md`.
    Practically all findings in these notes were made with them.
 
-The Modbus CLI used to check the register claims on the device, `modbusread`, lived here
-as `cmd/modbusread` up to v0.6.0 and now has its own repo,
-[womat/modbusread](https://github.com/womat/modbusread): it is deliberately universal and
-knows nothing about EcoFlow, so it does not belong next to a device-specific service. Its
-code conventions (read-only, addresses never converted, raw words always shown) are kept
-in that repo's CLAUDE.md. The notes here still refer to it by name.
+The Modbus CLI that checks the register claims, `modbusread`, is deliberately universal
+and lives in its own repo, [womat/modbusread](https://github.com/womat/modbusread).
 
 ## Commands
 
@@ -164,7 +160,7 @@ German — that concerns the chat, not the files.
   HMAC-signed, often returns error 1006 for PowerOcean) vs. local **Modbus TCP** (port
   502, unlocked only by the installer via the EcoFlow **Pro app**)
 - `docs/mqtt-output.md` – the *output side*: how `ecoflowd` publishes to the local broker and
-  why — two JSON telegrams instead of, as up to v0.4.x, one topic per value. Contains the
+  why — two JSON telegrams instead of one topic per value. Contains the
   reasoning (time of measurement in the payload instead of heartbeat and last will,
   camelCase, missing field = 0 because of proto3, `dcdc` only once understood) and the
   measurements it rests on
@@ -225,23 +221,19 @@ refuted. When catching up, the code counts, not the older prose.
   official EcoFlow documentation. Back new claims with a source URL (maintain the source
   lists at the end of each file) and separate confirmed knowledge from assumptions in the
   wording ("presumably", "not confirmed").
-- **Plus vs. DC Fit:** the model question is open, **but the direction has turned**: the
-  current source treats the DC Fit as the normal case and knows exactly *one*
-  model-dependent special case, and that one concerns the Plus. The earlier worry that the
-  mapping was "determined on the Plus and questionable for the DC Fit" is thereby
-  outdated — nothing is confirmed because of it, only the suspicion is a different one.
-  Do not cut the caveat from register statements, but do not preserve it in the old form
-  either; the current one is in `docs/research/modbus-registers.md`.
+- **Plus vs. DC Fit:** the model question is open. The current source treats the DC Fit as
+  the normal case and knows exactly *one* model-dependent special case, which concerns the
+  Plus. Keep the caveat on register statements in the form given in
+  `docs/research/modbus-registers.md`.
 
-  **For the protobuf field numbers of the cloud channel, on the other hand, it applies
-  sharply and in the original direction:** `cmd_func 96 / cmd_id 33` uses different
-  fields on the DC Fit than on the Plus, measured. Whoever takes the wrong table there
+  **For the protobuf field numbers of the cloud channel, on the other hand, the model
+  matters:** `cmd_func 96 / cmd_id 33` uses different fields on the DC Fit than on the
+  Plus, measured. Whoever takes the wrong table there
   gets plausible numbers under wrong names.
 - **Register tables:** the addresses are given as they go on the wire – the reference
   integration passes the 4xxxx numbers unchanged to pymodbus, and so does `modbusread`.
-  **Whether they are meant 1-based or 0-based is unresolved**; the earlier claim
-  "1-based" in these notes is now seriously in doubt and can only be decided on the
-  device. That is exactly why nothing is converted and nothing is added that supports
+  **Whether they are meant 1-based or 0-based is unresolved** and can only be decided on
+  the device. That is exactly why nothing is converted and nothing is added that supports
   only one of the two readings. Floats occupy 2 registers, 32-bit IEEE754
   **word-swapped** (high word in the second register). Add new entries in the existing
   table format (Register | Type | Description); state the unit, and a scale factor

@@ -89,7 +89,7 @@ Flags go into `command:` in the compose file, one per line – `--topic`, `--mqt
 docker compose pull && docker compose up -d
 ```
 
-`latest` follows the newest release; `ECOFLOWD_VERSION=0.8.0` in `.env` pins one.
+`latest` follows the newest release; `ECOFLOWD_VERSION=0.9.0` in `.env` pins one.
 
 ## Quick start: systemd
 
@@ -99,7 +99,7 @@ for every Raspberry Pi and PC, macOS and Windows, statically linked, nothing to 
 the Pi 1 and Zero; the release notes have the full table.
 
 ```bash
-VERSION=0.8.0    # or the latest, see the releases page
+VERSION=0.9.0    # or the latest, see the releases page
 ARCH=linux_arm64
 
 curl -LO "https://github.com/womat/ecoflow/releases/download/v$VERSION/ecoflowd_${VERSION}_$ARCH.tar.gz"
@@ -303,17 +303,6 @@ Why the format looks like this – the reasoning and the measurements are in
 
 With `--mqtt-user` and `MQTT_PASSWORD` for a broker that requires authentication. The
 password comes from the environment, because a flag would show up in the process list.
-
-### Moving from v0.4.x
-
-Up to v0.4.x, `ecoflowd` published one topic per value
-(`ecoflow/<SN>/pv`, …, `/energy/…`) and a retained `ecoflow/<SN>/status`. All of that is
-gone without replacement as of v0.5.0. The old retained `status` stays on the broker until
-you delete it:
-
-```bash
-mosquitto_pub -h <broker> -r -n -t ecoflow/HC31XXXXXXXXXXXX/status
-```
 
 ### evcc
 
@@ -705,13 +694,13 @@ delivers readings continuously today: the app channel `ecoflowd` uses.
 | [`docs/mqtt-output.md`](docs/mqtt-output.md) | Why the output looks the way it does |
 
 The registers are checked with [`modbusread`](https://github.com/womat/modbusread), a
-universal Modbus reader that lived here as `cmd/modbusread` up to v0.6.0.
+universal Modbus reader in its own repo.
 
 ## Working on this repo
 
-Every change – Go code and notes alike – goes through a short-lived feature branch and a PR
-to `main`; there is no second long-lived branch. CI runs exactly these checks, so running
-them first keeps the PR green:
+Changes – Go code and notes alike – are committed directly to `main`; CI runs on every
+push. A short-lived branch with a PR only when someone should review the change first.
+CI runs exactly these checks, so running them first keeps `main` green:
 
 ```bash
 make test       # go test -race, the golden files against the python decoder, the script's selftest
@@ -753,10 +742,6 @@ checks once more that the tag is on `main`, tests the tagged commit again, and G
 publishes the archives with a changelog; the version goes in via `-X main.version`. Then
 the image goes to `ghcr.io/womat/ecoflowd` as `X.Y.Z`, `X.Y` and `latest`. Never tag
 another branch: the release would point at a state that never existed in `main`.
-
-Up to v0.6.0 the archives were named `ecoflowd-v0.6.0-linux-arm64.tar.gz` and held only
-the binary; from v0.7.0 on they follow the scheme above and carry the systemd unit,
-`README.md` and `LICENSE`.
 
 **Which number** is decided by the *kind* of change, not its size: patch as long as no
 behaviour changes (help texts, comments and docs do not, however large the diff – `v0.4.1`
