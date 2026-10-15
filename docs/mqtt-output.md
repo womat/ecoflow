@@ -128,7 +128,7 @@ composite telegram is meant to avoid: fields of different ages under one timesta
 There it survives forwarding to InfluxDB or into a queue where the topic gets lost, and a
 freely chosen topic fits into any naming scheme that grew over time. **What you give up
 for it:** `ecoflow/+/soc` across several devices. Several devices each need their own
-`--topic` (the systemd unit reads `/etc/ecoflowd/<SN>.env` for that).
+`--topic` (the systemd unit reads `/opt/ecoflowd/etc/<SN>.env` for that).
 
 ### Topics lowercase, `/state` and `/energy` fixed
 

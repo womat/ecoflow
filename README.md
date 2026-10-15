@@ -66,7 +66,7 @@ docker compose logs -f
 
 **`.env` is the EcoFlow account password**, not an application token: the login endpoint
 carries it base64-encoded rather than hashed. `chmod 600` is the counterpart to
-`/etc/ecoflowd/env` under systemd.
+`/opt/ecoflowd/etc/env` under systemd.
 
 **Where the broker is.** The default, `tcp://host.docker.internal:1883`, is a broker on the
 Docker host. On Linux, Mosquitto 2 listens on `localhost` only unless it has a `listener`
@@ -106,7 +106,8 @@ curl -LO "https://github.com/womat/ecoflow/releases/download/v$VERSION/ecoflowd_
 curl -LO "https://github.com/womat/ecoflow/releases/download/v$VERSION/checksums.txt"
 sha256sum -c checksums.txt --ignore-missing
 tar -xzf "ecoflowd_${VERSION}_$ARCH.tar.gz"
-sudo install -m 0755 ecoflowd /usr/local/bin/
+sudo install -d -o root -g root -m 0755 /opt/ecoflowd /opt/ecoflowd/bin
+sudo install -o root -g root -m 0755 ecoflowd /opt/ecoflowd/bin/
 ```
 
 The unit is in the archive too. It is a template – one instance per device, the serial
@@ -114,13 +115,13 @@ number goes after the `@`:
 
 ```bash
 sudo install -m 0644 contrib/ecoflowd@.service /etc/systemd/system/
-sudo install -d -m 0700 /etc/ecoflowd
-sudo install -m 0600 /dev/null /etc/ecoflowd/env
-sudo nano /etc/ecoflowd/env
+sudo install -d -m 0700 /opt/ecoflowd/etc
+sudo install -m 0600 /dev/null /opt/ecoflowd/etc/env
+sudo nano /opt/ecoflowd/etc/env
 sudo systemctl enable --now ecoflowd@HC31XXXXXXXXXXXX
 ```
 
-`/etc/ecoflowd/env`:
+`/opt/ecoflowd/etc/env`:
 
 ```ini
 ECOFLOW_EMAIL=first.last@example.com
@@ -136,17 +137,26 @@ base64-encoded rather than hashed; only the TLS channel protects it.
 The unit runs under `DynamicUser` with `ProtectSystem=strict` and writes nothing to disk
 — the session token lives in the process's memory.
 
-**The binary belongs in `/usr/local/bin`, not in a directory of its own with tight
-permissions** such as `/opt/<name>/bin` with `0770 pv:docker`. The dynamic user is
-neither the owner nor in the group, it would not get in, and the start would fail with
-"Permission denied". The two obvious ways out are deliberately not taken:
+**Everything under `/opt/ecoflowd` belongs to root.** `bin` is `0755`, so the dynamic
+user may run the program but not replace it; `etc` is `0700`, so only systemd, as root,
+reads the credentials and hands them to the process as environment — the service user
+itself has no access to `/opt/ecoflowd/etc`. That is the point of `DynamicUser`: a
+`User=` account of its own, or a group shared with the service user, would let the
+process read its own credentials file. Never give `bin` or `etc` to a group such as
+`docker`: whoever is in it is practically root via the Docker socket.
 
-- **Adding the service user to the `docker` group** (`SupplementaryGroups=`) — whoever is
-  in `docker` is practically root via the Docker socket.
-- **`User=pv` instead of `DynamicUser`** — then the process runs under an account that can
-  read its own credentials file. As it is, only systemd reads it as root and passes the
-  values to the process as environment; the service user has no access to
-  `/etc/ecoflowd`.
+**Upgrading from an install in `/usr/local/bin` and `/etc/ecoflowd`** (before 0.9.0):
+
+```bash
+sudo install -d -o root -g root -m 0755 /opt/ecoflowd /opt/ecoflowd/bin
+sudo install -o root -g root -m 0755 ecoflowd /opt/ecoflowd/bin/
+sudo cp -a /etc/ecoflowd /opt/ecoflowd/etc        # env, <serial>.env, tls.crt, tls.key
+sudo install -m 0644 contrib/ecoflowd@.service /etc/systemd/system/
+# in a drop-in such as block.conf: /etc/ecoflowd -> /opt/ecoflowd/etc,
+# /usr/local/bin/ecoflowd -> /opt/ecoflowd/bin/ecoflowd
+sudo systemctl daemon-reload && sudo systemctl restart 'ecoflowd@*'
+sudo rm -r /etc/ecoflowd /usr/local/bin/ecoflowd  # once it runs
+```
 
 Exit `78` keeps the unit down (see the [exit codes](#configuration)); any *other* failure restarts
 after 30 seconds, a clean stop by signal does not (`Restart=on-failure`).
@@ -430,7 +440,7 @@ browser:
 ```bash
 openssl req -x509 -newkey rsa:3072 -nodes -days 3650 -subj "/CN=ecoflowd" \
   -addext "subjectAltName=IP:172.17.0.1,IP:192.168.1.10,DNS:raspberrypi.local" \
-  -keyout /etc/ecoflowd/tls.key -out /etc/ecoflowd/tls.crt
+  -keyout /opt/ecoflowd/etc/tls.key -out /opt/ecoflowd/etc/tls.crt
 ```
 
 The browser warns once about a self-signed certificate, or you import `tls.crt` as trusted.
@@ -583,9 +593,9 @@ keys with explicit curve parameters, which Go refuses.
 ```bash
 openssl req -x509 -newkey rsa:3072 -nodes -days 3650 \
   -subj "/CN=ecoflowd" -addext "subjectAltName=IP:172.17.0.1" \
-  -keyout /etc/ecoflowd/tls.key -out /etc/ecoflowd/tls.crt
-chmod 600 /etc/ecoflowd/tls.key
-openssl rand -hex 32   # into /etc/ecoflowd/env as ECOFLOWD_HTTP_TOKEN=...
+  -keyout /opt/ecoflowd/etc/tls.key -out /opt/ecoflowd/etc/tls.crt
+chmod 600 /opt/ecoflowd/etc/tls.key
+openssl rand -hex 32   # into /opt/ecoflowd/etc/env as ECOFLOWD_HTTP_TOKEN=...
 ```
 
 Under systemd the unit hands both files over with `LoadCredential=`, see
@@ -602,7 +612,7 @@ itself works. Allow the port on the bridge only, not from everywhere:
 sudo ufw allow in on docker0 to 172.17.0.1 port 8089 proto tcp comment 'ecoflowd --block'
 ```
 
-`/etc/ecoflowd` is readable by root alone, so a `curl --cacert /etc/ecoflowd/tls.crt` on the
+`/opt/ecoflowd/etc` is readable by root alone, so a `curl --cacert /opt/ecoflowd/etc/tls.crt` on the
 host has to run with `sudo`. The caller in the container gets a copy of `tls.crt`; it is
 the certificate, not the key, and need not be secret. Whether TLS is needed at all inside one
 machine was weighed: the traffic does not leave it. TLS was chosen anyway (3 Oct 2026),

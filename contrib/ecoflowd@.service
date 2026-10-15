@@ -1,18 +1,19 @@
 # systemd unit for ecoflowd, one instance per device.
 #
-#   sudo cp ecoflowd /usr/local/bin/
+#   sudo install -d -o root -g root -m 0755 /opt/ecoflowd /opt/ecoflowd/bin
+#   sudo install -o root -g root -m 0755 ecoflowd /opt/ecoflowd/bin/
 #   sudo cp contrib/ecoflowd@.service /etc/systemd/system/
-#   sudo install -d -m 0700 /etc/ecoflowd
-#   sudo install -m 0600 /dev/null /etc/ecoflowd/env
+#   sudo install -d -m 0700 /opt/ecoflowd/etc
+#   sudo install -m 0600 /dev/null /opt/ecoflowd/etc/env
 #   sudo systemctl enable --now ecoflowd@HC31XXXXXXXXXXXX
 #
 # The instance name after the @ is the serial number, so a second device is a
 # second instance rather than a second unit file. Its readings need their own
 # topic, because the serial travels in the payload rather than in the topic:
-# put ECOFLOWD_OPTIONS with a different --topic into /etc/ecoflowd/<serial>.env,
+# put ECOFLOWD_OPTIONS with a different --topic into /opt/ecoflowd/etc/<serial>.env,
 # which is read after the shared file and overrides it.
 #
-# /etc/ecoflowd/env holds the credentials and the options, and must be readable
+# /opt/ecoflowd/etc/env holds the credentials and the options, and must be readable
 # by root alone:
 #
 #   ECOFLOW_EMAIL=someone@example.com
@@ -30,16 +31,16 @@
 #   ECOFLOWD_HTTP_TOKEN=...        (openssl rand -hex 32)
 #
 # and a certificate and key, which the service user - a dynamic one - cannot
-# read from /etc. systemd hands them over with LoadCredential=, and %d names
+# read from /opt/ecoflowd/etc. systemd hands them over with LoadCredential=, and %d names
 # the directory they appear in (systemd 248 or later). %d is not expanded
 # inside $ECOFLOWD_OPTIONS, so the flags go on the command line itself, in a
 # drop-in, /etc/systemd/system/ecoflowd@.service.d/block.conf:
 #
 #   [Service]
-#   LoadCredential=tls.crt:/etc/ecoflowd/tls.crt
-#   LoadCredential=tls.key:/etc/ecoflowd/tls.key
+#   LoadCredential=tls.crt:/opt/ecoflowd/etc/tls.crt
+#   LoadCredential=tls.key:/opt/ecoflowd/etc/tls.key
 #   ExecStart=
-#   ExecStart=/usr/local/bin/ecoflowd --sn %i $ECOFLOWD_OPTIONS --block \
+#   ExecStart=/opt/ecoflowd/bin/ecoflowd --sn %i $ECOFLOWD_OPTIONS --block \
 #       --listen 172.17.0.1 --tls-cert %d/tls.crt --tls-key %d/tls.key
 #
 # For the web page in the LAN, add the machine's LAN address - one the router
@@ -67,10 +68,10 @@ Type=exec
 
 # $ECOFLOWD_OPTIONS is unbraced on purpose: systemd splits it into separate
 # arguments that way, which ${...} would not do.
-ExecStart=/usr/local/bin/ecoflowd --sn %i $ECOFLOWD_OPTIONS
+ExecStart=/opt/ecoflowd/bin/ecoflowd --sn %i $ECOFLOWD_OPTIONS
 
-EnvironmentFile=/etc/ecoflowd/env
-EnvironmentFile=-/etc/ecoflowd/%i.env
+EnvironmentFile=/opt/ecoflowd/etc/env
+EnvironmentFile=-/opt/ecoflowd/etc/%i.env
 
 # No state on disk. The session token is held in memory for the life of the
 # process, and the process outlives everything except a signal or rejected

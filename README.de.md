@@ -31,12 +31,12 @@ des Akkus, PV, Haus und Netz – nur lesend, siehe [Web page](README.md#web-page
    - **systemd:** Archiv für deinen Rechner von den
      [Releases](https://github.com/womat/ecoflow/releases/latest) laden (`linux_arm64` für
      einen Pi mit 64-Bit-System, `linux_armv7` für 32 Bit, `linux_armv6` für Pi 1 und Zero).
-     Programm und Unit liegen im Archiv; die Zugangsdaten kommen nach `/etc/ecoflowd/env`.
+     Programm und Unit liegen im Archiv; die Zugangsdaten kommen nach `/opt/ecoflowd/etc/env`.
 3. **Broker eintragen:** `--broker tcp://…:1883`, bei Docker `ECOFLOWD_BROKER` in `.env`.
 4. **Einbinden:** in evcc oder Home Assistant auf `ecoflow/state` hören – mit `timeout`
    bzw. `expire_after`, damit ein eingefrorener Wert auffällt.
 
-**`.env` bzw. `/etc/ecoflowd/env` enthält das Passwort des EcoFlow-Kontos** und gehört
+**`.env` bzw. `/opt/ecoflowd/etc/env` enthält das Passwort des EcoFlow-Kontos** und gehört
 nur root bzw. dir (`chmod 600`).
 
 Die genauen Befehle stehen unter [Quick start: Docker](README.md#quick-start-docker) und
