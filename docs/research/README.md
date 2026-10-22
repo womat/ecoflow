@@ -1,37 +1,21 @@
 # Research notes: EcoFlow PowerOcean DC Fit
 
 How [`ecoflowd`](../../README.md) came about: which ways into the PowerOcean DC Fit exist,
-which of them deliver readings, and what the frames and registers mean. `ecoflowd` rests
+which of them deliver readings, and what the frames mean. `ecoflowd` rests
 on what is written here; the notes are kept as the record of how it was established and
 as the starting point for the open questions below.
 
 > **Disclaimer:** These notes are mostly based on community reverse engineering, not on
-> official EcoFlow documentation. EcoFlow does not officially support or confirm the
-> Modbus registers described here. Use at your own risk, especially when writing to
-> registers.
+> official EcoFlow documentation. EcoFlow does not officially support or confirm anything
+> described here. Use at your own risk, especially when writing to the device.
 
 ## Contents
 
 | File | Description |
 |---|---|
-| [`api-status.md`](api-status.md) | Overview: cloud REST API vs. app MQTT channel vs. local Modbus TCP, known problems (e.g. error 1006), unlocking, the write tests |
-| [`modbus-registers.md`](modbus-registers.md) | Register map (SOC, battery, PV, grid, energy counters, control registers) with decoding examples |
+| [`api-status.md`](api-status.md) | Overview: cloud REST API vs. app MQTT channel vs. local Modbus TCP, known problems (e.g. error 1006), the write tests |
 | [`tools.md`](tools.md) | The measuring tools: [`scripts/ecoflow-api.sh`](../../scripts/ecoflow-api.sh) for all four cloud paths, [`scripts/ecoflow-frames.py`](../../scripts/ecoflow-frames.py) for the live frames |
 | [`../mqtt-output.md`](../mqtt-output.md) | Why `ecoflowd` publishes two JSON telegrams, and the measurements behind the format |
-
-## `modbusread`
-
-The registers in `modbus-registers.md` are checked on the device with
-[`modbusread`](https://github.com/womat/modbusread), a universal, read-only Modbus TCP/RTU
-reader – address, register and type in, value out, raw words always shown, addresses
-never converted. It knows nothing about EcoFlow on purpose, and therefore has its own
-repo:
-
-```
-go install github.com/womat/modbusread@latest
-```
-
-Releases and documentation are in [womat/modbusread](https://github.com/womat/modbusread).
 
 ## Summary
 
@@ -47,23 +31,13 @@ Releases and documentation are in [womat/modbusread](https://github.com/womat/mo
 - The **app's MQTT channel** (protobuf, reverse-engineered) delivers minute values on its
   own and per-second values with the stream switch. `scripts/ecoflow-api.sh` and the
   service `cmd/ecoflowd` run on it.
-- **Local Modbus TCP** (port 502) would be the stable path, but is still locked on the
-  device (`connection refused`): it has to be unlocked by the installer via the EcoFlow
-  Pro app, and the register layout is not officially documented but community-derived.
+- **Local Modbus TCP** (port 502) does not exist on the DC Fit. According to EcoFlow (as of
+  22 October 2026) it is not supported and no update is planned, and there is no official
+  way to read the device locally; EcoFlow refers to community solutions.
 - For details see the linked files, and the comparison in `api-status.md`.
 
 ## Open points
 
-- Confirmation of the register mapping on the DC Fit. The current source treats it as the
-  normal case and knows only *one* model-dependent special case, and that one concerns the
-  Plus
-- Which of the two register readings is right: `modbus-registers.md` puts the
-  contradictory addresses of both sources side by side, every row is a single test on the
-  device (e.g. system SOC at 40527 vs. 42082)
-- Confirmation on the device that unlocking really goes through *Control Mode →
-  "Modbus control"* in the Pro app (checklist in `api-status.md`)
-- Which values `product_category`/`product_number` (40002/40003) return on the DC Fit –
-  the reference integration does not know them
 - Whether the fast stream ends after the last switch for reasons of time or because the
   MQTT connection dropped. **About 25 seconds** of run-on were measured; but the same
   measurement also reconnected, so it does not separate the two
@@ -100,9 +74,4 @@ main ones.
 
 - https://developer.ecoflow.com
 - https://github.com/Feberdin/ecoflow-powerocean-ha
-- https://github.com/MaxGrmm/ecoflow-poweroceanplus-modbus
-- https://github.com/MaxGrmm/EF-PowerOcean-TcpModbus
-- https://github.com/windmark/EF-PowerOcean-TcpModbus
-- https://docs.evcc.io/en/meters/ecoflow-powerocean-modbus
 - https://github.com/shuette42/ecoflow-energy-ha
-- https://www.photovoltaikforum.com/thread/247994-ecoflow-powerocean-modbus-protokoll/

@@ -13,13 +13,11 @@ as release binaries (systemd, `contrib/`) and as a container image (`Dockerfile`
 Behind it, as background rather than as the subject of the repo:
 
 1. **Research notes** in `docs/research/` on the ways to integrate the DC Fit – cloud
-   paths vs. local Modbus TCP, register map, open points.
+   paths, the app's MQTT channel, open points. Local Modbus TCP does not exist on the DC
+   Fit (EcoFlow, as of 22 October 2026); the register map kept for it is gone.
 2. **`scripts/ecoflow-api.sh`** and **`scripts/ecoflow-frames.py`** – the measuring tool
    on the cloud channel and the frame decoder, described in `docs/research/tools.md`.
    Practically all findings in these notes were made with them.
-
-The Modbus CLI that checks the register claims, `modbusread`, is deliberately universal
-and lives in its own repo, [womat/modbusread](https://github.com/womat/modbusread).
 
 ## Commands
 
@@ -154,22 +152,20 @@ German — that concerns the chat, not the files.
   Docker and systemd, configuration, MQTT output, the web page (`--listen`), `--fast`, `--block`, how it works; the
   research only as a short section with links
 - `docs/research/README.md` – entry point to the research: disclaimer, summary, open
-  points, sources, the pointer to `modbusread`
+  points, sources
 - `docs/research/tools.md` – usage of `ecoflow-api.sh` and `ecoflow-frames.py`
 - `docs/research/api-status.md` – the *decision level*: cloud REST (EcoFlow Developer/Open API,
-  HMAC-signed, often returns error 1006 for PowerOcean) vs. local **Modbus TCP** (port
-  502, unlocked only by the installer via the EcoFlow **Pro app**)
+  HMAC-signed, often returns error 1006 for PowerOcean) vs. the app's MQTT channel; local
+  **Modbus TCP** is not available on the DC Fit (section 4)
 - `docs/mqtt-output.md` – the *output side*: how `ecoflowd` publishes to the local broker and
   why — two JSON telegrams instead of one topic per value. Contains the
   reasoning (time of measurement in the payload instead of heartbeat and last will,
   camelCase, missing field = 0 because of proto3, `dcdc` only once understood) and the
   measurements it rests on
-- `docs/research/modbus-registers.md` – the *detail level*: register map, encoding conventions, Python
-  decoding snippets (pymodbus), known gaps
 
 The Markdown files overlap on purpose: the README links the others, `api-status.md`
-refers to `modbus-registers.md` for the mapping and to `mqtt-output.md` for the output
-side. On changes of substance (e.g. error 1006 solved, unlocking path found) **carry all
+refers to `mqtt-output.md` for the output side. On changes of substance (e.g. error 1006
+solved, a local interface after all) **carry all
 affected places along**, including the "Open questions" checklist in `api-status.md` and
 "Open points" in `docs/research/README.md`.
 
@@ -221,23 +217,7 @@ refuted. When catching up, the code counts, not the older prose.
   official EcoFlow documentation. Back new claims with a source URL (maintain the source
   lists at the end of each file) and separate confirmed knowledge from assumptions in the
   wording ("presumably", "not confirmed").
-- **Plus vs. DC Fit:** the model question is open. The current source treats the DC Fit as
-  the normal case and knows exactly *one* model-dependent special case, which concerns the
-  Plus. Keep the caveat on register statements in the form given in
-  `docs/research/modbus-registers.md`.
-
-  **For the protobuf field numbers of the cloud channel, on the other hand, the model
-  matters:** `cmd_func 96 / cmd_id 33` uses different fields on the DC Fit than on the
+- **Plus vs. DC Fit:** for the protobuf field numbers of the cloud channel the model
+  matters: `cmd_func 96 / cmd_id 33` uses different fields on the DC Fit than on the
   Plus, measured. Whoever takes the wrong table there
   gets plausible numbers under wrong names.
-- **Register tables:** the addresses are given as they go on the wire – the reference
-  integration passes the 4xxxx numbers unchanged to pymodbus, and so does `modbusread`.
-  **Whether they are meant 1-based or 0-based is unresolved** and can only be decided on
-  the device. That is exactly why nothing is converted and nothing is added that supports
-  only one of the two readings. Floats occupy 2 registers, 32-bit IEEE754
-  **word-swapped** (high word in the second register). Add new entries in the existing
-  table format (Register | Type | Description); state the unit, and a scale factor
-  whenever it is not 1, explicitly in the description rather than implying it.
-- **Write registers:** keep the split into "explicitly writable" / "known, not exposed" /
-  "unknown", and do not remove the warning about write access (power limits
-  40554/40556).

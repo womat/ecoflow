@@ -330,6 +330,6 @@ for an API answer:
 | `3`  | the request itself failed — network, TLS, name resolution  |
 
 **`2` with code 1006** is the interesting answer: it means the model is excluded from the
-Developer API (see `api-status.md`) and only the app MQTT channel or local Modbus remain.
+Developer API (see `api-status.md`) and only the app MQTT channel remains.
 The device has to be bound to your own EcoFlow account, otherwise the list stays empty.
 

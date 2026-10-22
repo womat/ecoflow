@@ -1,6 +1,6 @@
 # API status – EcoFlow PowerOcean DC Fit
 
-State of research: September 2026.
+State of research: September 2026; local interfaces as of 22 October 2026.
 
 ## Summary
 
@@ -12,11 +12,11 @@ Four paths were examined; exactly one delivers readings continuously today:
 | EcoFlow Developer/Open API     | Cloud, REST, HMAC-signed   | **Unusable.** Lists the DC Fit, but refuses the readings: error 1006 "not allowed" – confirmed on the device. The MQTT channel stays silent as well    |
 | Consumer portal                | Cloud, REST, session token | **Delivers data, but not current data.** Hands out the state last pushed to the cloud; in one measurement it stood still for over an hour             |
 | The app's MQTT channel         | Cloud, MQTT, protobuf      | **The only path on which readings flow continuously.** Every minute on its own, every second with the stream switch. Unofficial, reverse-engineered    |
-| Local Modbus TCP               | Modbus, port 502           | **Still locked on the device** (`connection refused`). Would be the stable path, but needs unlocking by an installer                                  |
+| Local Modbus TCP               | Modbus, port 502           | **Not available.** According to EcoFlow the DC Fit does not support Modbus TCP, and no update is planned (section 4)                                 |
 
 In practice this means: whoever wants values today takes the app MQTT channel —
-`scripts/ecoflow-api.sh` for measuring, `cmd/ecoflowd` for continuous operation. Whoever
-wants reliability pursues the Modbus unlocking.
+`scripts/ecoflow-api.sh` for measuring, `cmd/ecoflowd` for continuous operation. There is
+no local alternative.
 
 This file covers the path *to the device*. How `ecoflowd` passes the values it obtains on
 to the local broker — two JSON telegrams, and why in this form — is in
@@ -105,12 +105,11 @@ useful test of whether the owner binding is in place at all.
 `online` and `productName`, which establishes the binding, and the API tells the cases apart
 (8512 "does not belong to you" vs. 1006 "this device does not hand out data").
 
-### Official field names (for comparison with the Modbus registers)
+### Official field names
 
 Even though the endpoints are blocked for the DC Fit: EcoFlow's PowerOcean docs
 (developer-eu.ecoflow.com, document "PP2") name the quantities the device knows. This is
-the only *official* source for these semantics and thus the best cross-check for the
-community-derived Modbus registers in `modbus-registers.md`:
+the only *official* source for these semantics:
 
 | Field                                  | Type  | Meaning                                                     |
 |----------------------------------------|-------|-------------------------------------------------------------|
@@ -227,8 +226,7 @@ presumably stands for the DC Fit model):
 | `DC303_ERROR_CHANGE_HEARTBEAT`                                                           | 4      | Error states                                                                                                                                                    |
 | `DC303_BMS_HEARTBEAT`, `DC303_BP_CHANGE_HEARTBEAT`, `DC303_ECOLOGY_DEV_BIND_LIST_REPORT` | 1–2    | Battery and binding info                                                                                                                                        |
 
-That is **more than Modbus exposes** (see `modbus-registers.md`, "Known gaps"),
-and `DC303_ENERGY_STREAM_REPORT` carries its own timestamp – so it is also suitable for
+`DC303_ENERGY_STREAM_REPORT` carries its own timestamp – so it is also suitable for
 recording, not just for a momentary value.
 
 #### The timestamp stands still when nobody is looking
@@ -336,14 +334,8 @@ the path name suggests a Pro/installer context.
 
 **What this path is good for:** an internal interface of the web interface, neither
 documented nor promised, with an expiring token – no good for continuous readings (those
-come from the app MQTT channel, section 3). As a cross-check for counter readings and for
-the Modbus registers it is excellent: the same quantities, from EcoFlow's own display.
-
-According to `MaxGrmm/EF-PowerOcean-TcpModbus`, the same endpoint delivers considerably
-more than the dashboard shows – cell voltages, SOH, per-phase active/reactive/apparent
-power, around 180 grid protection parameters. **Unchecked:** the project named is a Modbus
-integration, and whether the statement refers to this REST endpoint or to registers is not
-clear from it.
+come from the app MQTT channel, section 3). As a cross-check for counter readings it is
+excellent: the same quantities, from EcoFlow's own display.
 
 ## 3. The app's MQTT channel
 
@@ -396,8 +388,7 @@ models. For the JT-S1 PowerOcean, `cmd_func 96 / cmd_id 33` carries the order
 `sys_load_pwr, sys_grid_pwr, mppt_pwr, bp_pwr, bp_soc`; the DC Fit definition in
 `foxthefox/ioBroker.ecoflow-mqtt` (device type `poweroceanfit`) assigns the same ID
 `grid_pwr, dcdc_pwr, bp_pwr, pv_pwr, timestamp, timezone, bp_soc, load_pwr, …`.
-Whoever takes the wrong table here gets plausible numbers under the wrong names. This
-is the same caveat as for the register mapping.
+Whoever takes the wrong table here gets plausible numbers under the wrong names.
 
 **Origin:** endpoint path, client ID form, topics and wake-up payload were taken
 from third-party reverse engineering. They were checked on the device on 22 September 2026 –
@@ -1139,110 +1130,20 @@ any time, and the account credentials sit in plain text in the configuration.
 The "~2–4 s" rate named there only applies with the stream switch; without it the device
 reports every minute.
 
-## 4. Local Modbus TCP
+## 4. No local interface
 
-Modbus TCP on port 502, disabled by default and unlocked only by the **EcoFlow
-installer/partner** via the **Pro app** (source:
-https://docs.evcc.io/en/meters/ecoflow-powerocean-modbus). Connection parameters, unlocking
-path and the community-derived register map are in `modbus-registers.md`. Already in
-productive use in the Home Assistant integrations `MaxGrmm/EF-PowerOcean-TcpModbus`,
-`windmark/EF-PowerOcean-TcpModbus` and `harduser-gnk/EF-PowerOcean-TcpModbus` (a fork with
-write access), and in evcc's meter template `ecoflow-powerocean-modbus`.
+According to EcoFlow (as of 22 October 2026), the PowerOcean DC Fit does **not** support
+Modbus TCP, and no update adding it is planned. There is no official solution for reading
+the device locally or for integrating it into local systems; EcoFlow refers to solutions
+from forums and communities.
 
-## 4a. Access to the EcoFlow Pro app
+That leaves the app's MQTT channel (section 3) as the only path that delivers readings.
 
-The **Pro app** (`com.ecoflow.pro`) is the installer app and is only enabled for authorised
-distributors and installers; consumers use the normal EcoFlow app.
-
-- **Access:** registration as an installer in the EcoFlow Pro web portal
-  (https://pro-portal.ecoflow.com, EU instance https://portal.ecoflow.com/pro/eu),
-  activation of the role by EcoFlow or the distributor. A registered but not yet activated
-  account simply shows no systems.
-- **Commissioning** in three steps (Internet Setup → Home Setting → System Setting);
-  the device is captured via QR code/serial number and then bound to the owner
-  account. Afterwards the Pro app shows SN, owner account and installation date.
-  (Source: https://energy.ecoflow.com/eu/software/EcoFlow-Pro-App)
-
-**Two separate bindings** – this is the most common confusion:
-
-| Binding          | To what                                              | Needed for                    |
-|------------------|------------------------------------------------------|-------------------------------|
-| System binding   | account of the installer who commissioned it         | Pro app, Modbus unlocking     |
-| Owner binding    | the owner's EcoFlow account (consumer app)           | cloud API, normal app         |
-
-A Pro account of your own therefore does **not** show the system automatically: it is tied
-to the installer's account. Trying to add it yourself ends with "system already added in
-another account" (experience reports in the Photovoltaikforum thread 218848, page 17).
-This can only be resolved via the original installer (deleting the system or sharing it
-under *Installer/user management → Add user*) or via a support ticket with EcoFlow
-(`solutionservice.eu@ecoflow.com`) with SN and proof of purchase.
-
-**Important:** No transfer is needed for the Modbus unlocking – it is enough that *any*
-Pro access flips the switch once.
-
-## 4b. Checklist for the installer appointment
-
-The Modbus unlocking can only be done by an installer with Pro app access (see 4a). Such
-an appointment does not come around again quickly – hence, to tick off here, what needs to
-be clarified during it.
-
-**Pre-test: is anything still missing at all**
-
-A `modbusread <ip> 42082 uint16` before the appointment answers this in a second, and
-the error message distinguishes the cases:
-
-| Response             | Meaning                                                                |
-|----------------------|------------------------------------------------------------------------|
-| `connection refused` | device reachable, nothing listening on port 502 → Modbus is disabled   |
-| Timeout              | network/VLAN/firewall problem, not the Modbus switch                   |
-| Register value       | already unlocked                                                       |
-
-On the test device (DC Fit, firmware **1.0.6.20**, September 2026): ping answered,
-port 502 `connection refused` – so disabled, as documented.
-
-**The actual request**
-
-- [ ] **Enable Modbus TCP on the inverter** – specifically: select the inverter in the Pro
-  app and set the **Control Mode to "Modbus control"**. That is how the reference
-  integration describes it; please have it confirmed whether the menu is actually
-  called that.
-- [ ] Does this mode change anything about the system's internal scheduling? (The same
-  question is in "Open questions" at the end of the file – answer it there, only ask it
-  here at the appointment)
-- [ ] Does the setting survive a firmware update?
-- [ ] **Read registers 40002 and 40003** (`product_category`, `product_number`)
-  as soon as Modbus is running: the reference integration can*not* recognise the DC Fit
-  by them because nobody knows the values – a contribution that is missing upstream.
-
-**So that you can get at it afterwards**
-
-- [ ] IP address of the inverter. Assigned via DHCP? Then fix it in the router,
-  otherwise every poll will eventually point into the void.
-- [ ] Have the port (expected 502) and unit/slave ID (expected 1) confirmed.
-- [ ] Is access restricted to a particular network/VLAN?
-
-**For the register question (Plus vs. DC Fit)**
-
-- [ ] Ask for the firmware version and exact model designation/`InverterModel`. The
-  current map in `modbus-registers.md` treats the DC Fit as the normal case and knows
-  exactly one model-dependent address (`feed_in_power_max`: 40538 on the **Plus** instead
-  of 40609); only the older table was scanned on a Plus. None of it is confirmed on the
-  DC Fit, and `models.py` cannot recognise the DC Fit by `product_number`.
-- [ ] Has EcoFlow documented a register list to him? Unlikely, but
-  the cheapest way to official information.
-
-**Because of a system extension at the same appointment**
-
-- [ ] What exactly is being added (battery module, PV string, PowerPulse/wallbox)? New
-  components can occupy additional registers.
-- [ ] Does this change the SN, system ID or binding? Then the findings in this
-  document need to be updated.
-
-**Independent of the appointment**
-
-- [ ] Ask EcoFlow support (`solutionservice.eu@ecoflow.com`) whether our own SN can be
-  enabled for the Developer API. Not very promising for the PowerOcean family, but
-  the only lever left on the cloud side.
+It matches the device: port 502 answered `connection refused` (firmware 1.0.6.20, September
+2026). The community's Modbus integrations for the PowerOcean (Home Assistant
+`EF-PowerOcean-TcpModbus`, evcc's meter template) are therefore no path for the DC Fit. A
+register map and a checklist for having an installer unlock Modbus via the Pro app were
+kept here until then and have been removed.
 
 ## 5. What other integrations can (and cannot) do
 
@@ -1255,31 +1156,22 @@ port 502 `connection refused` – so disabled, as documented.
   know this.
 - **evcc** uses exclusively the **local Modbus path** for the PowerOcean
   (meter template `ecoflow-powerocean-modbus`) – a further indication that the
-  *documented* cloud path is not practicable for this device family. About the
-  app MQTT channel from section 3 this says nothing: it works, but is unofficial and
-  reverse-engineered, so nothing an integration would build on. The
-  register addresses used there confirm the current map in `modbus-registers.md`.
+  *documented* cloud path is not practicable for this device family. For the DC Fit it is
+  no path, as it has no Modbus (section 4).
 
 ## 6. "Open API" in shop descriptions
 
 Sales pages for the DC Fit set advertise an "open API interface"
-for connecting to EMS such as Solar Manager Connect 2 or Loxone. Presumably
-this means the same local Modbus interface, not a separate
-REST interface – but there is no explicit confirmation of this.
+for connecting to EMS such as Solar Manager Connect 2 or Loxone. Whatever is meant by
+it, EcoFlow states there is no official local interface for the DC Fit (section 4).
 
 ## Open questions / still to be clarified
 
 Open:
 
-- [ ] Does the Modbus register mapping apply 1:1 to the DC Fit? `models.py` in
-  `MaxGrmm/EF-PowerOcean-TcpModbus` is checked: the current source treats the DC Fit as
-  the normal case, the only model-dependent address concerns the Plus
-  (`feed_in_power_max`). **Not yet measured on the device**; the contradictions between
-  the sources in `modbus-registers.md` are the measurement plan
-- [ ] The menu path to the Modbus switch in the Pro app ("Modbus control", from
-  `MaxGrmm/EF-PowerOcean-TcpModbus`) – **unconfirmed on the device**; a task in 4b
-- [ ] Does the "Modbus control" mode affect the internal scheduling? With purely reading
-  access presumably not, but that is not established
+- [ ] Ask EcoFlow support (`solutionservice.eu@ecoflow.com`) whether our own SN can be
+  enabled for the Developer API. Not very promising for the PowerOcean family, but
+  the only lever left on the cloud side
 - [ ] What does field 2 of the energy report (`dcdc`) measure? Not part of the energy
   balance, same sign as the battery, 63–103 % of its value (26 Sep 2026); `ecoflowd` does
   not publish it until it is clear – details in [`mqtt-output.md`](../mqtt-output.md), §3
@@ -1301,7 +1193,7 @@ Open:
   refused there without unknown parameters) and `96/112` `SysBatChgDsgSet` field 2, the
   discharge floor. Setting the floor to the current SoC would amount to "hold", but that is an
   inference. Both would have to be assembled from third-party sources, which is exactly the
-  case `CLAUDE.md` warns about. On Modbus the equivalent is `min_soc_limit` 40536, still locked
+  case `CLAUDE.md` warns about
 - [ ] Scheduled tasks, still open after the decision for `ecoflowd --block` (below):
   - what the device does at midnight with a daily 00:00–24:00 task (the end is encoded as
     1440, sixth test);
@@ -1366,13 +1258,7 @@ Answered – the evidence is in the sections named:
 ## Sources
 
 - https://github.com/Feberdin/ecoflow-powerocean-ha
-- https://github.com/MaxGrmm/ecoflow-poweroceanplus-modbus
 - https://github.com/MaxGrmm/EF-PowerOcean-TcpModbus
-- https://github.com/windmark/EF-PowerOcean-TcpModbus
-- https://github.com/harduser-gnk/EF-PowerOcean-TcpModbus
-- https://docs.evcc.io/en/meters/ecoflow-powerocean-modbus
-- https://www.photovoltaikforum.com/thread/247994-ecoflow-powerocean-modbus-protokoll/
-- https://www.photovoltaikforum.com/thread/218848-erfahrungen-mit-system-ecoflow-powerocean/?pageNo=17
 - https://github.com/shuette42/ecoflow-energy-ha (Enhanced Mode: AES certification,
   client ID construction, keepalive intervals)
 - https://github.com/shuette42/ecoflow-energy-ha/blob/main/custom_components/ecoflow_energy/ecoflow/energy_stream.py
@@ -1392,6 +1278,5 @@ Answered – the evidence is in the sections named:
   endpoints, field names, MQTT topics)
 - https://developer-eu.ecoflow.com/us/document/root (signature method incl.
   test vector, flattening rules, generic endpoints, MQTT topics)
-- https://energy.ecoflow.com/eu/software/EcoFlow-Pro-App
 - https://pro-portal.ecoflow.com
 - https://energy.ecoflow.com/eu/support

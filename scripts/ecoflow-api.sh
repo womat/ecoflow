@@ -363,8 +363,8 @@ report_code() {
 			ecoflow-api.sh: code 1006 - this device model is not exposed through the
 			Developer API. This is a model blocklist on EcoFlow's side, not a
 			configuration problem; see docs/research/api-status.md. Note that a blocked device can
-			still show up in "devices" - the block hits the data call. Use local
-			Modbus TCP instead.
+			still show up in "devices" - the block hits the data call. Use the
+			app's MQTT channel instead (ecoflowd).
 		HINT
 		return 2
 		;;

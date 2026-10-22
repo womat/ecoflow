@@ -683,18 +683,15 @@ in [`internal/frames/frame.go`](internal/frames/frame.go).
 `ecoflowd` is where the work in this repo ended up; the way there is documented
 alongside. Four ways into the PowerOcean DC Fit were examined – the EcoFlow Developer API,
 the consumer portal, the app's MQTT channel and local Modbus TCP – and exactly one
-delivers readings continuously today: the app channel `ecoflowd` uses.
+delivers readings continuously today: the app channel `ecoflowd` uses. Modbus TCP is not
+available on the DC Fit; according to EcoFlow (as of 22 October 2026) none is planned.
 
 | | |
 |---|---|
 | [`docs/research/`](docs/research/README.md) | Overview, summary of the findings, open points and sources |
 | [`docs/research/api-status.md`](docs/research/api-status.md) | The four paths compared, error 1006, the frames, the write tests |
-| [`docs/research/modbus-registers.md`](docs/research/modbus-registers.md) | Register map for local Modbus TCP, should the installer ever unlock it |
 | [`docs/research/tools.md`](docs/research/tools.md) | [`scripts/ecoflow-api.sh`](scripts/ecoflow-api.sh) and [`scripts/ecoflow-frames.py`](scripts/ecoflow-frames.py), the measuring tools |
 | [`docs/mqtt-output.md`](docs/mqtt-output.md) | Why the output looks the way it does |
-
-The registers are checked with [`modbusread`](https://github.com/womat/modbusread), a
-universal Modbus reader in its own repo.
 
 ## Working on this repo
 
@@ -752,9 +749,8 @@ format changes. That is a break and is stated as such in the release notes, as w
 
 ## License
 
-MIT – see [`LICENSE`](./LICENSE). Note that parts of the register information in
-`docs/research/` were taken from MIT-licensed third-party sources; the respective
-original links are given in `docs/research/modbus-registers.md`.
+MIT – see [`LICENSE`](./LICENSE). Note that parts of the information in `docs/research/`
+come from third-party sources; the links are given at the end of each file.
 
 ### Third-party licenses
 
