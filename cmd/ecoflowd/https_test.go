@@ -1,7 +1,6 @@
 package main
 
 import (
-	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
@@ -147,8 +146,7 @@ func TestHTTPSOnly(t *testing.T) {
 		listen: []string{"127.0.0.1:0", "127.0.0.1:0"}, tlsCertificate: cert, httpToken: testToken}
 	b, _ := newTestBlocker(t)
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 	addrs, err := startHTTPS(ctx, cfg, newStatus(cfg), b, io.Discard)
 	if err != nil {
 		t.Fatalf("startHTTPS: %v", err)

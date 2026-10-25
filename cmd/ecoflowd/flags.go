@@ -336,7 +336,7 @@ func httpConfig(c *config, o *options, fs *flag.FlagSet) error {
 		return nil
 	}
 
-	for _, s := range strings.Split(o.listen, ",") {
+	for s := range strings.SplitSeq(o.listen, ",") {
 		if strings.TrimSpace(s) == "" {
 			continue
 		}
