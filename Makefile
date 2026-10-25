@@ -25,11 +25,27 @@ test: ## run all tests with the race detector, and the decoder and script self-c
 	done
 	scripts/ecoflow-api.sh selftest
 
-lint: ## gofmt, go vet, golangci-lint and govulncheck
+# The analysers are pinned here only - ci.yml and release.yml call make lint - and
+# raised by hand: dependabot does not see go install lines. They are installed into
+# ./bin/tools for this machine (GOOS, GOARCH and GOARM cleared, so an exported target
+# cannot leak into the tool build).
+#
+# go fix -diff and go mod tidy -diff report a pending change and fail instead of
+# writing it; `go fix ./...` and `go mod tidy` apply it. go fix goes red on its own
+# when a new Go release adds a fixer - that is the point.
+GOLANGCI_LINT_VERSION := v2.15.0
+GOVULNCHECK_VERSION   := v1.9.0
+TOOLS_BIN             := $(CURDIR)/bin/tools
+
+lint: ## gofmt, go fix, go mod tidy, go vet, golangci-lint and govulncheck
 	@test -z "$$(gofmt -l ./cmd ./internal)" || { echo "not gofmt'ed:"; gofmt -l ./cmd ./internal; exit 1; }
+	@d="$$(go fix -diff ./...)"; test -z "$$d" || { echo "$$d"; echo "go fix has pending changes - run: go fix ./..."; exit 1; }
+	go mod tidy -diff
+	GOOS= GOARCH= GOARM= GOBIN=$(TOOLS_BIN) go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(GOLANGCI_LINT_VERSION)
+	GOOS= GOARCH= GOARM= GOBIN=$(TOOLS_BIN) go install golang.org/x/vuln/cmd/govulncheck@$(GOVULNCHECK_VERSION)
 	go vet ./...
-	go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.14.0 run ./...
-	go run golang.org/x/vuln/cmd/govulncheck@v1.8.0 ./...
+	$(TOOLS_BIN)/golangci-lint run ./...
+	$(TOOLS_BIN)/govulncheck ./...
 
 golden: ## regenerate the .golden files with the python decoder - after a change to either decoder
 	@for c in fast slow damaged; do \

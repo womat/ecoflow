@@ -5,8 +5,9 @@
 # The tag is the single source of truth for the version: GoReleaser injects it
 # into main.version via -ldflags, so the binary always reports the tag it was cut from.
 #
-# Before anything is published the tagged commit is tested, vetted and scanned
-# again: a release must not depend on whether the CI run of that commit passed.
+# Before anything is published the tagged commit is tested and linted again: a
+# release must not depend on whether the CI run of that commit passed.
+#
 # Actions are pinned to a commit SHA, with the release in a comment; see ci.yml.
 name: release
 
@@ -23,6 +24,9 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0 # GoReleaser needs the full history to build the changelog
+          # The token is not left in .git/config for the steps that follow; GoReleaser
+          # gets its own through GITHUB_TOKEN, and fetching this public repo needs none.
+          persist-credentials: false
 
       # Releases are cut from main only. `make release` enforces this locally, but
       # a hand-made `git tag` bypasses it, so the workflow refuses to publish a
@@ -36,24 +40,23 @@ jobs:
           fi
           echo "$GITHUB_REF_NAME is on main."
 
-      # stable rather than go.mod's minimum on purpose: standard library
-      # security fixes reach a release through the toolchain it is built with.
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: stable
+          go-version-file: go.mod
           check-latest: true
+          cache: true
 
-      - run: go vet ./...
-      - run: go test -race ./...
+      # go test -race, the golden files against the python decoder and the
+      # script's selftest - the same as ci.yml and make test locally.
+      - name: Test with race detector, golden files and selftest
+        run: make test
 
-      # Known vulnerabilities are checked again on the tagged commit, as in ci.yml;
-      # dependabot does not see go install lines - raise the version by hand.
-      - name: govulncheck
-        run: |
-          go install golang.org/x/vuln/cmd/govulncheck@v1.8.0
-          "$(go env GOPATH)/bin/govulncheck" ./...
+      # gofmt, go fix, go mod tidy, go vet, golangci-lint and govulncheck - the same
+      # as ci.yml and make lint locally, with the analysers pinned in the Makefile.
+      - name: Lint
+        run: make lint
 
-      - uses: goreleaser/goreleaser-action@f06c13b6b1a9625abc9e6e439d9c05a8f2190e94 # v7.2.3
+      - uses: goreleaser/goreleaser-action@a4f02ab5355a589de60d917a659ce617ed19b3de # v7.3.0
         with:
           version: "~> v2"
           args: release --clean
@@ -71,6 +74,8 @@ jobs:
       packages: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false # docker login gets its own token below
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
       - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         with:

@@ -701,7 +701,7 @@ CI runs exactly these checks, so running them first keeps `main` green:
 
 ```bash
 make test       # go test -race, the golden files against the python decoder, the script's selftest
-make lint       # gofmt, go vet, golangci-lint, govulncheck
+make lint       # gofmt, go fix -diff, go mod tidy -diff, go vet, golangci-lint, govulncheck
 make build      # ./ecoflowd for this machine
 make image      # the container image for this machine, as ecoflowd:dev
 make snapshot   # all release archives into ./dist, without publishing (needs goreleaser)
@@ -723,7 +723,7 @@ files after a change to either decoder.
 - **Go version:** the `go` line in `go.mod` is a minimum and names only the minor version
   (`go 1.27`); it is raised only when the code needs a newer language or library feature.
   Standard library security fixes come from the toolchain used to build – CI and release
-  build with `stable`. `go list -m -u all` checks the dependencies, `govulncheck ./...`
+  take the newest patch release of that minor (`check-latest`), and CI runs weekly as well. `go list -m -u all` checks the dependencies, `govulncheck ./...`
   whether a known vulnerability reaches the code; what sits only in an included module is
   updated too. The image is built with `golang:1.27-alpine` instead, which
   picks up every 1.27.x patch release by itself; dependabot proposes the next minor.

@@ -44,3 +44,6 @@ ecoflow-open-demo/
 
 # GoReleaser output (make snapshot).
 /dist/
+
+# golangci-lint and govulncheck, installed by make lint.
+/bin/

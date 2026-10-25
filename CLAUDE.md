@@ -56,7 +56,7 @@ python3 scripts/ecoflow-frames.py < internal/frames/testdata/fast.txt \
 ## Branches & releases
 
 One permanent branch: **`main`**. Work is committed to
-`main` directly; CI (`gofmt`, `vet`, `build`, `test -race`, `golangci-lint`, `govulncheck`, `docker build`) runs on every push and has to be green before a release. A short-lived branch with a PR only when someone should review the change first. No `develop`:
+`main` directly; CI (`make test`, `make lint` – gofmt, go fix, go mod tidy, vet, golangci-lint, govulncheck –, `make build`, `docker build`) runs on every push, weekly and by hand, and has to be green before a release. A short-lived branch with a PR only when someone should review the change first. No `develop`:
 `go install …@latest` resolves to the newest semver tag, not to a branch, so a second
 permanent branch would only create a merge ritual with nothing in return.
 
@@ -65,8 +65,9 @@ workflow refuses a tag that is not on `main`, tests again, lets GoReleaser
 (`.goreleaser.yaml`) build the archives – binary, systemd unit, README, LICENSE – and
 stamps the tag in via `-X main.version`, then pushes the image. Do not tag on other
 branches — otherwise a release points at a state that was never in `main`. CI and release
-build with Go `stable`, not with `go-version-file`, on purpose: standard library security
-fixes reach a release through the toolchain.
+take the Go version from `go.mod` with `check-latest`, i.e. the newest patch of that minor:
+standard library security fixes reach a release through the toolchain, and the weekly CI
+run catches a toolchain advisory without a commit.
 
 ## Language
 
@@ -140,12 +141,13 @@ German — that concerns the chat, not the files.
   web page the port is published on one host address only
   (`ports: ["192.168.1.10:8089:8089"]`, decided 10 Oct 2026) – `/block` is then on that
   address too, behind token and TLS
-- `.github/workflows/` – `ci.yml` (gofmt, vet, build, test -race, golangci-lint,
-  govulncheck, and a `docker build`) and `release.yml` (tag on `main`?, vet, test and govulncheck again, then
+- `.github/workflows/` – `ci.yml` (`make test`, `make lint`, `make build` and a `docker build`)
+  and `release.yml` (tag on `main`?, `make test` and `make lint` again, then
   GoReleaser for seven platform archives; afterwards the image for four Linux platforms to
   `ghcr.io/womat/ecoflowd`). Actions are pinned to a commit SHA with the release in a
   comment, never to a movable tag like `@v7`; `.github/dependabot.yml` proposes weekly
-  updates for them and the Go modules, but not for the `go install` pins of golangci-lint and govulncheck
+  updates for them (`chore(ci)`), the Go modules and the base images (`chore(deps)`), but not
+  for the `go install` pins of golangci-lint and govulncheck, which sit in the Makefile only
 - `ecoflow-open-demo/` – EcoFlow's official Java demo client, downloaded for reference
   only. Deliberately **not** versioned via `.gitignore`; do not "tidy it up"
 - `README.md` – entry point for users of `ecoflowd`: what it does, quick start with

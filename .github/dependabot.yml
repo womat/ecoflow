@@ -1,7 +1,8 @@
 # Keeps the Go modules and the SHA-pinned GitHub Actions current. The workflows pin
 # every action to a commit SHA with the release in a comment; dependabot updates
-# both together. govulncheck is installed with `go install` in the workflows,
-# which dependabot does not see - raise that version by hand.
+# both together. govulncheck and golangci-lint are installed with `go install` by
+# `make lint` (pinned in the Makefile), which dependabot does not see - raise those
+# pins by hand.
 
 version: 2
 
@@ -11,15 +12,22 @@ updates:
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
+    commit-message:
+      # "chore(deps): …", the "type(scope): description" convention the release changelog
+      # groups on.
+      prefix: "chore(deps)"
     groups:
-      golang-x:
+      go:
         patterns:
-          - "golang.org/x/*"
+          - "*"
 
   - package-ecosystem: github-actions
     directory: /
     schedule:
       interval: weekly
+    commit-message:
+      # "chore(ci): …" - an action only changes the workflows, not the binary.
+      prefix: "chore(ci)"
     groups:
       actions:
         patterns:
@@ -31,3 +39,6 @@ updates:
     directory: /
     schedule:
       interval: weekly
+    commit-message:
+      # "chore(deps): …" like the Go modules - a base image goes into the released image.
+      prefix: "chore(deps)"

@@ -1,67 +1,74 @@
+# Continuous integration for github.com/womat/ecoflow.
+#
 # Actions are pinned to a commit SHA, with the release in a comment: a tag like
 # @v7 can be moved to other code, a SHA cannot. dependabot (.github/dependabot.yml)
-# proposes updates.
-name: ci
+# proposes updates for them.
+#
+# setup-go takes the version from go.mod but the newest patch of it (check-latest),
+# and the weekly run repeats govulncheck without a change here: an advisory against
+# the Go toolchain or a dependency appears between commits, and dependabot does not
+# report the toolchain.
+
+name: CI
 
 on:
   push:
     branches: [main]
   pull_request:
+    branches: [main]
+  schedule:
+    - cron: "17 5 * * 1"
+  workflow_dispatch:
 
 permissions:
   contents: read
 
+# A new push to the same ref supersedes a run still in flight.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
+  # go test -race, and both halves of the golden-file promise: go test compares the
+  # Go decoder against the .golden files, make test then regenerates them with the
+  # python decoder and compares again - a change there could otherwise quietly drift
+  # apart from the service. Last, the script's selftest checks the signature assembly
+  # against EcoFlow's published test vector and the stream switch frame against the
+  # captured bytes. No network.
   test:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: stable
+          go-version-file: go.mod
           check-latest: true
+          cache: true
 
-      - name: gofmt
-        run: |
-          unformatted=$(gofmt -l ./cmd ./internal)
-          if [ -n "$unformatted" ]; then
-            echo "not gofmt'ed:"; echo "$unformatted"; exit 1
-          fi
+      - name: Test with race detector, golden files and selftest
+        run: make test
 
-      - run: go vet ./...
-      - run: go build ./...
-      - run: go test -race ./...
+  # The same checks as `make lint` locally: gofmt, go fix, go mod tidy, go vet,
+  # golangci-lint and govulncheck. The analysers are pinned in the Makefile only.
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      # golangci-lint with the default linters and the exclusions in
-      # .golangci.yml. Pinned like govulncheck; dependabot does not see it.
-      - name: golangci-lint
-        run: |
-          go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.14.0
-          "$(go env GOPATH)/bin/golangci-lint" run ./...
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          check-latest: true
+          cache: true
 
-      # govulncheck reports known vulnerabilities in the Go version and the modules
-      # that the code actually calls. dependabot does not see go install lines -
-      # raise the version by hand.
-      - name: govulncheck
-        run: |
-          go install golang.org/x/vuln/cmd/govulncheck@v1.8.0
-          "$(go env GOPATH)/bin/govulncheck" ./...
+      # govulncheck exits non-zero only when this code calls a vulnerable symbol;
+      # advisories that only sit in required modules are reported but do not fail.
+      - name: Lint
+        run: make lint
 
-      # The go test above compares the go output against these golden files.
-      # Nothing was checking the other half of the promise - that the python
-      # decoder still produces them - so a change there could quietly drift
-      # apart from the service until someone regenerated a golden by hand.
-      - name: the python decoder still produces the golden files
-        run: |
-          for capture in fast slow damaged; do
-            python3 scripts/ecoflow-frames.py \
-              < internal/frames/testdata/$capture.txt > /tmp/$capture.out
-            diff -u internal/frames/testdata/$capture.golden /tmp/$capture.out
-          done
-
-      # Checks the signature assembly against EcoFlow's published test vector
-      # and the stream switch frame against the captured bytes. No network.
-      - run: scripts/ecoflow-api.sh selftest
+      - name: Build
+        run: make build
 
   # The image is only pushed by the release, but built here on every PR, so a
   # broken Dockerfile shows before a tag does. One platform is enough for that;
