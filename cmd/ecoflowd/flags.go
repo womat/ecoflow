@@ -191,8 +191,9 @@ note on --block:
   renewed within --block-ttl ends by itself and the task is switched off. At
   start-up an enabled task is switched off as well; switching in the app is
   left alone otherwise. Answers: 200, 401 wrong token, 409 not exactly one
-  task to switch, 503 no connection or no task list yet, 504 the device did
-  not acknowledge.
+  task to switch, 503 no connection or no task list yet (the list is asked
+  for again, so a later request goes through), 504 the device did not
+  acknowledge.
 
   Like --fast this publishes to the .../set topic, and for the same reason it
   is a flag: two kinds of message, both captured from the app - the request

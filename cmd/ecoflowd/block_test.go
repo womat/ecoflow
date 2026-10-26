@@ -304,6 +304,38 @@ func TestRequestNeedsAConnection(t *testing.T) {
 	}
 }
 
+// TestRequestAsksForAMissingList covers a device that was offline when the
+// connection asked for the list: a request finds none, asks again and is
+// refused; the next one, after the list arrived, goes through.
+func TestRequestAsksForAMissingList(t *testing.T) {
+	b, d := newTestBlocker(t, chargeTask(7, false))
+	b.connected(d.send)
+
+	_, err := b.request(true)
+	if !errors.Is(err, errUnavailable) || statusFor(err) != http.StatusServiceUnavailable {
+		t.Fatalf("got %v, want 503", err)
+	}
+	if len(d.sent) != 2 || d.sent[1].Command != frames.TaskQuery {
+		t.Fatalf("got %v, want a second task list request", d.sent)
+	}
+	if b.state().Requested {
+		t.Error("a request that could not be carried out was recorded")
+	}
+
+	// The list must not switch anything on by itself: the request was refused.
+	b.listed(d.list())
+	if n := len(d.commands()); n != 0 {
+		t.Fatalf("got %d commands after the list, want none", n)
+	}
+
+	if _, err := b.request(true); err != nil {
+		t.Fatalf("request after the list: %v", err)
+	}
+	if !d.list()[0].Enabled {
+		t.Error("task not switched on")
+	}
+}
+
 func TestRequestNeedsExactlyOneTask(t *testing.T) {
 	b, d := newTestBlocker(t, chargeTask(7, false), chargeTask(8, false))
 	connect(b, d)

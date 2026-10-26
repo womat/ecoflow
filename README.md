@@ -491,7 +491,9 @@ the same as the [`<topic>/block` telegram](docs/mqtt-output.md):
 the app task's window even when the task is enabled. Right after a switch `running` can
 lag by about a second – the answer shows the device's list at that moment. Status codes: `200`, `401` wrong or
 missing token, `409` not exactly one task to switch, `503` no connection to the device or
-no task list yet, `504` the device did not acknowledge within 10 s.
+no task list yet, `504` the device did not acknowledge within 10 s. A `503` without a list
+asks the device for it again, so a later request goes through – a DC Fit with an empty
+battery drops off the cloud and misses the request made on connecting.
 
 ```bash
 curl --cacert tls.crt -H "Authorization: Bearer $ECOFLOWD_HTTP_TOKEN" \

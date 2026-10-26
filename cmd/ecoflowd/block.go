@@ -160,6 +160,11 @@ func (b *blocker) connected(send func([]byte) error) {
 	seq := b.nextSeq()
 	b.mu.Unlock()
 
+	b.askForList(send, seq)
+}
+
+// askForList sends the task list request. Called without mu held.
+func (b *blocker) askForList(send func([]byte) error, seq int) {
 	frame, err := frames.BuildTaskQuery(b.serial, seq)
 	if err == nil {
 		err = send(frame)
@@ -275,7 +280,15 @@ func (b *blocker) request(on bool) (blockState, error) {
 		// caller is told so and asks again, rather than finding a block
 		// switched on later by a reconnect it never heard of.
 		if b.send == nil || !b.known {
+			// Connected but without a list: the device was offline when the
+			// connection asked for it - a DC Fit with an empty battery drops
+			// off the cloud - and pushes one only on a change. Ask again, so
+			// that the caller's next request goes through.
+			send, seq := b.send, b.nextSeq()
 			b.mu.Unlock()
+			if send != nil {
+				b.askForList(send, seq)
+			}
 			return b.state(), errUnavailable
 		}
 		if _, err := pickTask(b.tasks, b.fixed); err != nil {
